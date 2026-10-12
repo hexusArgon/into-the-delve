@@ -1,0 +1,342 @@
+/* Мрачный интерфейс: тёмный металл и тусклое золото, без ярких плашек. */
+
+.dungeon {
+  background:
+    radial-gradient(ellipse at 50% 30%, #221c16 0%, #0c0a08 62%);
+  color: #e6dcc8;
+  font-family: "Palatino Linotype", Palatino, "Times New Roman", serif;
+}
+
+.dungeon-title {
+  margin: 0;
+  color: #d4bc82;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-shadow: 0 2px 0 #000;
+}
+
+.dungeon-heading {
+  margin: 0 0 12px;
+  color: #b8965a;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.dungeon-panel {
+  background: linear-gradient(180deg, #1c1814 0%, #100e0c 100%);
+  border: 1px solid #6e5830;
+  border-radius: 2px;
+  box-shadow:
+    inset 0 0 0 1px #2a2116,
+    0 10px 28px rgba(0, 0, 0, 0.45);
+  padding: 16px;
+}
+
+.dungeon-button {
+  font: inherit;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #d4bc82;
+  background: linear-gradient(180deg, #2a2218 0%, #14110e 100%);
+  border: 1px solid #6e5830;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px #2a2116;
+  cursor: pointer;
+}
+
+.dungeon-button:hover {
+  border-color: #b8965a;
+  color: #f0e2c4;
+}
+
+.dungeon-button-primary {
+  color: #f3e6c8;
+  background: linear-gradient(180deg, #4a3a22 0%, #1c150e 100%);
+  border-color: #b8965a;
+}
+
+.dungeon-slot,
+.dungeon-slot-empty,
+.dungeon-icon {
+  background: #0e0c0a;
+  border: 1px solid #6e5830;
+  border-radius: 2px;
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.65);
+  color: #e6dcc8;
+}
+
+.dungeon-slot-worn {
+  border-color: #d4bc82;
+  box-shadow:
+    inset 0 0 8px rgba(0, 0, 0, 0.65),
+    0 0 0 1px #6e5830;
+}
+
+.dungeon-slot-empty {
+  border-style: dashed;
+  border-color: #3d3426;
+  opacity: 0.85;
+}
+
+.dungeon-hud {
+  background: linear-gradient(180deg, #16130f 0%, #0c0a08 100%);
+  border-top: 1px solid #6e5830;
+  color: #cbbfa8;
+}
+
+.dungeon-portrait {
+  background: linear-gradient(180deg, #1c1814 0%, #100e0c 100%);
+  border: 1px solid #6e5830;
+  border-radius: 2px;
+  box-shadow:
+    inset 0 0 0 1px #2a2116,
+    0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+.dungeon-meter {
+  height: 8px;
+  background: #1a120e;
+  border: 1px solid #3d3426;
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.dungeon-hp {
+  height: 100%;
+  background: linear-gradient(180deg, #a33b32 0%, #6e1e1a 100%);
+}
+
+.dungeon-mp {
+  height: 100%;
+  background: linear-gradient(180deg, #3d5c78 0%, #243646 100%);
+}
+
+.dungeon-lost {
+  background: rgba(6, 4, 3, 0.78);
+}
+
+.dungeon-lost-card {
+  background: linear-gradient(180deg, #1c1814 0%, #100e0c 100%);
+  border: 1px solid #8a3030;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px #2a2116;
+  color: #e6dcc8;
+}
+
+.dungeon-tip {
+  background: rgba(12, 10, 8, 0.96);
+  border: 1px solid #6e5830;
+  border-radius: 2px;
+  color: #e6dcc8;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+.dungeon-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+.dungeon-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+@media (max-width: 860px) {
+  .dungeon-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dungeon-back {
+  position: sticky;
+  top: 16px;
+  align-self: flex-start;
+  z-index: 5;
+  margin: 16px 0 0 16px;
+}
+
+.dungeon-scene {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  container-type: size;
+  background: #070605;
+}
+
+.dungeon-scene-frame {
+  position: relative;
+  width: min(100cqw, calc(100cqh * 16 / 9));
+  aspect-ratio: 16 / 9;
+}
+
+.dungeon-scene-frame img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.dungeon-hotmap {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.dungeon-shape {
+  fill: transparent;
+  stroke: transparent;
+  cursor: pointer;
+  outline: none;
+}
+
+.dungeon-shape:hover,
+.dungeon-shape:focus-visible {
+  fill: url("#menu-glow");
+  stroke: none;
+  filter: url("#menu-soft");
+  mix-blend-mode: screen;
+}
+
+.dungeon-hot-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 6px 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: clamp(13px, 1.6cqw, 20px);
+  color: #f0e2c4;
+  text-shadow: 0 2px 8px #000;
+  background: rgba(12, 10, 8, 0.45);
+  border: 1px solid rgba(110, 88, 48, 0.8);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.dungeon-gear {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 6;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #d4bc82;
+  background: rgba(12, 10, 8, 0.72);
+  border: 1px solid #6e5830;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.dungeon-gear:hover,
+.dungeon-gear:focus-visible {
+  color: #f0e2c4;
+  border-color: #b8965a;
+  outline: none;
+}
+
+.dungeon-lesson {
+  position: absolute;
+  top: 16px;
+  left: 72px;
+  z-index: 4;
+  width: min(420px, calc(100% - 96px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dungeon-shape-lesson {
+  fill: url("#menu-glow");
+  filter: url("#menu-soft");
+  mix-blend-mode: screen;
+}
+
+.dungeon-pause {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.dungeon-pause-panel {
+  width: min(320px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dungeon-pause-panel .dungeon-button {
+  padding: 12px 16px;
+}
+
+.dungeon-settings {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.dungeon-settings-panel {
+  width: min(420px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dungeon-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.dungeon-setting .dungeon-button {
+  min-width: 92px;
+  padding: 8px 14px;
+}
+
+.dungeon-setting-slider {
+  flex: 1;
+  min-width: 72px;
+  accent-color: #b8965a;
+  cursor: pointer;
+}
+
+.dungeon-setting-value {
+  width: 3.2em;
+  text-align: right;
+  color: #d4bc82;
+  font-variant-numeric: tabular-nums;
+}
+
+.dungeon-settings-panel > .dungeon-button {
+  align-self: flex-start;
+  padding: 10px 18px;
+}
+
+.dungeon-input {
+  font: inherit;
+  color: #e6dcc8;
+  background: #0e0c0a;
+  border: 1px solid #6e5830;
+  border-radius: 2px;
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.55);
+}

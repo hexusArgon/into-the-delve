@@ -1,0 +1,10 @@
+{
+  "id": "room",
+  "type": "feature",
+  "summary": "Тактические комнаты подземелья: меч, монстр, щит, Blink.",
+  "description": "Пока игрок не сделал действие, мир стоит. Обычная атака монстра бьёт сразу на одну ортогональную клетку.",
+  "provides": ["tactics room", "sword", "shield break"],
+  "tags": ["tactics", "grid"],
+  "version": "0.1.0",
+  "author": { "name": "Keranis" }
+}

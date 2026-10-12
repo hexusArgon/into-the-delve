@@ -1,0 +1,34 @@
+{
+  "name": "@idosgames/base-template",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The base every AI Coder project starts from: sign-in and the lobby (src/base/) on the host shell. The systems (shop, heroes, leaderboards…) and the games are modules plugged in via src/modules.ts.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "//": "Versions are pinned exactly: this is a seed for AI Coder projects, which build offline against a dependency allowlist baked at these versions (see scripts/pack-builder.mjs). Modules bring their own engine deps (three/phaser) when added.",
+  "dependencies": {
+    "@idosgames/app-shell": "0.12.0",
+    "@idosgames/core": "0.21.2",
+    "@idosgames/module-sdk": "0.10.0",
+    "@idosgames/react": "0.4.4",
+    "@idosgames/wallet": "0.6.2",
+    "@reown/appkit": "1.8.23",
+    "@reown/appkit-adapter-wagmi": "1.8.23",
+    "@tanstack/react-query": "5.101.2",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "wagmi": "3.7.2"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.4",
+    "typescript": "5.9.3",
+    "vite": "8.1.5"
+  }
+}
