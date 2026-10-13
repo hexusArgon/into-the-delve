@@ -302,6 +302,8 @@
   stroke: transparent;
   cursor: pointer;
   outline: none;
+  /* Вся фигура ловит клик, даже где заливка прозрачная. Иначе на проде url(#…) из чужого CSS не рисуется и тропа урока не нажимается. */
+  pointer-events: all;
 }
 
 .dungeon-shape:hover,
@@ -362,11 +364,6 @@
   gap: 12px;
 }
 
-.dungeon-shape-lesson {
-  fill: url("#menu-glow");
-  filter: url("#menu-soft");
-  mix-blend-mode: screen;
-}
 
 .dungeon-pause {
   position: absolute;

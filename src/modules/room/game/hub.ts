@@ -206,8 +206,8 @@ function paintMenu(
   map.classList.add("dungeon-hotmap");
   const quiet = (): void => {};
   const play = hotShape("Adventure", actions.onPlay, "70,0 71,8 76,30 76,50 76,65 78,78 87,95 93,99 100,99 100,40 100,0");
-  if (skipLesson) play.classList.add("dungeon-shape-lesson");
-  map.append(menuGlow(), 
+  map.append(menuGlow(),
+    ...(skipLesson ? [lessonGlow(play)] : []), 
     hotShape("Auction", skipLesson ? quiet : actions.onAuction, "8,1 6,10 5,20 4,32 6,48 6,64 27,66 28,74 31,78 36,78 46,77 50,70 50,48 48,25 45,18 42,12 38,4 22,0 8,1"),
     hotShape("Guild", skipLesson ? quiet : actions.onGuild, "47,4 45,16 45,32 48,42 48,66 49,74 51,76 68,77 76,66 79,50 79,16 73,5 60,0 47,4"),
     play,
@@ -282,6 +282,17 @@ function lessonCard(text: string, skip: () => void): HTMLElement {
   button.addEventListener("click", skip);
   card.append(copy, button);
   return card;
+}
+
+/** Подсветка тропы урока. Заливка — атрибут SVG, не CSS: на проде стили лежат на другом домене и url(#…) туда не доходит. */
+function lessonGlow(play: SVGPolygonElement): SVGPolygonElement {
+  const glow = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+  glow.setAttribute("points", play.getAttribute("points") ?? "");
+  glow.setAttribute("fill", "url(#menu-glow)");
+  glow.setAttribute("filter", "url(#menu-soft)");
+  glow.setAttribute("pointer-events", "none");
+  glow.style.mixBlendMode = "screen";
+  return glow;
 }
 
 function hotShape(label: string, onClick: () => void, points: string): SVGPolygonElement {
