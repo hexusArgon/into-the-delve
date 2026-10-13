@@ -15,7 +15,7 @@ interface Voice {
   wave: OscillatorType;
 }
 
-/** Отдельный голос на id из таблицы монстров. Спора — отдельное существо. */
+/** Отдельный голос на id из таблицы монстров. Spore — отдельное существо. */
 const VOICE: Record<string, Voice> = {
   "1": { shape: "bark", bite: 280, fall: 180, air: 0.25, form: 820, wave: "sawtooth" },
   "2": { shape: "click", bite: 920, fall: 640, air: 0.7, form: 2600, wave: "square" },

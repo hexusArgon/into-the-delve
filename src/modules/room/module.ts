@@ -3,7 +3,7 @@ import { mountGame } from "./game/hub.ts";
 
 export const roomModule = defineModule({
   id: "room",
-  meta: { name: "Комната", type: "game", genre: "tactics", engine: "dom" },
+  meta: { name: "Dungeon", type: "game", genre: "tactics", engine: "dom" },
   setup(ctx) {
     let game: ReturnType<typeof mountGame> | null = null;
     ctx.registerScene({
@@ -22,6 +22,6 @@ export const roomModule = defineModule({
         game = null;
       },
     });
-    ctx.registerRoute({ id: "room", label: "Комната", icon: "⚔" });
+    ctx.registerRoute({ id: "room", label: "Dungeon", icon: "⚔" });
   },
 });

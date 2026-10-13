@@ -2,9 +2,12 @@ import { heroAttributes, monsterAttributes, type Attributes } from "../data/attr
 import { ELEMENTS, KIT, MONSTER_GOLD, RARE_GOLD, SPORE, monsterById, type DamageType, type MonsterDef, type MonsterRole } from "../data/monsters.ts";
 import type { BodyKind, Decor, Door, Facing, RoomPattern, RoomTheme, Side, Spawn, Stamp } from "../data/rooms.ts";
 import { EMPTY_GEAR, critFactor, type GearBonus } from "../data/items.ts";
+import { heroAbilityById, type RunAbility } from "../data/hero-abilities.ts";
+import { pointChance } from "../data/instances.ts";
 import { weaponById, type WeaponId } from "../data/weapons.ts";
 import {
   BLINK_CHARGES,
+  HERO_MP,
   BLINK_RANGE,
   HERO_HP,
   METER_STEP,
@@ -57,7 +60,9 @@ export type WindupKind =
   | "appear"
   | "emerge"
   | "land"
-  | "charge";
+  | "charge"
+  | "wisp"
+  | "spit";
 
 /** Отложенный удар. Владелец ждёт, срабатывание — его ход. Стан или смерть владельца удар отменяют. */
 export interface Windup {
@@ -100,7 +105,7 @@ export interface Fighter {
   stun: number;
   /** Тело под щитом. Пока щит цел, удар звучит как железо. */
   body: BodyKind;
-  /** Id из таблицы монстров. Пусто у героя. */
+  /** Id из таблицы монстров. Empty у героя. */
   kind: string;
   name: string;
   attrs: Attributes;
@@ -122,7 +127,7 @@ export interface Fighter {
   cooldowns: Record<string, number>;
   windup: Windup | null;
   mode: Mode;
-  /** Кровосос уже спал, мертвец уже прыгнул. */
+  /** Bloodsucker уже спал, мертвец уже прыгнул. */
   spent: boolean;
   /** Ходы паузы уголька, камни стража в этом полёте. */
   phase: number;
@@ -178,7 +183,13 @@ export type AbilityAct =
   | "hail"
   | "beam"
   | "shards"
-  | "sleep";
+  | "sleep"
+  | "bolt"
+  | "ward"
+  | "blizzard"
+  | "arrow"
+  | "quake"
+  | "shard";
 
 /** Короткий рисунок способности. Укус сюда не входит. */
 export type AbilityFx =
@@ -201,11 +212,14 @@ export interface RoomState {
   /** Монстры в порядке появления. Ходят в этом порядке, споры дописываются в конец. */
   monsters: Fighter[];
   hazards: Hazard[];
-  /** Стихия клетки, индекс y·w+x. На клетке одна стихия. Новая лужа живёт 5 ходов. */
+  /** Стихия клетки, индекс y·w+x. На клетке одна стихия. Новая лужа живёт 7 ходов. */
   ground: (GroundCell | null)[];
   /** Клетки, где в этот ход монстра уже убили. Пока герой не походил снова, сюда не встают. */
   bodies: Cell[];
   blink: number;
+  /** Остаток маны. Полная шкала в начале комнаты. */
+  mp: number;
+  maxMp: number;
   meterTurns: number;
   meterLevel: number;
   outcome: Outcome;
@@ -222,7 +236,7 @@ export interface RoomState {
   chairs: Cell[];
   /** Ключи уже разбитых бочек, чтобы комната помнила их после ухода. */
   broken: string[];
-  /** Золото на полу. Каждая запись — одна монета. */
+  /** Gold на полу. Каждая запись — одна монета. */
   piles: Cell[];
   /** Монеты, которые только что вылетели из бочки. Вид забирает их в кадр полёта. */
   drops: { from: Cell; to: Cell }[];
@@ -231,14 +245,26 @@ export interface RoomState {
   /** Подобранное золото. Живёт весь забег. */
   carried: number;
   weapon: WeaponId;
-  /** Патроны в магазине. Пусто у оружия без магазина. */
+  /** Патроны в магазине. Empty у оружия без магазина. */
   ammo: number | null;
-  /** Прибавка к каждому попаданию оружия. */
+  /** Damage попадания уже с уровнем оружия. Empty — брать базу каталога. */
+  weaponHit: number | null;
+  /** Прибавка к каждому попаданию оружия. Уже умножена уровнем экипировки. */
   weaponPower: number;
-  /** Шанс полностью избежать удара. Складывается, выше 1 не растёт. */
+  /** Шанс полностью избежать удара, уже посчитанный из очков. */
   dodge: number;
   critChance: number;
   critShare: number;
+  /** Надетые способности героя. Damage уже с уровнем экземпляра. */
+  abilities: (RunAbility | null)[];
+  /** Клетки выбора способности. Empty, когда игрок не целится. */
+  aim: Cell[] | null;
+  /** Огненный щит. Прочность 100 не растёт от заточки. Урон тика — уже с уровнем. */
+  ward: { hp: number; left: number; damage: number } | null;
+  /** Буран. Пусто — выключен. Мана тика не растёт от заточки. */
+  blizzard: { damage: number; mp: number } | null;
+  /** Зоны землетрясения. Новая комната начинает без них. */
+  quakes: { x: number; y: number; left: number; damage: number }[];
 }
 
 const ORTHO: Cell[] = [
@@ -372,7 +398,7 @@ export function swordCells(state: RoomState): Cell[] {
   return fanCells(state, 1);
 }
 
-/** Сколько выстрелов осталось. Пусто — это не огнестрел. */
+/** Сколько выстрелов осталось. Empty — это не огнестрел. */
 export function shotsLeft(state: RoomState): number | null {
   const magazine = weaponById(state.weapon).magazine;
   if (magazine === null) return null;
@@ -501,8 +527,9 @@ function unitsIn(state: RoomState, cells: readonly Cell[], except: Fighter | nul
   return boardUnits(state).filter((unit) => unit !== except && hasCell(cells, unit));
 }
 
-export function blinkCells(state: RoomState): Cell[] {
-  if (state.blink <= 0 || state.outcome === "lost" || state.hero.root > 0) return [];
+/** Diamond Blink без траты заряда. Leap садится сюда же. */
+function landingCells(state: RoomState): Cell[] {
+  if (state.outcome === "lost" || state.hero.root > 0) return [];
   const cells: Cell[] = [];
   for (let y = 0; y < state.room.h; y += 1) {
     for (let x = 0; x < state.room.w; x += 1) {
@@ -513,6 +540,11 @@ export function blinkCells(state: RoomState): Cell[] {
     }
   }
   return cells;
+}
+
+export function blinkCells(state: RoomState): Cell[] {
+  if (state.blink <= 0) return [];
+  return landingCells(state);
 }
 
 export interface RoomEntry {
@@ -527,8 +559,12 @@ export interface RoomEntry {
   ammo?: number | null;
   /** Id из таблицы монстров. В стартовой комнате монстр мёртв, id не нужен. */
   monsterKind?: string;
-  /** Надетая экипировка. Пусто — герой без прибавок. */
+  /** Надетая экипировка. Empty — герой без прибавок. Очки уклонения и крита, не готовый шанс. */
   gear?: GearBonus;
+  /** Damage попадания надетого экземпляра. Без поля — база каталога. */
+  weaponHit?: number | null;
+  abilities?: readonly (RunAbility | null)[];
+  abilityCd?: Readonly<Record<string, number>>;
 }
 
 export function createRoom(pattern: RoomPattern, entry: RoomEntry = {}): RoomState {
@@ -562,6 +598,10 @@ export function createRoom(pattern: RoomPattern, entry: RoomEntry = {}): RoomSta
     },
     "ground",
   );
+  for (const ability of entry.abilities ?? []) {
+    if (!ability) continue;
+    hero.cooldowns[ability.id] = entry.abilityCd?.[ability.id] ?? 0;
+  }
   return {
     room,
     exits: entry.exits ?? [],
@@ -573,6 +613,8 @@ export function createRoom(pattern: RoomPattern, entry: RoomEntry = {}): RoomSta
     ground: new Array<GroundCell | null>(room.w * room.h).fill(null),
     bodies: [],
     blink: BLINK_CHARGES,
+    mp: HERO_MP,
+    maxMp: HERO_MP,
     meterTurns: 0,
     meterLevel: 0,
     outcome: alive ? "play" : "won",
@@ -589,10 +631,16 @@ export function createRoom(pattern: RoomPattern, entry: RoomEntry = {}): RoomSta
     weapon: entry.weapon ?? "sword",
     ammo: entry.ammo !== undefined ? entry.ammo : weaponById(entry.weapon ?? "sword").magazine,
     weaponPower: gear.weaponPower,
-    dodge: gear.dodge,
-    critChance: gear.critChance,
+    dodge: pointChance(gear.dodge),
+    critChance: pointChance(gear.critChance),
     critShare: gear.critShare,
-    note: alive ? weaponById(entry.weapon ?? "sword").figure : "Здесь пусто. Двери открыты.",
+    weaponHit: entry.weaponHit === undefined ? null : entry.weaponHit,
+    abilities: [...(entry.abilities ?? [])],
+    aim: null,
+    ward: null,
+    blizzard: null,
+    quakes: [],
+    note: alive ? weaponById(entry.weapon ?? "sword").figure : "Nothing here. The doors are open.",
   };
 }
 
@@ -612,7 +660,7 @@ function vacant(state: RoomState, x: number, y: number): boolean {
   return isFloor(state.room, x, y) && !isBlocked(state.room, x, y) && !taken(state, x, y);
 }
 
-/** Комната пройдена, когда не осталось живых монстров. Споры дверь не держат. */
+/** Dungeon пройдена, когда не осталось живых монстров. Споры дверь не держат. */
 function cleared(state: RoomState): boolean {
   return state.monsters.every((monster) => monster.hp <= 0 || monster.role === "spore");
 }
@@ -621,7 +669,7 @@ function finish(state: RoomState): Outcome {
   if (state.hero.hp <= 0) {
     state.hero.hp = 0;
     state.outcome = "lost";
-    state.note = "Забег оборвался.";
+    state.note = "The run is over.";
     return state.outcome;
   }
   if (cleared(state)) {
@@ -646,7 +694,8 @@ function tickMeter(state: RoomState, refreshed: boolean): void {
 }
 
 function swordDamage(state: RoomState): number {
-  const hit = weaponById(state.weapon).hitDamage + state.weaponPower + state.meterLevel * METER_STEP;
+  const base = state.weaponHit === null ? weaponById(state.weapon).hitDamage : state.weaponHit;
+  const hit = base + state.weaponPower + state.meterLevel * METER_STEP;
   return hit * critFactor(state.critChance, state.critShare);
 }
 
@@ -800,13 +849,37 @@ function hurt(state: RoomState, target: Fighter, amount: number, type: DamageTyp
     stunUnit(state, target, ELEMENTS.iceStun);
     target.iceGuard = ELEMENTS.iceStunCooldown;
   }
-  const dealt = amount * damageFactor(target, type);
-  target.hp -= dealt;
-  if (type === "fire") target.burn = ELEMENTS.fireTurns;
-  if (type === "earth") target.oil = ELEMENTS.oilTurns;
-  if (type === "water") target.wet = ELEMENTS.wetTurns;
+  const raw = amount * damageFactor(target, type);
+  const dealt = target === state.hero ? wardAbsorb(state, raw, type) : raw;
+  if (dealt > 0) {
+    target.hp -= dealt;
+    if (type === "fire") target.burn = ELEMENTS.fireTurns;
+    if (type === "earth") target.oil = ELEMENTS.oilTurns;
+    if (type === "water") target.wet = ELEMENTS.wetTurns;
+  }
   landed(state, target, dealt, source, rng);
   return dealt;
+}
+
+/**
+ * Огненный щит принимает удар раньше HP.
+ * Огонь прочность не снимает и до HP не доходит. Вода снимает вдвое. Остальное один к одному.
+ * На нуле щит спадает, в HP идёт недопоглощённый остаток этого удара.
+ */
+function wardAbsorb(state: RoomState, dealt: number, type: DamageType): number {
+  const ward = state.ward;
+  if (!ward || dealt <= 0) return dealt;
+  if (type === "fire") return 0;
+  const rate = type === "water" ? 2 : 1;
+  const cost = dealt * rate;
+  if (cost <= ward.hp) {
+    ward.hp -= cost;
+    if (ward.hp <= 0) state.ward = null;
+    return 0;
+  }
+  const absorbed = ward.hp / rate;
+  state.ward = null;
+  return dealt - absorbed;
 }
 
 /** Порция яда: стаки прибавляются, окно снова полное. */
@@ -833,7 +906,7 @@ function landed(state: RoomState, target: Fighter, dealt: number, source: Fighte
   if (target.hp <= 0) kill(state, target, rng);
 }
 
-/** Меч, топор, клинки, копьё и перчатки снимают 2. Посох и огнестрел — 1, и 2, если цель в клетке прямо перед героем. */
+/** Sword, топор, клинки, копьё и перчатки снимают 2. Staff и огнестрел — 1, и 2, если цель в клетке прямо перед героем. */
 function heroShieldPoints(state: RoomState, target: Fighter): number {
   const id = state.weapon;
   if (id === "sword" || id === "axe" || id === "dual" || id === "spear" || id === "gloves") return 2;
@@ -842,7 +915,7 @@ function heroShieldPoints(state: RoomState, target: Fighter): number {
   return inFace ? 2 : 1;
 }
 
-/** Урон монстра по монстру снимает 1. */
+/** Damage монстра по монстру снимает 1. */
 function chip(state: RoomState, target: Fighter, points: number, byHero: boolean): void {
   if (target.maxShield <= 0 || target.shield <= 0) return;
   target.shield = Math.max(0, target.shield - points);
@@ -1013,7 +1086,7 @@ function stepToward(state: RoomState, monster: Fighter, rng: () => number): stri
   faceToward(monster, next);
   monster.x = next.x;
   monster.y = next.y;
-  return breakObject(state, next, rng) ? "Объект разбит." : "";
+  return breakObject(state, next, rng) ? "Object broken." : "";
 }
 
 /** Укус вплотную по ортогонали, иначе шаг к герою. Без автоатаки монстр не подходит. */
@@ -1024,12 +1097,26 @@ function biteOrStep(state: RoomState, monster: Fighter, rng: () => number): stri
     faceToward(monster, state.hero);
     hurt(state, state.hero, bite, "physical", monster, rng);
     state.strike = { from: spot(monster), to: spot(state.hero) };
-    return "Монстр бьёт вплотную.";
+    return "The monster bites in melee.";
   }
   return stepToward(state, monster, rng);
 }
 
-/** Путь рывка по ортогонали к герою, не дальше `max` и до клетки вплотную. */
+/** Прямой рывок по одной оси, не дальше `max` и не на клетку героя. */
+function axisDash(state: RoomState, monster: Fighter, max: number): Cell[] {
+  const hero = state.hero;
+  if (hero.x !== monster.x && hero.y !== monster.y) return [];
+  const step = { x: Math.sign(hero.x - monster.x), y: Math.sign(hero.y - monster.y) };
+  const path: Cell[] = [];
+  let at = spot(monster);
+  for (let moved = 0; moved < max && manhattan(hero, at) > 1; moved += 1) {
+    const next = { x: at.x + step.x, y: at.y + step.y };
+    if (isBlocked(state.room, next.x, next.y) || taken(state, next.x, next.y)) break;
+    path.push(next);
+    at = next;
+  }
+  return path;
+}
 function planDash(state: RoomState, monster: Fighter, max: number, rng: () => number): Cell[] {
   const hero = state.hero;
   const room = state.room;
@@ -1075,14 +1162,15 @@ function windup(kind: WindupKind, turns: number, cells: Cell[], center: Cell, ta
   return { kind, turns, cells, center: spot(center), target };
 }
 
-/** Клетка, где игрок стоит в момент каста. Пёс метит её и приходит туда через ход. */
+/** Клетка игрока, если он на одной линии. Иначе пёс идёт шагом. */
 function dogTurn(state: RoomState, monster: Fighter, rng: () => number): string {
   const cell = spot(state.hero);
-  if (manhattan(monster, cell) > 1 && ready(monster, "dash") && monster.root === 0) {
+  const aligned = cell.x === monster.x || cell.y === monster.y;
+  if (aligned && manhattan(monster, cell) > 1 && ready(monster, "dash") && monster.root === 0) {
     monster.windup = windup("charge", KIT.dog.delay, [cell], cell);
     monster.cooldowns.dash = KIT.dog.cooldown;
     faceToward(monster, cell);
-    return "Пёс готовит рывок.";
+    return "The hound lines up a charge.";
   }
   return biteOrStep(state, monster, rng);
 }
@@ -1093,10 +1181,11 @@ function dashTurn(
   kit: { dash: number; damage: number; cooldown: number },
   type: DamageType,
   rng: () => number,
+  straight = false,
 ): string {
   const hero = state.hero;
   if (manhattan(monster, hero) > 1 && ready(monster, "dash") && monster.root === 0) {
-    const path = planDash(state, monster, kit.dash, rng);
+    const path = straight ? axisDash(state, monster, kit.dash) : planDash(state, monster, kit.dash, rng);
     if (path.length > 0) {
       const from = spot(monster);
       for (const cell of path) {
@@ -1111,9 +1200,9 @@ function dashTurn(
       if (manhattan(monster, hero) === 1) {
         faceToward(monster, hero);
         hurt(state, hero, kit.damage, type, monster, rng);
-        return "Рывок ударил.";
+        return "The dash connected.";
       }
-      return "Рывок.";
+      return "Dash.";
     }
   }
   return biteOrStep(state, monster, rng);
@@ -1123,12 +1212,10 @@ function spiderTurn(state: RoomState, monster: Fighter, rng: () => number): stri
   const hero = state.hero;
   if (ready(monster, "shot") && manhattan(monster, hero) <= KIT.spider.range) {
     const target = spot(hero);
-    faceToward(monster, target);
-    for (const unit of unitsIn(state, [target], monster)) hurt(state, unit, KIT.spider.stacks, "poison", monster, rng);
-    writeGround(state, target, "poison", KIT.spider.stacks, rng);
+    monster.windup = windup("spit", KIT.spider.delay, [target], target);
     monster.cooldowns.shot = KIT.spider.cooldown;
-    state.fx.push({ kind: "shot", from: spot(monster), to: target, tone: "poison", act: "spit" });
-    return "Паук плюнул ядом.";
+    faceToward(monster, target);
+    return "The spider marks a spit.";
   }
   return biteOrStep(state, monster, rng);
 }
@@ -1139,7 +1226,7 @@ function corpseTurn(state: RoomState, monster: Fighter, rng: () => number): stri
     monster.spent = true;
     monster.windup = windup("jump", KIT.corpse.delay, square(state, hero, KIT.corpse.radius), hero);
     faceToward(monster, hero);
-    return "Мертвец готовит прыжок.";
+    return "The corpse readies a leap.";
   }
   return biteOrStep(state, monster, rng);
 }
@@ -1150,7 +1237,7 @@ function golemTurn(state: RoomState, monster: Fighter, rng: () => number): strin
     monster.windup = windup("stone", KIT.golem.delay, [target], target);
     monster.cooldowns.stone = KIT.golem.cooldown;
     faceToward(monster, target);
-    return "Голем замахнулся камнем.";
+    return "The golem winds up a stone.";
   }
   return biteOrStep(state, monster, rng);
 }
@@ -1158,7 +1245,7 @@ function golemTurn(state: RoomState, monster: Fighter, rng: () => number): strin
 function sleepTurn(monster: Fighter): string {
   monster.hp = Math.min(monster.maxHp, monster.hp + monster.maxHp * KIT.bat.heal);
   if (monster.hp >= monster.maxHp) monster.mode = "ground";
-  return "Кровосос спит и лечится.";
+  return "The bloodsucker sleeps and heals.";
 }
 
 function batTurn(state: RoomState, monster: Fighter, rng: () => number): string {
@@ -1177,7 +1264,7 @@ function batTurn(state: RoomState, monster: Fighter, rng: () => number): string 
       faceToward(monster, hero);
       monster.cooldowns.swoop = KIT.bat.cooldown;
       state.fx.push({ kind: "dash", from, to: spot(monster), tone: "physical", act: "swoop" });
-      return "Кровосос налетел.";
+      return "The bloodsucker swooped.";
     }
   }
   return biteOrStep(state, monster, rng);
@@ -1237,28 +1324,23 @@ function skeletonTurn(state: RoomState, monster: Fighter, rng: () => number): st
       monster.windup = windup("swing", KIT.skeleton.delay, cells, monster);
       monster.cooldowns.swing = KIT.skeleton.cooldown;
       faceToward(monster, state.hero);
-      return "Скелет заносит меч.";
+      return "The skeleton raises its sword.";
     }
   }
   return biteOrStep(state, monster, rng);
 }
 
-function spiritTurn(state: RoomState, monster: Fighter, rng: () => number): string {
-  const hero = state.hero;
+function spiritTurn(state: RoomState, monster: Fighter, _rng: () => number): string {
   if (ready(monster, "blink") && monster.root === 0) {
-    const cell = beside(state, hero, monster);
+    const cell = beside(state, state.hero, monster);
     if (cell) {
-      const from = spot(monster);
-      arrive(state, monster, cell, rng);
-      faceToward(monster, hero);
+      monster.windup = windup("wisp", KIT.spirit.delay, [cell], cell);
       monster.cooldowns.blink = KIT.spirit.cooldown;
-      state.fx.push({ kind: "blink", from, to: spot(monster), act: "wisp" });
-      hurt(state, hero, KIT.spirit.damage, "physical", monster, rng);
-      if (hero.hp <= 0) return "Дух ударил из блинка.";
-      return `Дух ударил из блинка. ${biteOrStep(state, monster, rng)}`.trim();
+      faceToward(monster, cell);
+      return "The spirit marks a cell.";
     }
   }
-  return biteOrStep(state, monster, rng);
+  return biteOrStep(state, monster, _rng);
 }
 
 function mushroomTurn(state: RoomState, monster: Fighter, rng: () => number): string {
@@ -1287,7 +1369,7 @@ function mushroomTurn(state: RoomState, monster: Fighter, rng: () => number): st
       state.monsters.push(monsterFighter(SPORE, { x: cell.x, y: cell.y, facing: monster.facing }, true));
       monster.cooldowns.spore = KIT.mushroom.cooldown;
       state.fx.push({ kind: "shot", from: spot(monster), to: cell, tone: "poison", act: "spore" });
-      return "Грибник выпустил спору.";
+      return "The mushroom released a spore.";
     }
   }
   return "";
@@ -1299,7 +1381,7 @@ function sporeTurn(state: RoomState, monster: Fighter, rng: () => number): strin
   );
   if (near) {
     monster.windup = windup("fuse", KIT.spore.fuse, square(state, monster, KIT.spore.radius), monster);
-    return "Спора набухает.";
+    return "The spore swells.";
   }
   if (monster.root > 0) return "";
   const gap = manhattan(monster, state.hero);
@@ -1322,7 +1404,7 @@ function emberTurn(state: RoomState, monster: Fighter, rng: () => number): strin
     monster.phase = KIT.ember.pause;
     monster.cooldowns.vanish = KIT.ember.cooldown;
     state.fx.push({ kind: "area", cells: [spot(monster)], tone: "fire", act: "vanish" });
-    return "Уголёк исчез.";
+    return "The ember vanished.";
   }
   return biteOrStep(state, monster, rng);
 }
@@ -1337,17 +1419,17 @@ function emberGone(state: RoomState, monster: Fighter, rng: () => number): strin
   if (!cell) {
     monster.mode = "ground";
     arrive(state, monster, monster.anchor ?? monster, rng);
-    return "Уголёк вернулся на своё место.";
+    return "The ember returned to its spot.";
   }
   monster.windup = windup("appear", KIT.ember.delay, square(state, cell, KIT.ember.radius), cell);
-  return "Уголёк метит клетку.";
+  return "The ember marks a cell.";
 }
 
 function wormTurn(state: RoomState, monster: Fighter, rng: () => number): string {
   if (ready(monster, "dig") && monster.root === 0) {
     state.fx.push({ kind: "area", cells: [spot(monster)], tone: "earth", act: "dig" });
     monster.mode = "under";
-    return "Червь закопался.";
+    return "The worm burrowed.";
   }
   return biteOrStep(state, monster, rng);
 }
@@ -1372,7 +1454,7 @@ function wormUnder(state: RoomState, monster: Fighter, rng: () => number): strin
   }
   if (sameCell(monster, hero)) {
     monster.windup = windup("emerge", KIT.worm.delay, square(state, hero, KIT.worm.radius), hero);
-    return "Земля дрожит под героем.";
+    return "The ground shakes under the hero.";
   }
   return "";
 }
@@ -1381,7 +1463,7 @@ function acolyteTurn(state: RoomState, monster: Fighter): string {
   if (ready(monster, "spires")) {
     monster.windup = windup("spires", KIT.acolyte.delay, square(state, state.hero, KIT.acolyte.radius), state.hero);
     monster.cooldowns.spires = KIT.acolyte.cooldown;
-    return "Послушник поднимает шпили.";
+    return "The acolyte raises spires.";
   }
   return "";
 }
@@ -1391,7 +1473,7 @@ function chestTurn(state: RoomState, monster: Fighter, rng: () => number): strin
   if (manhattan(monster, hero) > KIT.chest.reach) {
     monster.windup = windup("tongue", KIT.chest.delay, square(state, hero, KIT.chest.radius), hero);
     faceToward(monster, hero);
-    return "Сундук выбросил язык.";
+    return "The chest lashed its tongue.";
   }
   return biteOrStep(state, monster, rng);
 }
@@ -1407,7 +1489,7 @@ function gargoyleTurn(state: RoomState, monster: Fighter, rng: () => number): st
     monster.anchor = spot(monster);
     monster.phase = 0;
     gargoyleAir(state, monster);
-    return "Страж взлетел.";
+    return "The gargoyle took off.";
   }
   return biteOrStep(state, monster, rng);
 }
@@ -1417,10 +1499,10 @@ function gargoyleAir(state: RoomState, monster: Fighter): string {
   if (monster.phase < KIT.gargoyle.stones) {
     markRock(state, monster);
     monster.phase += 1;
-    return "Страж метит камень.";
+    return "The gargoyle marks a stone.";
   }
   monster.windup = windup("land", KIT.gargoyle.landDelay, square(state, state.hero, KIT.gargoyle.radius), state.hero);
-  return "Страж идёт на посадку.";
+  return "The gargoyle comes in to land.";
 }
 
 /** Кольца вокруг клетки героя: центр с задержкой 1, каждое следующее кольцо на ход позже. */
@@ -1448,7 +1530,7 @@ function drownedTurn(state: RoomState, monster: Fighter, rng: () => number): str
   if (ready(monster, "geyser")) {
     castRings(state, monster, "geyser", KIT.drowned.rings);
     monster.cooldowns.geyser = KIT.drowned.geyserCooldown;
-    return "Утопленник поднял гейзеры.";
+    return "The drowned raised geysers.";
   }
   if (ready(monster, "throw")) {
     const target = throwTarget(state, monster, rng);
@@ -1458,7 +1540,7 @@ function drownedTurn(state: RoomState, monster: Fighter, rng: () => number): str
       target.mode = "held";
       monster.windup = windup("throw", KIT.drowned.throwDelay, square(state, landing, KIT.drowned.radius), landing, target);
       monster.cooldowns.throw = KIT.drowned.throwCooldown;
-      return "Утопленник схватил существо.";
+      return "The drowned grabbed a creature.";
     }
   }
   return biteOrStep(state, monster, rng);
@@ -1479,20 +1561,21 @@ function whisperTurn(state: RoomState, monster: Fighter, rng: () => number): str
         target.charmers.push(monster);
         monster.cooldowns.charm = KIT.whisper.charmCooldown;
         state.fx.push({ kind: "line", from: spot(monster), to: spot(target), tone: "ice", act: "charm" });
-        return "Шёпот очаровал монстра.";
+        return "The whisper charmed a monster.";
       }
     }
   }
   if (ready(monster, "hail")) {
     castRings(state, monster, "hail", KIT.whisper.rings);
     monster.cooldowns.hail = KIT.whisper.hailCooldown;
-    return "Шёпот вызвал град.";
+    return "The whisper called down hail.";
   }
-  const line = beamCells(state, monster, state.hero, KIT.whisper.beamRange);
+  const aligned = state.hero.x === monster.x || state.hero.y === monster.y;
+  const line = aligned ? beamCells(state, monster, state.hero, KIT.whisper.beamRange) : [];
   if (line.length > 0) {
     monster.windup = windup("beam", KIT.whisper.beamDelay, line, state.hero);
     faceToward(monster, state.hero);
-    return "Шёпот целится лучом.";
+    return "The whisper aims a beam.";
   }
   return "";
 }
@@ -1502,7 +1585,7 @@ function roleTurn(state: RoomState, monster: Fighter, rng: () => number): string
     case "dog":
       return dogTurn(state, monster, rng);
     case "hound":
-      return dashTurn(state, monster, KIT.hound, "fire", rng);
+      return dashTurn(state, monster, KIT.hound, "fire", rng, true);
     case "goblin":
       return dashTurn(state, monster, KIT.goblin, "physical", rng);
     case "spider":
@@ -1547,13 +1630,20 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
     case "swing": {
       for (const unit of unitsIn(state, cast.cells, monster)) hurt(state, unit, KIT.skeleton.damage, "physical", monster, rng);
       state.fx.push({ kind: "area", cells: cast.cells, tone: "physical", act: "slash" });
-      return "Скелет рубанул.";
+      return "The skeleton swung.";
     }
     case "stone": {
       for (const unit of unitsIn(state, cast.cells, monster)) hurt(state, unit, KIT.golem.damage, "earth", monster, rng);
       pour(state, cast.cells, "earth", 0, rng);
       state.fx.push({ kind: "shot", from: spot(monster), to: cast.center, tone: "earth", act: "rock" });
-      return "Камень голема упал.";
+      return "The golem's stone landed.";
+    }
+    case "spit": {
+      const cell = spot(cast.center);
+      for (const unit of unitsIn(state, [cell], monster)) hurt(state, unit, KIT.spider.stacks, "poison", monster, rng);
+      writeGround(state, cell, "poison", KIT.spider.stacks, rng);
+      state.fx.push({ kind: "shot", from: spot(monster), to: cell, tone: "poison", act: "spit" });
+      return "The spider spat poison.";
     }
     case "jump": {
       const from = spot(monster);
@@ -1564,7 +1654,7 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
       state.fx.push({ kind: "shot", from, to: spot(monster), tone: "poison", act: "leap" });
       state.fx.push({ kind: "area", cells: cast.cells, tone: "poison", act: "pop" });
       kill(state, monster, rng);
-      return "Мертвец лопнул ядом.";
+      return "The corpse burst into poison.";
     }
     case "tongue": {
       const hero = state.hero;
@@ -1575,7 +1665,7 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
         const plain = caught.filter((unit) => !specOf(unit)?.rare);
         target = pick(plain.length > 0 ? plain : caught, rng);
       }
-      if (!target) return "Язык схватил пустоту.";
+      if (!target) return "The tongue caught nothing.";
       const from = spot(target);
       stunUnit(state, target, KIT.chest.stun);
       if (target.root === 0) {
@@ -1587,19 +1677,19 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
         }
       }
       state.fx.push({ kind: "line", from: spot(monster), to: from, tone: "control", act: "tongue" });
-      return target === hero ? "Язык схватил героя." : "Язык схватил монстра.";
+      return target === hero ? "The tongue caught the hero." : "The tongue caught a monster.";
     }
     case "spires": {
       for (const unit of unitsIn(state, cast.cells, monster)) unit.root = Math.max(unit.root, KIT.acolyte.root);
       state.fx.push({ kind: "area", cells: cast.cells, tone: "control", act: "spires" });
-      return "Шпили сковали.";
+      return "Spires locked the ground.";
     }
     case "beam": {
       for (const unit of unitsIn(state, cast.cells, monster)) hurt(state, unit, KIT.whisper.beam, "ice", monster, rng);
       pour(state, cast.cells, "ice", 0, rng);
       const end = cast.cells[cast.cells.length - 1] ?? cast.center;
       state.fx.push({ kind: "line", from: spot(monster), to: end, tone: "ice", act: "beam" });
-      return "Ледяной луч.";
+      return "Ice beam.";
     }
     case "throw": {
       const target = cast.target;
@@ -1613,7 +1703,7 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
       pour(state, cast.cells, "water", 0, rng);
       state.fx.push({ kind: "shot", from, to: spot(target), tone: "water", act: "throw" });
       state.fx.push({ kind: "area", cells: cast.cells, tone: "water", act: "splash" });
-      return "Утопленник швырнул существо.";
+      return "The drowned threw the creature.";
     }
     case "fuse": {
       for (const unit of unitsIn(state, cast.cells, monster)) {
@@ -1622,7 +1712,7 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
       pour(state, cast.cells, "poison", KIT.spore.stacks, rng);
       state.fx.push({ kind: "area", cells: cast.cells, tone: "poison", act: "pop" });
       kill(state, monster, rng);
-      return "Спора лопнула.";
+      return "The spore burst.";
     }
     case "appear": {
       const from = monster.anchor ?? spot(monster);
@@ -1632,7 +1722,7 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
       pour(state, cast.cells, "fire", 0, rng);
       state.fx.push({ kind: "blink", from, to: spot(monster), act: "flare" });
       state.fx.push({ kind: "area", cells: cast.cells, tone: "fire", act: "flare" });
-      return "Уголёк вспыхнул рядом.";
+      return "The ember flared nearby.";
     }
     case "emerge": {
       monster.mode = "ground";
@@ -1643,7 +1733,7 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
       for (const unit of hit) knock(state, unit, cast.center, KIT.worm.push, rng);
       monster.cooldowns.dig = KIT.worm.cooldown;
       state.fx.push({ kind: "area", cells: cast.cells, tone: "earth", act: "emerge" });
-      return "Червь вынырнул.";
+      return "The worm surfaced.";
     }
     case "charge": {
       const from = spot(monster);
@@ -1652,7 +1742,19 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
       arrive(state, monster, cell, rng);
       faceToward(monster, cell);
       state.fx.push({ kind: "dash", from, to: spot(monster), tone: "physical", act: "dash" });
-      return "Пёс ворвался.";
+      return "The hound crashed in.";
+    }
+    case "wisp": {
+      const from = spot(monster);
+      const cell = spot(cast.center);
+      arrive(state, monster, cell, rng);
+      faceToward(monster, state.hero);
+      state.fx.push({ kind: "blink", from, to: spot(monster), act: "wisp" });
+      if (state.hero.hp > 0 && chebyshev(state.hero, monster) <= 1) {
+        hurt(state, state.hero, KIT.spirit.damage, "physical", monster, rng);
+        return "The spirit struck from its blink.";
+      }
+      return "The spirit appeared.";
     }
     case "land": {
       monster.mode = "ground";
@@ -1663,7 +1765,7 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
       for (const unit of hit) knock(state, unit, cast.center, KIT.gargoyle.landPush, rng);
       monster.cooldowns.flight = KIT.gargoyle.rest;
       state.fx.push({ kind: "area", cells: cast.cells, tone: "physical", act: "land" });
-      return "Страж приземлился.";
+      return "The gargoyle landed.";
     }
   }
 }
@@ -1678,7 +1780,7 @@ function resolveHazard(state: RoomState, hazard: Hazard, rng: () => number): str
     const from = owner.anchor ?? spot(owner);
     if (heroHit && hero.hp > 0) knock(state, hero, from, KIT.gargoyle.stonePush, rng, DIRS[BACK[hero.facing]]);
     state.fx.push({ kind: "shot", from, to: hazard.center, tone: "earth", act: "fall" });
-    return "Камень с неба.";
+    return "A stone from above.";
   }
   const water = hazard.kind === "geyser";
   const type: DamageType = water ? "water" : "ice";
@@ -1686,7 +1788,7 @@ function resolveHazard(state: RoomState, hazard: Hazard, rng: () => number): str
   for (const unit of unitsIn(state, hazard.cells, owner)) hurt(state, unit, amount, type, owner, rng);
   pour(state, hazard.cells, type, 0, rng);
   state.fx.push({ kind: "area", cells: hazard.cells, tone: type, act: water ? "geyser" : "hail" });
-  return water ? "Гейзер." : "Град.";
+  return water ? "Geyser." : "Hail.";
 }
 
 /* ---------- ход монстров и тики ---------- */
@@ -1724,7 +1826,7 @@ function monsterTurn(state: RoomState, monster: Fighter, rng: () => number): str
       if (monster.stun === 0 && monster.maxShield > 0 && monster.shield === 0) {
         monster.shield = monster.maxShield;
         tickRoot(monster);
-        return "Стан кончился. Щит восстановлен.";
+        return "Stun ended. Shield restored.";
       }
     }
     tickRoot(monster);
@@ -1770,7 +1872,10 @@ function monsterPhase(state: RoomState, rng: () => number): string {
 /** Тик в конце раунда без брони источника, щита и вампиризма. */
 function tickHit(state: RoomState, unit: Fighter, amount: number, type: DamageType, rng: () => number): void {
   if (amount <= 0 || immuneTo(unit, type)) return;
-  unit.hp -= amount * damageFactor(unit, type);
+  const raw = amount * damageFactor(unit, type);
+  const dealt = unit === state.hero ? wardAbsorb(state, raw, type) : raw;
+  if (dealt <= 0) return;
+  unit.hp -= dealt;
   if (unit.hp <= 0) kill(state, unit, rng);
 }
 
@@ -1825,7 +1930,10 @@ function tickWorld(state: RoomState, rng: () => number): void {
 /** Раунд после хода героя: живые монстры в порядке появления, затем тики. */
 function round(state: RoomState, rng: () => number): string {
   const world = monsterPhase(state, rng);
-  if (state.hero.hp > 0 && !cleared(state)) tickWorld(state, rng);
+  if (state.hero.hp > 0) {
+    if (!cleared(state)) tickWorld(state, rng);
+    heroZones(state, rng);
+  }
   return world;
 }
 
@@ -1869,7 +1977,7 @@ function fallIntoPit(state: RoomState, pit: Cell, from: Cell, dir: Dir, rng: () 
   state.hero.x = place.x;
   state.hero.y = place.y;
   const got = dead ? 0 : takeGold(state);
-  state.note = got > 0 ? "Обрыв. Золото." : "Обрыв.";
+  state.note = got > 0 ? "The drop. Gold." : "The drop.";
   if (finish(state) === "lost") return true;
   afterAction(state, false, rng);
   return true;
@@ -1957,10 +2065,18 @@ function canControl(state: RoomState): boolean {
 /** Начало хода героя: тела, убитые в прошлый ход, больше не держат клетку. */
 function beginHeroTurn(state: RoomState): void {
   state.bodies = [];
+  if (state.hero.stun > 0) return;
+  const seen = new Set<string>();
+  for (const ability of state.abilities) {
+    if (!ability || seen.has(ability.id)) continue;
+    seen.add(ability.id);
+    const left = state.hero.cooldowns[ability.id] ?? 0;
+    if (left > 0) state.hero.cooldowns[ability.id] = left - 1;
+  }
 }
 
 function doorsNote(state: RoomState): string {
-  return ` Враг пал. Blink +1.${state.exits.length > 0 ? " Двери открыты." : ""}`;
+  return ` Enemy down. Blink +1.${state.exits.length > 0 ? " Doors are open." : ""}`;
 }
 
 /**
@@ -1987,7 +2103,7 @@ function afterAction(state: RoomState, refreshed: boolean, rng: () => number): v
   while (state.outcome === "play" && hero.hp > 0 && hero.stun > 0 && !cleared(state)) {
     hero.stun -= 1;
     tickRoot(hero);
-    parts.push("Герой в стане.", round(state, rng));
+    parts.push("Hero is stunned.", round(state, rng));
   }
   const outcome = finish(state);
   if (outcome === "lost") return;
@@ -1998,7 +2114,7 @@ function afterAction(state: RoomState, refreshed: boolean, rng: () => number): v
 export function face(state: RoomState, dir: Dir): void {
   if (!canControl(state)) return;
   state.hero.facing = dir;
-  state.note = "Поворот.";
+  state.note = "Turn.";
 }
 
 export function step(state: RoomState, dir: Dir, rng: () => number = Math.random): boolean {
@@ -2014,7 +2130,7 @@ export function step(state: RoomState, dir: Dir, rng: () => number = Math.random
     if (!exit) return false;
     state.hero.facing = dir;
     if (state.outcome !== "won") {
-      state.note = "Двери закрыты, пока жив хоть один монстр.";
+      state.note = "The doors stay shut while any monster lives.";
       return false;
     }
     state.leaving = exit.side;
@@ -2022,7 +2138,7 @@ export function step(state: RoomState, dir: Dir, rng: () => number = Math.random
   }
   if (state.hero.root > 0) {
     state.hero.facing = dir;
-    state.note = "Шпили держат ноги: шагнуть нельзя.";
+    state.note = "Spires pin your legs. You cannot step.";
     return false;
   }
   if (isPit(state.room, x, y)) {
@@ -2034,8 +2150,8 @@ export function step(state: RoomState, dir: Dir, rng: () => number = Math.random
   state.hero.y = y;
   const broke = breakObject(state, { x, y }, rng);
   const got = takeGold(state);
-  state.note = broke ? "Объект разбит." : "Шаг.";
-  if (got > 0) state.note = `${state.note} Золото.`;
+  state.note = broke ? "Object broken." : "Step.";
+  if (got > 0) state.note = `${state.note} Gold.`;
   afterAction(state, false, rng);
   return true;
 }
@@ -2058,16 +2174,16 @@ export function attack(state: RoomState, rng: () => number = Math.random): boole
   const weapon = weaponById(state.weapon);
   if (weapon.magazine !== null && shotsLeft(state) === 0) {
     if (weapon.id === "pistol") return reload(state, rng);
-    state.note = "Магазин пуст.";
+    state.note = "Magazine empty.";
     return false;
   }
   const smashed = breakBarrels(state, attackCells(state), rng) + breakChairs(state, attackCells(state), rng);
-  const smashedNote = smashed > 0 ? " Объект разбит." : "";
+  const smashedNote = smashed > 0 ? " Object broken." : "";
   const targets = struck(state);
   const times = targets.length === 0 ? 0 : weapon.twice ? 2 : 1;
   if (weapon.magazine !== null) state.ammo = (shotsLeft(state) ?? weapon.magazine) - 1;
   if (times === 0) {
-    state.note = `${weapon.name} никого не задел. Ход всё равно потрачен.${smashedNote}`;
+    state.note = `${weapon.name} hit nothing. The turn is still spent.${smashedNote}`;
     afterAction(state, false, rng);
     return true;
   }
@@ -2076,27 +2192,27 @@ export function attack(state: RoomState, rng: () => number = Math.random): boole
     for (let hit = 0; hit < times; hit += 1) hurt(state, target, swordDamage(state), "physical", state.hero, rng);
   }
   const broke = targets.some((target, index) => (shields[index] ?? 0) > 0 && target.shield === 0);
-  state.note = `${broke ? "Щит сорван. Монстр в стане, Blink вернулся." : "Удар."}${smashedNote}`;
+  state.note = `${broke ? "Shield broken. The monster is stunned, and Blink is back." : "Hit."}${smashedNote}`;
   afterAction(state, broke, rng);
   return true;
 }
 
-/** Перезарядка на R. Полный магазин или оружие без магазина ход не тратит. */
+/** Reload на R. Полный магазин или оружие без магазина ход не тратит. */
 export function reload(state: RoomState, rng: () => number = Math.random): boolean {
   if (!canControl(state)) return false;
   beginHeroTurn(state);
   const weapon = weaponById(state.weapon);
   if (weapon.magazine === null) {
-    state.note = "Это оружие не перезаряжается.";
+    state.note = "This weapon does not reload.";
     return false;
   }
   const left = shotsLeft(state) ?? 0;
   if (left >= weapon.magazine) {
-    state.note = "Магазин полон.";
+    state.note = "Magazine full.";
     return false;
   }
   state.ammo = weapon.magazine;
-  state.note = "Перезарядка.";
+  state.note = "Reload.";
   afterAction(state, false, rng);
   return true;
 }
@@ -2104,7 +2220,7 @@ export function reload(state: RoomState, rng: () => number = Math.random): boole
 export function wait(state: RoomState, rng: () => number = Math.random): void {
   if (!canControl(state)) return;
   beginHeroTurn(state);
-  state.note = "Пропуск хода.";
+  state.note = "Wait.";
   afterAction(state, false, rng);
 }
 
@@ -2118,9 +2234,272 @@ export function blink(state: RoomState, x: number, y: number, rng: () => number 
   const broke = breakObject(state, { x, y }, rng);
   const got = takeGold(state);
   const bits = ["Blink."];
-  if (broke) bits.push("Объект разбит.");
-  if (got > 0) bits.push("Золото.");
-  bits.push("Мир не ходил.");
+  if (broke) bits.push("Object broken.");
+  if (got > 0) bits.push("Gold.");
+  bits.push("The world did not move.");
   state.note = bits.join(" ");
+  return true;
+}
+
+function swordHit(state: RoomState): number {
+  return state.weaponHit === null ? weaponById(state.weapon).hitDamage : state.weaponHit;
+}
+
+function facingRay(state: RoomState): Cell[] {
+  const step = DIRS[state.hero.facing];
+  const cells: Cell[] = [];
+  let x = state.hero.x + step.x;
+  let y = state.hero.y + step.y;
+  while (isFloor(state.room, x, y) && !isBlocked(state.room, x, y) && !isPit(state.room, x, y)) {
+    cells.push({ x, y });
+    x += step.x;
+    y += step.y;
+  }
+  return cells;
+}
+
+function sameSpot(a: Cell, b: Cell): boolean {
+  return a.x === b.x && a.y === b.y;
+}
+
+function monsterAt(state: RoomState, cell: Cell): Fighter | undefined {
+  return state.monsters.find((monster) => onBoard(monster) && monster.x === cell.x && monster.y === cell.y);
+}
+
+const BOLT_CAP = 5;
+const WARD_TURNS = 5;
+const WARD_HP = 100;
+const QUAKE_TURNS = 4;
+const ARROW_STACKS = 1;
+const BLIZZARD_REACH = 2;
+const NEAR = 1;
+
+/** Ромб Blink, включая занятые клетки. Заряд Blink не нужен. */
+function diamondCells(state: RoomState): Cell[] {
+  const cells: Cell[] = [];
+  for (let y = 0; y < state.room.h; y += 1) {
+    for (let x = 0; x < state.room.w; x += 1) {
+      if (!holdsGround(state, x, y)) continue;
+      if (!inDiamond(state.hero, { x, y }, BLINK_RANGE)) continue;
+      cells.push({ x, y });
+    }
+  }
+  return cells;
+}
+
+/** Четыре направления стрелы: соседние клетки, не цель. */
+function arrowAims(state: RoomState): Cell[] {
+  const cells: Cell[] = [];
+  for (const step of ORTHO) {
+    const x = state.hero.x + step.x;
+    const y = state.hero.y + step.y;
+    if (inRoom(state.room, x, y)) cells.push({ x, y });
+  }
+  return cells;
+}
+
+export function abilityAim(state: RoomState, id: string): Cell[] {
+  const row = heroAbilityById(id);
+  if (!row?.playable) return [];
+  if (row.cast === "bolt") {
+    return state.monsters
+      .filter((monster) => onBoard(monster) && manhattan(monster, state.hero) <= BLINK_RANGE)
+      .map((monster) => spot(monster));
+  }
+  if (row.cast === "quake" || row.cast === "shard") return diamondCells(state);
+  if (row.cast === "arrow") return arrowAims(state);
+  return [];
+}
+
+function castReady(state: RoomState, ability: RunAbility, cell: Cell | null): boolean {
+  if (ability.cast === "ward") return true;
+  if (!cell) return false;
+  if (ability.cast === "bolt") {
+    const monster = monsterAt(state, cell);
+    return Boolean(monster) && manhattan(monster!, state.hero) <= BLINK_RANGE;
+  }
+  if (ability.cast === "arrow") return arrowAims(state).some((spotCell) => sameSpot(spotCell, cell));
+  if (ability.cast === "quake" || ability.cast === "shard") return diamondCells(state).some((spotCell) => sameSpot(spotCell, cell));
+  return false;
+}
+
+/** 100 ядом в HP, затем ровно 1 стак. hurt(poison) по-прежнему только стак, без этого удара. */
+function poisonHp(state: RoomState, target: Fighter, amount: number, rng: () => number): void {
+  if (target.hp <= 0 || !onBoard(target)) return;
+  if (immuneTo(target, "poison")) return;
+  const dealt = amount * damageFactor(target, "poison");
+  target.hp -= dealt;
+  if (target.hp <= 0) {
+    kill(state, target, rng);
+    return;
+  }
+  dose(state, target, ARROW_STACKS, state.hero, rng);
+}
+
+function castBolt(state: RoomState, ability: RunAbility, cell: Cell, rng: () => number): void {
+  const main = monsterAt(state, cell);
+  if (!main) return;
+  const near = state.monsters.filter((monster) => onBoard(monster) && monster !== main && chebyshev(monster, main) <= NEAR);
+  const hit: Fighter[] = [main];
+  if (near.length === 0) hurt(state, main, ability.damage, "fire", state.hero, rng);
+  else {
+    hurt(state, main, ability.splash, "fire", state.hero, rng);
+    near.sort((a, b) => a.y - b.y || a.x - b.x);
+    for (const unit of near.slice(0, BOLT_CAP - 1)) {
+      hurt(state, unit, ability.splash, "fire", state.hero, rng);
+      hit.push(unit);
+    }
+  }
+  state.fx.push({ kind: "area", cells: hit.map((unit) => spot(unit)), tone: "fire", act: "bolt" });
+  state.note = "Discharge.";
+}
+
+function castWard(state: RoomState, ability: RunAbility): void {
+  state.ward = { hp: WARD_HP, left: WARD_TURNS, damage: ability.damage };
+  state.fx.push({ kind: "area", cells: square(state, state.hero, NEAR), tone: "fire", act: "ward" });
+  state.note = "Fire Shield.";
+}
+
+function castArrow(state: RoomState, ability: RunAbility, cell: Cell, rng: () => number): void {
+  const dx = Math.sign(cell.x - state.hero.x);
+  const dy = Math.sign(cell.y - state.hero.y);
+  let x = state.hero.x + dx;
+  let y = state.hero.y + dy;
+  const line: Cell[] = [];
+  while (isFloor(state.room, x, y) && !isBlocked(state.room, x, y)) {
+    const spotCell = { x, y };
+    line.push(spotCell);
+    const unit = monsterAt(state, spotCell);
+    if (unit) {
+      poisonHp(state, unit, ability.damage, rng);
+      break;
+    }
+    x += dx;
+    y += dy;
+  }
+  const end = line[line.length - 1];
+  if (end) state.fx.push({ kind: "line", from: spot(state.hero), to: end, tone: "poison", act: "arrow" });
+  state.note = "Poison Arrow.";
+}
+
+function castQuake(state: RoomState, ability: RunAbility, cell: Cell): void {
+  state.quakes.push({ x: cell.x, y: cell.y, left: QUAKE_TURNS, damage: ability.damage });
+  state.fx.push({ kind: "area", cells: square(state, cell, NEAR), tone: "earth", act: "quake" });
+  state.note = "Earthquake.";
+}
+
+function castShard(state: RoomState, ability: RunAbility, cell: Cell, rng: () => number): void {
+  const zone = square(state, cell, NEAR);
+  let removed = 0;
+  for (const spotCell of zone) {
+    if (groundAt(state, spotCell.x, spotCell.y)?.kind !== "ice") continue;
+    state.ground[spotCell.y * state.room.w + spotCell.x] = null;
+    removed += 1;
+  }
+  const unit = monsterAt(state, cell);
+  if (unit && removed > 0) hurt(state, unit, ability.damage * removed, "ice", state.hero, rng);
+  if (zone.length > 0) state.fx.push({ kind: "area", cells: zone, tone: "ice", act: "shard" });
+  state.note = "Ice Shard.";
+}
+
+function tickWard(state: RoomState, rng: () => number): void {
+  const ward = state.ward;
+  if (!ward) return;
+  const cells = square(state, state.hero, NEAR);
+  for (const unit of unitsIn(state, cells, state.hero)) hurt(state, unit, ward.damage, "fire", state.hero, rng);
+  ward.left -= 1;
+  if (ward.left <= 0) state.ward = null;
+  if (cells.length > 0) state.fx.push({ kind: "area", cells, tone: "fire", act: "ward" });
+}
+
+function tickBlizzard(state: RoomState, rng: () => number): void {
+  const storm = state.blizzard;
+  if (!storm) return;
+  if (state.mp < storm.mp) {
+    state.blizzard = null;
+    return;
+  }
+  state.mp -= storm.mp;
+  const cells = square(state, state.hero, BLIZZARD_REACH);
+  for (const unit of unitsIn(state, cells, state.hero)) hurt(state, unit, storm.damage, "water", state.hero, rng);
+  for (const cell of cells) writeGround(state, cell, "water", 0, rng);
+  if (cells.length > 0) state.fx.push({ kind: "area", cells, tone: "water", act: "blizzard" });
+}
+
+function tickQuakes(state: RoomState, rng: () => number): void {
+  const next: RoomState["quakes"] = [];
+  for (const zone of state.quakes) {
+    const center = { x: zone.x, y: zone.y };
+    const cells = square(state, center, NEAR);
+    for (const unit of unitsIn(state, cells, state.hero)) hurt(state, unit, zone.damage, "earth", state.hero, rng);
+    for (const cell of cells) writeGround(state, cell, "oil", 0, rng);
+    zone.left -= 1;
+    if (zone.left > 0) next.push(zone);
+    if (cells.length > 0) state.fx.push({ kind: "area", cells, tone: "earth", act: "quake" });
+  }
+  state.quakes = next;
+}
+
+/** Тики щита, бурана и землетрясения в конце раунда, в том числе пока герой в стане. */
+function heroZones(state: RoomState, rng: () => number): void {
+  if (state.hero.hp <= 0) return;
+  tickWard(state, rng);
+  tickBlizzard(state, rng);
+  tickQuakes(state, rng);
+}
+
+/** Клетки, где щит, буран и землетрясение ещё держатся. Радиусы те же, что у удара. */
+export function activeHeroZones(state: RoomState): { ward: Cell[]; storm: Cell[]; quakes: Cell[][] } {
+  return {
+    ward: state.ward ? square(state, state.hero, NEAR) : [],
+    storm: state.blizzard ? square(state, state.hero, BLIZZARD_REACH) : [],
+    quakes: state.quakes.map((zone) => square(state, zone, NEAR)),
+  };
+}
+
+export function castHeroAbility(state: RoomState, slot: number, cell: Cell | null, rng: () => number = Math.random): boolean {
+  if (!canControl(state)) return false;
+  const ability = state.abilities[slot];
+  if (!ability) {
+    state.note = "Slot empty.";
+    return false;
+  }
+  if (state.hero.stun > 0) return false;
+  if (ability.cast === "blizzard") {
+    const on = state.blizzard === null;
+    state.blizzard = on ? { damage: ability.damage, mp: ability.mp } : null;
+    if (on) state.fx.push({ kind: "area", cells: square(state, state.hero, BLIZZARD_REACH), tone: "water", act: "blizzard" });
+    state.aim = null;
+    state.note = state.blizzard ? "Blizzard on." : "Blizzard off.";
+    return false;
+  }
+  const left = state.hero.cooldowns[ability.id] ?? 0;
+  if (left > 1) {
+    state.note = `${ability.name}: ${left - 1} left.`;
+    return false;
+  }
+  if (!ability.playable) {
+    state.aim = null;
+    state.note = "The sheet does not name an element.";
+    return false;
+  }
+  if (!castReady(state, ability, cell)) {
+    state.note = ability.cast === "bolt" ? "No monster inside the Blink diamond." : ability.cast === "arrow" ? "Pick a direction." : "That cell is not valid.";
+    return false;
+  }
+  if (state.mp < ability.mp) {
+    state.note = "Not enough mana.";
+    return false;
+  }
+  beginHeroTurn(state);
+  state.mp -= ability.mp;
+  if (ability.cast === "bolt" && cell) castBolt(state, ability, cell, rng);
+  else if (ability.cast === "ward") castWard(state, ability);
+  else if (ability.cast === "arrow" && cell) castArrow(state, ability, cell, rng);
+  else if (ability.cast === "quake" && cell) castQuake(state, ability, cell);
+  else if (ability.cast === "shard" && cell) castShard(state, ability, cell, rng);
+  state.hero.cooldowns[ability.id] = ability.cooldown;
+  state.aim = null;
+  afterAction(state, false, rng);
   return true;
 }

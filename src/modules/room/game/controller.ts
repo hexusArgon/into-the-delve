@@ -1,16 +1,20 @@
 import { RoomRenderer } from "./view.ts";
 import { loadSprites, type Sprites } from "./sprites.ts";
-import { attack, blink, blinkCells, face, livingMonsters, reload, roomMonsters, step, wait, type Dir, type RoomState } from "./sim.ts";
+import { abilityAim, attack, blink, blinkCells, castHeroAbility, face, livingMonsters, reload, roomMonsters, step, wait, type Dir, type RoomState } from "./sim.ts";
+import { abilityTip } from "../data/hero-abilities.ts";
+import { bindTip } from "./tip.ts";
 import { EMPTY_GEAR, type GearBonus } from "../data/items.ts";
+import type { RunAbility } from "../data/hero-abilities.ts";
 import type { WeaponId } from "../data/weapons.ts";
-import { weaponById } from "../data/weapons.ts";
+import { WEAPONS, weaponById } from "../data/weapons.ts";
 import { createRun, syncRun, teleport, travel, type Run } from "./floor.ts";
 import { METER_TURNS } from "./rules.ts";
 import { playAbility } from "./ability-sfx.ts";
 import { playFootstep, playHeroDeath, playMonsterCue, playReload, playShieldBreak, playWeaponSound, preloadSwordBlows } from "./sfx.ts";
 import { installDungeonMusic } from "./music.ts";
 import { openSettings } from "./settings-view.ts";
-import { LESSON_COPY, lessonAdvance, lessonAllows, tutorialRun, type LessonEvent, type LessonHooks, type LessonStep } from "./tutorial.ts";
+import { isSwingStep, lessonAdvance, lessonAllows, lessonText, lessonWeapon, tutorialRun, type LessonEvent, type LessonHooks, type LessonStep } from "./tutorial.ts";
+import { paintWeaponIcon } from "./hub.ts";
 import "./ui.css";
 
 /** Повтор шага, пока зажаты WASD или стрелки. */
@@ -32,6 +36,30 @@ const MOVE_KEYS: Record<string, Dir> = {
   ArrowRight: "right",
 };
 
+function abilitySlotFromKey(event: KeyboardEvent): number {
+  const digit = ["Digit1", "Digit2", "Digit3", "Digit4"].indexOf(event.code);
+  if (digit >= 0) return digit;
+  const pad = ["Numpad1", "Numpad2", "Numpad3", "Numpad4"].indexOf(event.code);
+  if (pad >= 0) return pad;
+  if (event.key === "1" || event.key === "2" || event.key === "3" || event.key === "4") {
+    const target = event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return -1;
+    return Number(event.key) - 1;
+  }
+  return -1;
+}
+
+function paintAbilityIcon(canvas: HTMLCanvasElement, art: HTMLCanvasElement | undefined): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!art) return;
+  const fit = Math.min(canvas.width / art.width, canvas.height / art.height);
+  const w = art.width * fit;
+  const h = art.height * fit;
+  ctx.drawImage(art, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+}
+
 function newSeed(): number {
   return Math.floor(Math.random() * 2 ** 31);
 }
@@ -46,6 +74,9 @@ export class RoomController {
   private seed = newSeed();
   private readonly weapon: WeaponId;
   private readonly gear: GearBonus;
+  private readonly weaponHit: number | null;
+  private readonly abilities: (RunAbility | null)[];
+  private abilitySlot: number | null = null;
   private run: Run;
   private running = false;
   private swinging = false;
@@ -61,7 +92,10 @@ export class RoomController {
   private readonly portrait: HTMLCanvasElement;
   private readonly hpFill: HTMLElement;
   private readonly hpText: HTMLElement;
+  private readonly mpFill: HTMLElement;
+  private readonly mpText: HTMLElement;
   private readonly listeners = new Set<() => void>();
+  private readonly abilityButtons: HTMLButtonElement[] = [];
   private readonly onKey: (event: KeyboardEvent) => void;
   private readonly onKeyUp: (event: KeyboardEvent) => void;
   private readonly onBlur: () => void;
@@ -74,7 +108,7 @@ export class RoomController {
   private lessonStep: LessonStep = "move";
   private lessonCard: HTMLElement | null = null;
   private lessonText: HTMLElement | null = null;
-  private lessonHub: HTMLButtonElement | null = null;
+  private lessonPicks: HTMLElement | null = null;
   private readonly lostPanel: HTMLElement | null = null;
 
   constructor(
@@ -83,14 +117,18 @@ export class RoomController {
     weapon: WeaponId = "sword",
     gear: GearBonus = EMPTY_GEAR,
     lesson: LessonHooks | null = null,
+    weaponHit: number | null = null,
+    abilities: (RunAbility | null)[] = [],
   ) {
     this.onHub = onHub;
     this.host = host;
     this.lesson = lesson;
     this.lessonStep = lesson?.step ?? "move";
-    this.weapon = lesson ? "sword" : weapon;
+    this.weapon = lesson ? lessonWeapon(this.lessonStep) : weapon;
     this.gear = lesson ? EMPTY_GEAR : gear;
-    this.run = lesson ? tutorialRun() : createRun(this.seed, weapon, gear);
+    this.weaponHit = lesson ? null : weaponHit;
+    this.abilities = lesson ? [] : abilities;
+    this.run = lesson ? tutorialRun(this.lessonStep) : createRun(this.seed, weapon, gear, this.weaponHit, this.abilities);
     host.replaceChildren();
     host.className = "dungeon";
     host.style.display = "flex";
@@ -122,17 +160,6 @@ export class RoomController {
     this.note = document.createElement("div");
     this.note.style.flexBasis = "100%";
 
-    const button = (label: string, run: () => void): HTMLButtonElement => {
-      const el = document.createElement("button");
-      el.type = "button";
-      el.textContent = label;
-      el.className = "dungeon-button";
-      el.style.padding = "8px 12px";
-      el.style.cursor = "pointer";
-      el.addEventListener("click", run);
-      return el;
-    };
-
     const portrait = document.createElement("div");
     portrait.className = "dungeon-portrait";
     portrait.style.position = "absolute";
@@ -157,7 +184,7 @@ export class RoomController {
     meters.style.gap = "6px";
     meters.style.minWidth = "120px";
 
-    const meterRow = (label: string, color: string): { row: HTMLElement; fill: HTMLElement; text: HTMLElement } => {
+    const meterRow = (label: string, color: string): { row: HTMLElement; fill: HTMLElement; text: HTMLElement; title: HTMLElement } => {
       const row = document.createElement("div");
       const title = document.createElement("div");
       title.textContent = label;
@@ -174,34 +201,27 @@ export class RoomController {
       const text = document.createElement("div");
       text.style.fontSize = "12px";
       row.append(title, track, text);
-      return { row, fill, text };
+      return { row, fill, text, title };
     };
 
     const hp = meterRow("HP", "dungeon-hp");
-    const mp = meterRow("MP", "dungeon-mp");
-    mp.text.textContent = "MP";
+    const mp = meterRow("", "dungeon-mp");
     this.hpFill = hp.fill;
     this.hpText = hp.text;
+    this.mpFill = mp.fill;
+    this.mpText = mp.title;
+    mp.text.style.display = "none";
     meters.append(hp.row, mp.row);
     portrait.append(this.portrait, meters);
 
     const hint = document.createElement("div");
     hint.style.flexBasis = "100%";
     hint.style.opacity = "0.75";
-    hint.textContent = "WASD или стрелки зажать — идти · Shift+WASD или стрелки — поворот · ЛКМ удар · ПКМ Blink, повтор — отмена · R перезарядка · X ждать · Tab карта · Esc меню";
+    hint.textContent = "Hold WASD or arrows to walk · Shift+WASD or arrows to turn · LMB attack · RMB Blink, again to cancel · 1–4 ability · R reload · X wait · Tab map · Esc menu";
 
-    const back = onHub && !lesson ? button("В хаб", () => onHub()) : null;
+    const abilityBar = this.mountAbilityBar();
     if (lesson) bar.append(this.stats, hint, this.note);
-    else {
-      bar.append(
-        this.stats,
-        button("Новый этаж", () => this.newFloor()),
-        button("Заново", () => this.restart()),
-        ...(back ? [back] : []),
-        hint,
-        this.note,
-      );
-    }
+    else bar.append(abilityBar, this.stats, hint, this.note);
     host.append(this.canvas, bar, portrait);
     const leave = lesson ? () => this.lesson?.dead(this.lessonStep) : onHub;
     if (leave) this.lostPanel = this.lostBanner(leave);
@@ -223,6 +243,8 @@ export class RoomController {
       const portrait = this.portrait.getContext("2d");
       portrait?.clearRect(0, 0, this.portrait.width, this.portrait.height);
       portrait?.drawImage(sprites.hero, 16, 8, 112, 128);
+      this.paintAbilityBar();
+      this.paintLessonWeapons();
       this.draw();
     });
     preloadSwordBlows();
@@ -256,7 +278,7 @@ export class RoomController {
     syncRun(this.run);
     if (!this.lesson || !this.run.exit) return;
     this.run.exit = null;
-    this.state.note = this.state.note.replace("Портал в хаб открылся.", "").trim();
+    this.state.note = this.state.note.replace("The hub portal is open.", "").trim();
   }
 
   private mountLesson(): void {
@@ -264,45 +286,93 @@ export class RoomController {
     card.className = "dungeon-panel dungeon-lesson";
     const text = document.createElement("p");
     text.style.margin = "0";
-    const row = document.createElement("div");
-    row.style.display = "flex";
-    row.style.gap = "8px";
-    row.style.flexWrap = "wrap";
+    const picks = document.createElement("div");
+    picks.style.display = "none";
+    picks.style.flexWrap = "wrap";
+    picks.style.gap = "8px";
+    for (const weapon of WEAPONS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "dungeon-button";
+      button.style.padding = "6px";
+      button.style.display = "flex";
+      button.style.flexDirection = "column";
+      button.style.alignItems = "center";
+      button.style.gap = "4px";
+      button.style.width = "88px";
+      const canvas = document.createElement("canvas");
+      canvas.width = 48;
+      canvas.height = 48;
+      canvas.style.width = "48px";
+      canvas.style.height = "48px";
+      const label = document.createElement("span");
+      label.textContent = weapon.name;
+      label.style.fontSize = "12px";
+      button.append(canvas, label);
+      button.addEventListener("click", () => {
+        if (this.lessonStep !== "pick") return;
+        this.lesson?.finish(weapon.id);
+      });
+      picks.append(button);
+    }
     const skip = document.createElement("button");
     skip.type = "button";
     skip.className = "dungeon-button";
     skip.style.padding = "8px 12px";
-    skip.textContent = "Пропустить";
+    skip.style.alignSelf = "flex-start";
+    skip.textContent = "Skip";
     skip.addEventListener("click", () => this.lesson?.skip());
-    const hub = document.createElement("button");
-    hub.type = "button";
-    hub.className = "dungeon-button dungeon-button-primary";
-    hub.style.padding = "8px 12px";
-    hub.textContent = "В хаб";
-    hub.addEventListener("click", () => this.lesson?.finish());
-    row.append(skip, hub);
-    card.append(text, row);
+    card.append(text, picks, skip);
     this.lessonCard = card;
     this.lessonText = text;
-    this.lessonHub = hub;
+    this.lessonPicks = picks;
     this.host.append(card);
     this.renderLesson();
   }
 
   private renderLesson(): void {
-    if (!this.lessonText || !this.lessonHub) return;
-    this.lessonText.textContent = LESSON_COPY[this.lessonStep];
-    this.lessonHub.style.display = this.lessonStep === "done" ? "" : "none";
+    if (!this.lessonText) return;
+    this.lessonText.textContent = lessonText(this.lessonStep);
+    if (this.lessonPicks) this.lessonPicks.style.display = this.lessonStep === "pick" ? "flex" : "none";
+    this.paintLessonWeapons();
+  }
+
+  private paintLessonWeapons(): void {
+    if (!this.sprites || !this.lessonPicks) return;
+    const buttons = this.lessonPicks.querySelectorAll("button");
+    WEAPONS.forEach((weapon, index) => {
+      const canvas = buttons[index]?.querySelector("canvas");
+      if (canvas instanceof HTMLCanvasElement) paintWeaponIcon(canvas, this.sprites?.weapons[weapon.id]);
+    });
+  }
+
+  /** Смена типа между шагами урока не тратит ход. На R магазин пистолета уже не полный. */
+  private syncLessonWeapon(): void {
+    const id = lessonWeapon(this.lessonStep);
+    const def = weaponById(id);
+    const changed = this.state.weapon !== id;
+    this.state.weapon = id;
+    this.run.weapon = id;
+    if (this.lessonStep === "reload") {
+      const magazine = def.magazine ?? 1;
+      if ((this.state.ammo ?? magazine) >= magazine) this.state.ammo = magazine - 1;
+    } else if (changed || isSwingStep(this.lessonStep)) {
+      this.state.ammo = def.magazine;
+    }
+    this.run.ammo = this.state.ammo;
+    this.refresh();
   }
 
   private lessonAfter(event: LessonEvent): void {
     if (!this.lesson || this.state.outcome === "lost") return;
-    const signal = this.lessonStep === "finish" && this.state.outcome === "won" ? "won" : event;
-    const next = lessonAdvance(this.lessonStep, signal);
+    const won = this.state.outcome === "won";
+    const signal = this.lessonStep === "finish" && won ? "won" : event;
+    const next = lessonAdvance(this.lessonStep, signal, won);
     if (next === this.lessonStep) return;
     this.lessonStep = next;
     this.releaseMoves();
     this.choosingBlink = false;
+    this.syncLessonWeapon();
     this.renderLesson();
   }
 
@@ -324,13 +394,19 @@ export class RoomController {
     window.removeEventListener("resize", this.onResize);
   }
 
+  private dropAbilityAim(): void {
+    this.abilitySlot = null;
+    this.state.aim = null;
+  }
+
   face(dir: Dir): void {
     if (this.locked()) return;
-    if (this.lesson && !lessonAllows(this.lessonStep, "face") && this.lessonStep !== "attack") return;
+    if (this.lesson && !lessonAllows(this.lessonStep, "face") && !isSwingStep(this.lessonStep)) return;
     const facing = this.state.hero.facing;
     const x = this.state.hero.x;
     const y = this.state.hero.y;
     this.choosingBlink = false;
+    this.dropAbilityAim();
     face(this.state, dir);
     this.refresh();
     if (this.state.hero.facing !== facing && this.state.hero.x === x && this.state.hero.y === y) this.lessonAfter("face");
@@ -339,6 +415,7 @@ export class RoomController {
   attack(): void {
     if (this.locked() || this.state.outcome === "lost") return;
     if (this.lesson && !lessonAllows(this.lessonStep, "attack")) return;
+    this.dropAbilityAim();
     const worn = weaponById(this.state.weapon);
     if (worn.id === "pistol" && (this.state.ammo ?? worn.magazine ?? 0) === 0) {
       this.choosingBlink = false;
@@ -398,30 +475,13 @@ export class RoomController {
     if (this.locked()) return;
     if (this.lesson && !lessonAllows(this.lessonStep, "wait")) return;
     this.choosingBlink = false;
+    this.dropAbilityAim();
     const places = this.places();
     wait(this.state);
     this.playMoves(places);
     this.commit();
     this.refresh();
     this.lessonAfter("wait");
-  }
-
-  /** Тот же этаж с начала: та же раскладка комнат, полное HP. */
-  restart(): void {
-    if (this.swinging) return;
-    if (this.run.exit) this.floorsCleared += 1;
-    this.run = createRun(this.seed, this.weapon, this.gear);
-    this.choosingBlink = false;
-    this.mapOpen = false;
-    this.renderer.resetCamera();
-    this.renderer.flash();
-    this.refresh();
-  }
-
-  newFloor(): void {
-    if (this.swinging) return;
-    this.seed = newSeed();
-    this.restart();
   }
 
   private locked(): boolean {
@@ -476,6 +536,7 @@ export class RoomController {
   private walk(dir: Dir): void {
     if (this.locked()) return;
     this.choosingBlink = false;
+    this.dropAbilityAim();
     const from = { x: this.state.hero.x, y: this.state.hero.y };
     const places = this.places();
     step(this.state, dir);
@@ -513,12 +574,12 @@ export class RoomController {
     card.style.alignItems = "flex-start";
     const title = document.createElement("div");
     title.className = "dungeon-title";
-    title.textContent = "Забег оборвался";
+    title.textContent = "The run is over";
     title.style.fontSize = "22px";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "dungeon-button dungeon-button-primary";
-    button.textContent = "В хаб";
+    button.textContent = "To the hub";
     button.style.padding = "10px 16px";
     button.style.cursor = "pointer";
     button.addEventListener("click", onHub);
@@ -560,23 +621,47 @@ export class RoomController {
     }
     if (this.locked() || this.state.outcome === "lost") return;
     const cell = this.cellFromEvent(event);
+    if (this.abilitySlot !== null) {
+      if (event.button === 2) {
+        event.preventDefault();
+        this.abilitySlot = null;
+        this.state.aim = null;
+        this.state.note = "Ability cancelled.";
+        this.refresh();
+        return;
+      }
+      if (event.button !== 0) return;
+      const aim = this.state.aim ?? [];
+      if (cell && aim.some((spot) => spot.x === cell.x && spot.y === cell.y)) {
+        const places = this.places();
+        const cast = castHeroAbility(this.state, this.abilitySlot, cell);
+        this.abilitySlot = null;
+        this.state.aim = null;
+        if (cast) {
+          this.playMoves(places);
+          this.commit();
+        }
+        this.refresh();
+      }
+      return;
+    }
     if (event.button === 2) {
       event.preventDefault();
       if (this.lesson && !lessonAllows(this.lessonStep, "blink")) return;
       if (this.choosingBlink) {
         this.choosingBlink = false;
-        this.state.note = "Blink отменён.";
+        this.state.note = "Blink cancelled.";
         this.refresh();
         return;
       }
       if (this.state.blink <= 0) {
         this.choosingBlink = false;
-        this.state.note = "Blink кончился.";
+        this.state.note = "Blink is spent.";
         this.refresh();
         return;
       }
       this.choosingBlink = true;
-      this.state.note = "Выбери клетку Blink левой кнопкой.";
+      this.state.note = "Pick a Blink cell with the left button.";
       this.refresh();
       return;
     }
@@ -657,6 +742,7 @@ export class RoomController {
     if (this.pause) return;
     this.releaseMoves();
     this.choosingBlink = false;
+    this.dropAbilityAim();
     this.mapOpen = false;
     const veil = document.createElement("div");
     veil.className = "dungeon-pause";
@@ -667,10 +753,10 @@ export class RoomController {
     title.className = "dungeon-title";
     title.style.fontSize = "28px";
     title.style.margin = "0";
-    title.textContent = "Меню";
-    const resume = this.pauseButton("Вернуться в игру", true, () => this.closePause());
-    const settings = this.pauseButton("Настройки", false, () => openSettings(this.host));
-    const giveUp = this.pauseButton("Сдаться", false, () => {
+    title.textContent = "Menu";
+    const resume = this.pauseButton("Resume", true, () => this.closePause());
+    const settings = this.pauseButton("Settings", false, () => openSettings(this.host));
+    const giveUp = this.pauseButton("Surrender", false, () => {
       this.closePause();
       this.onHub?.();
     });
@@ -697,6 +783,113 @@ export class RoomController {
     return button;
   }
 
+  private mountAbilityBar(): HTMLElement {
+    const bar = document.createElement("div");
+    bar.className = "dungeon-ability-bar";
+    for (let slot = 0; slot < 4; slot += 1) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "dungeon-slot dungeon-ability";
+      const icon = document.createElement("canvas");
+      icon.width = 48;
+      icon.height = 48;
+      icon.className = "dungeon-ability-icon";
+      const key = document.createElement("span");
+      key.className = "dungeon-ability-key";
+      key.textContent = String(slot + 1);
+      const cd = document.createElement("span");
+      cd.className = "dungeon-ability-cd";
+      button.append(icon, key, cd);
+      button.addEventListener("click", () => this.pressAbility(slot));
+      bindTip(
+        button,
+        () => this.state.abilities[slot]?.name ?? `${slot + 1}`,
+        () => {
+          const ability = this.state.abilities[slot];
+          if (!ability) return "Empty slot.";
+          return abilityTip(ability.id, ability.damage, null, ability.splash).text;
+        },
+      );
+      this.abilityButtons.push(button);
+      bar.append(button);
+    }
+    return bar;
+  }
+
+  private paintAbilityBar(): void {
+    for (let slot = 0; slot < this.abilityButtons.length; slot += 1) {
+      const button = this.abilityButtons[slot];
+      if (!button) continue;
+      const ability = this.state.abilities[slot] ?? null;
+      const icon = button.querySelector("canvas");
+      const cd = button.querySelector(".dungeon-ability-cd");
+      if (icon instanceof HTMLCanvasElement) paintAbilityIcon(icon, ability ? this.sprites?.abilities[ability.id] : undefined);
+      button.classList.toggle("dungeon-slot-empty", !ability);
+      button.classList.toggle("is-armed", this.abilitySlot === slot);
+      const left = ability ? (this.state.hero.cooldowns[ability.id] ?? 0) : 0;
+      const wait = Math.max(0, left - 1);
+      const storm = ability?.cast === "blizzard" && this.state.blizzard !== null;
+      if (cd instanceof HTMLElement) {
+        cd.textContent = storm ? "On" : wait > 0 ? String(wait) : "";
+        cd.classList.toggle("is-on", storm || wait > 0);
+      }
+      button.setAttribute("aria-label", ability ? ability.name : `${slot + 1}: empty`);
+    }
+  }
+
+  private pressAbility(slot: number): void {
+    if (this.lesson || this.pause || this.mapOpen || this.host.querySelector(".dungeon-settings")) return;
+    if (this.locked()) {
+      this.state.note = "Wait until the turn finishes drawing.";
+      this.refresh();
+      return;
+    }
+    this.armAbility(slot);
+  }
+
+  private armAbility(slot: number): void {
+    const ability = this.state.abilities[slot];
+    if (!ability) {
+      this.abilitySlot = null;
+      this.state.aim = null;
+      this.state.note = "Empty slot. Equip an ability in the inventory.";
+      this.refresh();
+      return;
+    }
+    const aimed = ability.cast === "bolt" || ability.cast === "quake" || ability.cast === "shard" || ability.cast === "arrow";
+    if (aimed) {
+      if (this.abilitySlot === slot) {
+        this.abilitySlot = null;
+        this.state.aim = null;
+        this.refresh();
+        return;
+      }
+      this.choosingBlink = false;
+      const cells = abilityAim(this.state, ability.id);
+      if (cells.length === 0) {
+        this.abilitySlot = null;
+        this.state.aim = null;
+        this.state.note = ability.cast === "bolt" ? "No monster inside the Blink diamond." : "No cell in the Blink diamond.";
+        this.refresh();
+        return;
+      }
+      this.abilitySlot = slot;
+      this.state.aim = cells;
+      this.state.note = ability.cast === "arrow" ? `${ability.name}: pick a direction.` : `${ability.name}: pick a cell.`;
+      this.refresh();
+      return;
+    }
+    this.abilitySlot = null;
+    this.state.aim = null;
+    const places = this.places();
+    const cast = castHeroAbility(this.state, slot, null);
+    if (cast) {
+      this.playMoves(places);
+      this.commit();
+    }
+    this.refresh();
+  }
+
   private handleKey(event: KeyboardEvent): void {
     if (event.key === "Shift") this.shiftHeld = true;
     if (event.code === "Escape") {
@@ -716,6 +909,7 @@ export class RoomController {
       if (event.repeat || this.locked()) return;
       this.mapOpen = !this.mapOpen;
       this.choosingBlink = false;
+      this.dropAbilityAim();
       this.refresh();
       return;
     }
@@ -723,7 +917,7 @@ export class RoomController {
     if (dir) {
       event.preventDefault();
       if (event.shiftKey || this.shiftHeld) {
-        if (!event.repeat && !this.locked() && !this.mapOpen && (!this.lesson || lessonAllows(this.lessonStep, "face"))) this.face(dir);
+        if (!event.repeat && !this.locked() && !this.mapOpen && (!this.lesson || lessonAllows(this.lessonStep, "face") || isSwingStep(this.lessonStep))) this.face(dir);
         return;
       }
       if (this.lesson && !lessonAllows(this.lessonStep, "step")) return;
@@ -734,14 +928,22 @@ export class RoomController {
       this.pumpMove();
       return;
     }
+    const slotKey = abilitySlotFromKey(event);
+    if (slotKey >= 0) {
+      event.preventDefault();
+      if (!event.repeat) this.pressAbility(slotKey);
+      return;
+    }
     if (event.repeat || this.locked() || this.mapOpen) return;
     if (event.code === "KeyR") {
-      if (this.lesson) return;
+      if (this.lesson && !lessonAllows(this.lessonStep, "reload")) return;
       this.choosingBlink = false;
+      this.dropAbilityAim();
       const places = this.places();
       if (reload(this.state)) {
         playReload(this.state.weapon, this.state.hero.facing);
         this.playMoves(places);
+        this.lessonAfter("reload");
       }
       this.commit();
       this.refresh();
@@ -769,18 +971,21 @@ export class RoomController {
   private refresh(): void {
     const meter =
       this.state.meterTurns > 0
-        ? `Шкала ${this.state.meterTurns}/${METER_TURNS}`
-        : "Шкала спит";
+        ? `Meter ${this.state.meterTurns}/${METER_TURNS}`
+        : "Meter idle";
     this.hpText.textContent = `${shownHp(this.state.hero.hp)}/${shownHp(this.state.hero.maxHp)}`;
     this.hpFill.style.width = `${Math.max(0, this.state.hero.hp / this.state.hero.maxHp) * 100}%`;
+    this.mpText.textContent = `${this.state.mp}/${this.state.maxMp}`;
+    this.mpFill.style.width = `${Math.max(0, this.state.mp / this.state.maxMp) * 100}%`;
     const room = this.state.room;
     const visited = this.run.visited.filter(Boolean).length;
     const living = livingMonsters(this.state);
-    const foe = living.length === 0 ? "" : living.length === 1 ? `${living[0]!.name} · ` : `${living.length} монстра · `;
+    const foe = living.length === 0 ? "" : living.length === 1 ? `${living[0]!.name} · ` : `${living.length} foes · `;
     const worn = weaponById(this.state.weapon);
     const rounds = worn.magazine === null ? "" : ` ${this.state.ammo ?? worn.magazine}/${worn.magazine}`;
-    this.stats.textContent = `${foe}${worn.name}${rounds} · ${room.name} · комнат ${visited}/${this.run.rooms.length} · Blink ${this.state.blink} · золото ${this.state.carried} · ${meter}`;
+    this.stats.textContent = `${foe}${worn.name}${rounds} · ${room.name} · rooms ${visited}/${this.run.rooms.length} · Blink ${this.state.blink} · gold ${this.state.carried} · ${meter}`;
     this.note.textContent = this.state.note;
+    this.paintAbilityBar();
     if (this.state.strike) {
       const from = this.state.strike.from;
       const striker = roomMonsters(this.state).find((monster) => monster.hp > 0 && monster.x === from.x && monster.y === from.y);
@@ -813,11 +1018,11 @@ export class RoomController {
   private mapView() {
     const room = this.run.rooms[this.run.current];
     const teleportBlock = !room?.portal
-      ? "В этой комнате нет телепорта"
-      : this.state.outcome === "lost"
-        ? "Телепорт недоступен"
-        : this.state.outcome !== "won"
-          ? "Телепорт закрыт, пока враг жив"
+      ? "This room has no teleport"
+        : this.state.outcome === "lost"
+          ? "Teleport is unavailable"
+          : this.state.outcome !== "won"
+            ? "Teleport is shut while an enemy lives"
           : null;
     return {
       rooms: this.run.rooms,

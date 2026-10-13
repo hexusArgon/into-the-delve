@@ -112,7 +112,7 @@ const WALLS: Record<RoomTheme, WallLook> = {
   library: { model: "panels", base: "#6a432c", alt: "#7c5338", joint: "#24160e", course: 0, block: 0.36, band: false, soot: false, dado: false },
 };
 
-/** Пещера: та же каменная фактура, что у склепа, но темнее и с трещинами. Не овалы. */
+/** Cave: та же каменная фактура, что у склепа, но темнее и с трещинами. Не овалы. */
 function drawRockWall(
   ctx: CanvasRenderingContext2D,
   box: Box,
@@ -468,7 +468,7 @@ function legacyProp(sprites: Sprites, kind: PropKind): HTMLCanvasElement | undef
 
 const solidBox = new WeakMap<HTMLCanvasElement, { x: number; y: number; w: number; h: number }>();
 
-/** Плотная рамка рисунка: обрезанный холст всё ещё держит полупрозрачную кайму. */
+/** Плотная рамка рисунка: обрезанный холст всё left держит полупрозрачную кайму. */
 function solidBounds(sprite: HTMLCanvasElement): { x: number; y: number; w: number; h: number } {
   const cached = solidBox.get(sprite);
   if (cached) return cached;

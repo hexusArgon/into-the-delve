@@ -188,11 +188,11 @@ export function playSwordSwing(facing: Dir): void {
  * Одна цель — «Одиночный точный удар по цели».
  * Несколько — «Массивный удар мечом».
  * Плоть — «Насаживающий проникающий удар», железо — «Точное попадание стальным мечом»,
- * кость — «Удар меча по кости», камень — «Мечом ударили по стене».
+ * кость — «Удар меча по кости», камень — «мечом ударили по стене».
  */
 export type SwordBlow = "air" | "one" | "many" | "flesh" | "iron" | "bone" | "stone";
 
-/** Запись из листа «Оружие», столбец ссылки. Парные клинки — та же запись дважды за ход. */
+/** Запись из листа «Weapons», столбец ссылки. Dual Blades — та же запись дважды за ход. */
 const WEAPON_CLIP: Record<WeaponId, string> = {
   sword: weaponSwordUrl,
   axe: weaponAxeUrl,
@@ -259,7 +259,7 @@ export function playWeaponSound(id: WeaponId, facing: Dir): void {
     .catch(() => undefined);
 }
 
-/** Магазин и затвор. Винтовка и дробовик чуть тяжелее пистолета. */
+/** Магазин и затвор. Rifle и дробовик чуть тяжелее пистолета. */
 export function playReload(id: WeaponId, facing: Dir): void {
   if (typeof AudioContext === "undefined") return;
   const ctx = audio();

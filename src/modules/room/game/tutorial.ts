@@ -1,16 +1,65 @@
 import { ROOMS } from "../data/rooms.ts";
 import { EMPTY_GEAR } from "../data/items.ts";
+import { WEAPONS, weaponById, type WeaponId } from "../data/weapons.ts";
 import { createRoom } from "./sim.ts";
 import type { FloorRoom, Run } from "./floor.ts";
 
 export const TUTORIAL_KEY = "dungeon-tutorial";
+export const WEAPON_KEY = "dungeon-weapon";
 export const TUTORIAL_ROOM = "cp1_20_12X12_9001";
 
-export type LessonStep = "move" | "turn" | "attack" | "blink" | "wait" | "finish" | "done";
+export type LessonStep =
+  | "move"
+  | "turn"
+  | "attack"
+  | "axe"
+  | "dual"
+  | "spear"
+  | "staff"
+  | "gloves"
+  | "pistol"
+  | "reload"
+  | "rifle"
+  | "shotgun"
+  | "blink"
+  | "wait"
+  | "finish"
+  | "pick";
 
-export type LessonAction = "step" | "face" | "attack" | "blink" | "wait" | "map";
+export type LessonAction = "step" | "face" | "attack" | "blink" | "wait" | "reload" | "map";
 
-export type LessonEvent = "step" | "face" | "attack" | "blink" | "wait" | "won";
+export type LessonEvent = "step" | "face" | "attack" | "blink" | "wait" | "reload" | "won";
+
+const STATIC_COPY: Partial<Record<LessonStep, string>> = {
+  move: "Hold WASD or the arrows. Let go to stop. After a step, the monster moves.",
+  turn: "Shift with WASD or the arrows. Turning is not a turn, and the monster does not move.",
+  reload: "R reloads. The pistol is not full, so this spends the turn. A later empty pistol also reloads on left-click. The rifle and shotgun do not.",
+  blink: "Right-click to pick a cell. Only legal cells are lit. Left-click one. Right-click again cancels and does not spend a charge.",
+  wait: "X skips your action. The world still moves.",
+  finish: "A skeleton's bite is not drawn ahead of time. It hits the orthogonal neighbor, not a diagonal. Finish it.",
+  pick: "Pick the weapon you start with. The doors open when the enemy is dead. Tab opens the floor map. This lesson is one room.",
+};
+
+/** Удары урока в порядке WEAPONS. Меч — шаг attack. Сразу после пистолета — R. */
+function swingChain(): LessonStep[] {
+  const steps: LessonStep[] = [];
+  for (const weapon of WEAPONS) {
+    steps.push(weapon.id === "sword" ? "attack" : (weapon.id as LessonStep));
+    if (weapon.id === "pistol") steps.push("reload");
+  }
+  return steps;
+}
+
+const CHAIN: readonly LessonStep[] = ["move", "turn", ...swingChain(), "blink", "wait", "finish", "pick"];
+
+const CREDIT: Partial<Record<LessonStep, LessonEvent>> = {
+  move: "step",
+  turn: "face",
+  reload: "reload",
+  blink: "blink",
+  wait: "wait",
+  finish: "won",
+};
 
 export function tutorialPending(): boolean {
   return localStorage.getItem(TUTORIAL_KEY) !== "1";
@@ -20,44 +69,65 @@ export function tutorialMark(): void {
   localStorage.setItem(TUTORIAL_KEY, "1");
 }
 
-export const LESSON_COPY: Record<LessonStep, string> = {
-  move: "Зажми WASD или стрелки. Отпустишь — остановишься. После шага ходит монстр.",
-  turn: "Shift и WASD или стрелки. Поворот ход не тратит, монстр от него не ходит.",
-  attack: "На полу клетки меча. ЛКМ в сторону скелета.",
-  blink: "ПКМ — выбор клетки. Подсвечены только допустимые. ЛКМ по одной из них. Ещё раз ПКМ отменяет и заряд не снимает.",
-  wait: "X — пропуск хода. Мир всё равно ходит.",
-  finish: "Обычный укус скелета заранее не рисуется. Бьёт соседнюю клетку по стороне, не по диагонали. Добей его.",
-  done: "Двери открываются, когда враг мёртв. Tab — карта этажа. Сейчас комната одна. R перезаряжает пистолет, винтовку и дробовик. Меч — нет.",
-};
+/** Нет ключа или в нём не id оружия — стартовый меч. */
+export function tutorialWeapon(): WeaponId {
+  const id = localStorage.getItem(WEAPON_KEY);
+  if (id && WEAPONS.some((weapon) => weapon.id === id)) return id as WeaponId;
+  return "sword";
+}
 
-export const HUB_COPY = "Нажми тропу справа. Так начинается забег.";
+export function isSwingStep(step: LessonStep): boolean {
+  return step === "attack" || WEAPONS.some((weapon) => weapon.id === step);
+}
+
+export function lessonWeapon(step: LessonStep): WeaponId {
+  if (step === "attack") return "sword";
+  if (step === "reload") return "pistol";
+  if (WEAPONS.some((weapon) => weapon.id === step)) return step as WeaponId;
+  if (step === "blink" || step === "wait" || step === "finish" || step === "pick") return "shotgun";
+  return "sword";
+}
+
+export function lessonText(step: LessonStep): string {
+  if (isSwingStep(step)) {
+    const weapon = weaponById(lessonWeapon(step));
+    return `${weapon.name}. ${weapon.figure} Left-click. A miss still spends the turn.`;
+  }
+  return STATIC_COPY[step] ?? "";
+}
+
+export const HUB_COPY = "Press the path on the right. That starts a run.";
 
 /** Пока шаг не закрыт, остальные боевые действия не вызываются. На «добить» бой уже обычный. */
 export function lessonAllows(step: LessonStep, action: LessonAction): boolean {
   if (step === "move") return action === "step";
   if (step === "turn") return action === "face";
-  if (step === "attack") return action === "attack";
   if (step === "blink") return action === "blink";
   if (step === "wait") return action === "wait";
+  if (step === "reload") return action === "reload";
   if (step === "finish") return action !== "map";
-  return action === "map";
+  if (step === "pick") return action === "map";
+  if (isSwingStep(step)) return action === "attack";
+  return false;
 }
 
-/** Шаг сменяется только указанным действием. Клик мимо и отмена Blink сюда не приходят. */
-export function lessonAdvance(step: LessonStep, event: LessonEvent): LessonStep {
-  if (step === "move" && event === "step") return "turn";
-  if (step === "turn" && event === "face") return "attack";
-  if (step === "attack" && event === "attack") return "blink";
-  if (step === "blink" && event === "blink") return "wait";
-  if (step === "wait" && event === "wait") return "finish";
-  if (step === "finish" && event === "won") return "done";
-  return step;
+/**
+ * Шаг сменяется только указанным действием.
+ * Если к «добить» комната уже выиграна, шаг сам переходит к выбору.
+ */
+export function lessonAdvance(step: LessonStep, event: LessonEvent, won = false): LessonStep {
+  const credit = isSwingStep(step) ? "attack" : CREDIT[step];
+  if (event !== credit) return step;
+  const index = CHAIN.indexOf(step);
+  const next = CHAIN[index + 1] ?? step;
+  if (next === "finish" && won) return "pick";
+  return next;
 }
 
-/** Одна комната из каталога. Двери никуда не ведут. Меч, пустая экипировка, скелет только с укусом. */
-export function tutorialRun(): Run {
+/** Одна комната из каталога. Двери никуда не ведут. Оружие — оружие этого шага. Скелет только с укусом. */
+export function tutorialRun(step: LessonStep = "move"): Run {
   const pattern = ROOMS.find((room) => room.id === TUTORIAL_ROOM);
-  if (!pattern) throw new Error("нет комнаты урока");
+  if (!pattern) throw new Error("lesson room is missing");
   const room: FloorRoom = {
     slot: { x: 0, y: 0 },
     pattern,
@@ -66,10 +136,14 @@ export function tutorialRun(): Run {
     portal: null,
     monsterIds: ["7"],
   };
+  const weapon = lessonWeapon(step);
+  const magazine = weaponById(weapon).magazine;
+  const ammo = step === "reload" && magazine !== null ? magazine - 1 : magazine;
   const state = createRoom(pattern, {
     exits: [],
     monster: true,
-    weapon: "sword",
+    weapon,
+    ammo,
     gear: EMPTY_GEAR,
     monsterKind: "7",
   });
@@ -78,9 +152,12 @@ export function tutorialRun(): Run {
     seed: 0,
     rooms: [room],
     goods: [{ broken: [], piles: [] }],
-    weapon: "sword",
+    weapon,
     gear: EMPTY_GEAR,
-    ammo: null,
+    weaponHit: null,
+    abilities: [],
+    abilityCd: {},
+    ammo,
     visited: [true],
     cleared: [false],
     current: 0,
@@ -92,6 +169,6 @@ export function tutorialRun(): Run {
 export interface LessonHooks {
   step: LessonStep;
   skip: () => void;
-  finish: () => void;
+  finish: (weapon: WeaponId) => void;
   dead: (step: LessonStep) => void;
 }

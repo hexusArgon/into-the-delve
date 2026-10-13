@@ -17,19 +17,19 @@ export function paintGuild(host: HTMLElement, level: number, onBack: () => void)
 
   const title = document.createElement("h1");
   title.className = "dungeon-title";
-  title.textContent = "Гильдия";
+  title.textContent = "Guild";
 
   const lead = document.createElement("p");
   lead.style.margin = "0";
   lead.style.opacity = "0.75";
-  lead.textContent = "Доска пройденных уровней. Чужие забеги на неё не записаны.";
+  lead.textContent = "Board of cleared adventure levels. No one else's runs are listed.";
 
   const table = document.createElement("div");
   table.style.display = "grid";
   table.style.gridTemplateColumns = "72px 1fr 120px";
   table.style.gap = "8px 16px";
   table.style.alignItems = "center";
-  for (const heading of ["Место", "Имя", "Уровень"]) {
+  for (const heading of ["Rank", "Name", "Level"]) {
     const cell = document.createElement("div");
     cell.textContent = heading;
     cell.style.opacity = "0.6";
@@ -37,7 +37,7 @@ export function paintGuild(host: HTMLElement, level: number, onBack: () => void)
     cell.style.textTransform = "uppercase";
     table.append(cell);
   }
-  for (const value of ["1", "Вы", String(level)]) {
+  for (const value of ["1", "You", String(level)]) {
     const cell = document.createElement("div");
     cell.textContent = value;
     table.append(cell);
@@ -45,7 +45,7 @@ export function paintGuild(host: HTMLElement, level: number, onBack: () => void)
 
   const back = document.createElement("button");
   back.type = "button";
-  back.textContent = "Назад";
+  back.textContent = "Back";
   back.className = "dungeon-button dungeon-back";
   back.style.fontSize = "18px";
   back.style.padding = "14px 22px";

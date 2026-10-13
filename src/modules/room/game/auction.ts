@@ -98,9 +98,9 @@ export function listUnique(
     now: number;
   },
 ): AuctionStep {
-  if (!LOT_HOURS.includes(input.hours)) return fail("Выбери срок лота.");
+  if (!LOT_HOURS.includes(input.hours)) return fail("Pick how long the lot lasts.");
   if (input.buyoutOnly) {
-    if (!whole(input.buyout)) return fail("Нужна цена выкупа.");
+    if (!whole(input.buyout)) return fail("A buyout price is required.");
     pushLot(house, {
       sellerId: input.sellerId,
       goods: { ...input.goods },
@@ -114,9 +114,9 @@ export function listUnique(
     });
     return ok();
   }
-  if (!whole(input.minBid)) return fail("Нужна минимальная ставка.");
+  if (!whole(input.minBid)) return fail("A minimum bid is required.");
   if (input.buyout !== null && (!whole(input.buyout) || input.buyout < input.minBid)) {
-    return fail("Выкуп не ниже минимальной ставки.");
+    return fail("Buyout cannot be below the minimum bid.");
   }
   pushLot(house, {
     sellerId: input.sellerId,
@@ -136,8 +136,8 @@ export function listStack(
   house: House,
   input: { sellerId: string; goods: Omit<StackGoods, "count">; count: number; unitPrice: number },
 ): AuctionStep {
-  if (!Number.isInteger(input.count) || input.count < 1) return fail("Нужно количество.");
-  if (!whole(input.unitPrice)) return fail("Нужна цена.");
+  if (!Number.isInteger(input.count) || input.count < 1) return fail("A quantity is required.");
+  if (!whole(input.unitPrice)) return fail("A price is required.");
   pushLot(house, {
     sellerId: input.sellerId,
     goods: { ...input.goods, kind: "stack", count: input.count },
@@ -154,15 +154,15 @@ export function listStack(
 
 export function placeBid(house: House, lotId: string, bidderId: string, amount: number, purse: number): AuctionStep {
   const lot = openLot(house, lotId);
-  if (!lot) return fail("Лот уже закрыт.");
-  if (lot.goods.kind === "stack" || lot.buyoutOnly) return fail("На этот лот ставку поставить нельзя.");
-  if (bidderId === lot.sellerId) return fail("На свой лот ставку поставить нельзя.");
-  if (!whole(amount)) return fail("Нужна сумма ставки.");
-  if (lot.minBid !== null && amount < lot.minBid) return fail("Ставка ниже минимума.");
-  if (lot.bid !== null && amount < lot.bid + 1) return fail("Ставка должна перебить текущую.");
-  if (lot.price !== null && amount >= lot.price) return fail("Такая сумма уже равна выкупу.");
+  if (!lot) return fail("That lot is already closed.");
+  if (lot.goods.kind === "stack" || lot.buyoutOnly) return fail("This lot does not take bids.");
+  if (bidderId === lot.sellerId) return fail("You cannot bid on your own lot.");
+  if (!whole(amount)) return fail("A bid amount is required.");
+  if (lot.minBid !== null && amount < lot.minBid) return fail("Bid is below the minimum.");
+  if (lot.bid !== null && amount < lot.bid + 1) return fail("The bid must beat the current one.");
+  if (lot.price !== null && amount >= lot.price) return fail("That amount already matches the buyout.");
   const escrow = lot.bidderId === bidderId ? (lot.bid ?? 0) : 0;
-  if (purse + escrow < amount) return fail("Не хватает золота.");
+  if (purse + escrow < amount) return fail("Not enough gold.");
   const gold: GoldMove[] = [];
   if (lot.bidderId && lot.bid !== null && lot.bidderId !== bidderId) {
     gold.push({ id: lot.bidderId, delta: lot.bid });
@@ -177,11 +177,11 @@ export function placeBid(house: House, lotId: string, bidderId: string, amount: 
 
 export function buyout(house: House, lotId: string, buyerId: string, purse: number): AuctionStep {
   const lot = openLot(house, lotId);
-  if (!lot) return fail("Лот уже закрыт.");
-  if (lot.goods.kind !== "unique") return fail("Стопка покупается по количеству.");
-  if (lot.price === null) return fail("Выкупа нет.");
-  if (buyerId === lot.sellerId) return fail("Свой лот выкупить нельзя.");
-  if (purse < lot.price) return fail("Не хватает золота.");
+  if (!lot) return fail("That lot is already closed.");
+  if (lot.goods.kind !== "unique") return fail("A stack is bought by quantity.");
+  if (lot.price === null) return fail("There is no buyout.");
+  if (buyerId === lot.sellerId) return fail("You cannot buy out your own lot.");
+  if (purse < lot.price) return fail("Not enough gold.");
   const gold: GoldMove[] = [
     { id: buyerId, delta: -lot.price },
     { id: lot.sellerId, delta: lot.price },
@@ -194,11 +194,11 @@ export function buyout(house: House, lotId: string, buyerId: string, purse: numb
 
 export function buyStack(house: House, lotId: string, buyerId: string, count: number, purse: number): AuctionStep {
   const lot = openLot(house, lotId);
-  if (!lot || lot.goods.kind !== "stack" || lot.price === null) return fail("Это не стопка.");
-  if (buyerId === lot.sellerId) return fail("Свой лот купить нельзя.");
-  if (!Number.isInteger(count) || count < 1 || count > lot.goods.count) return fail("Такого количества нет.");
+  if (!lot || lot.goods.kind !== "stack" || lot.price === null) return fail("That is not a stack.");
+  if (buyerId === lot.sellerId) return fail("You cannot buy your own lot.");
+  if (!Number.isInteger(count) || count < 1 || count > lot.goods.count) return fail("That quantity is not available.");
   const cost = count * lot.price;
-  if (purse < cost) return fail("Не хватает золота.");
+  if (purse < cost) return fail("Not enough gold.");
   const goods: StackGoods = { ...lot.goods, count };
   lot.goods.count -= count;
   if (lot.goods.count === 0) dropLot(house, lot.id);
@@ -213,8 +213,8 @@ export function buyStack(house: House, lotId: string, buyerId: string, count: nu
 
 export function cancelLot(house: House, lotId: string, sellerId: string): AuctionStep {
   const lot = openLot(house, lotId);
-  if (!lot) return fail("Лот уже закрыт.");
-  if (lot.sellerId !== sellerId) return fail("Снять можно только свой лот.");
+  if (!lot) return fail("That lot is already closed.");
+  if (lot.sellerId !== sellerId) return fail("You can only cancel your own lot.");
   const gold: GoldMove[] = [];
   if (lot.bidderId && lot.bid !== null) gold.push({ id: lot.bidderId, delta: lot.bid });
   const items: ItemMove[] = [{ to: sellerId, goods: cloneGoods(lot.goods) }];

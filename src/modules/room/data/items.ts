@@ -1,4 +1,4 @@
-/** Вкладка «Предметы». Величины — блок «Расчёт», не округление в строке вещи. */
+/** Onадка «Предметы». Величины — блок «Расчёт», не округление в строке вещи. */
 
 export type Rarity = "common" | "uncommon" | "rare" | "epic";
 
@@ -38,56 +38,56 @@ function gear(
 }
 
 export const GEAR: readonly GearItem[] = [
-  gear("fang", "Треснувший клык", "common"),
-  gear("rib", "Обломок ребра", "common"),
-  gear("buckle", "Потёртая пряжка", "common"),
-  gear("badge", "Тусклая бляха", "common"),
-  gear("sinew", "Сухая жила", "common"),
-  gear("cloak-scrap", "Обрывок плаща", "common"),
-  gear("clay", "Глиняный осколок", "common"),
-  gear("rivet", "Ржавая заклёпка", "common"),
-  gear("token", "Стертый жетон", "common"),
-  gear("button", "Костяная пуговица", "common"),
-  gear("splinter", "Щепка гроба", "common"),
-  gear("pebble", "Мутный камешек", "common"),
-  gear("belt", "Пояс жил", "uncommon", { maxHp: U.maxHp }),
-  gear("vial", "Флакон тлена", "uncommon", { phys: U.phys }),
-  gear("fang-ring", "Кольцо клыка", "uncommon", { weaponPower: U.weaponPower }),
-  gear("whisper-bead", "Бусина шёпота", "uncommon", { elem: U.elem }),
-  gear("bone-plate", "Пластина кости", "uncommon", { phys: U.phys }),
-  gear("wax", "Восковая печать", "uncommon", { elem: U.elem }),
-  gear("spirit-ribbon", "Лента духа", "uncommon", { dodge: U.dodge }),
-  gear("spike", "Заточенный шип", "uncommon", { weaponPower: U.weaponPower }),
-  gear("earring", "Тяжёлая серьга", "uncommon", { dodge: U.dodge }),
-  gear("coal", "Угольная крошка", "uncommon", { elem: U.elem }),
-  gear("crypt-hoop", "Обруч склепа", "uncommon", { maxHp: U.maxHp }),
-  gear("guard-bracer", "Наруч стража", "uncommon", { weaponPower: U.weaponPower }),
-  gear("spider-hood", "Капюшон паука", "uncommon", { dodge: U.dodge }),
-  gear("golem-shard", "Осколок голема", "uncommon", { phys: U.phys }),
-  gear("acolyte-beads", "Чётки послушника", "uncommon", { maxHp: U.maxHp }),
-  gear("hound-ash", "Пепел гончей", "uncommon", { elem: U.elem }),
-  gear("bone-shell", "Панцирь костей", "rare", { maxHp: U.maxHp, phys: U.phys }),
-  gear("spiked-hide", "Шкура с шипами", "rare", { weaponPower: U.weaponPower, dodge: U.dodge }),
-  gear("ember-cloak", "Плащ уголька", "rare", { weaponPower: U.weaponPower, elem: U.elem }),
-  gear("burrow-boots", "Сапоги норы", "rare", { maxHp: U.maxHp, dodge: U.dodge }),
-  gear("hone-gloves", "Перчатки заточки", "rare", { maxHp: U.maxHp, weaponPower: U.weaponPower }),
-  gear("bone-amulet", "Амулет кости", "rare", { maxHp: U.maxHp, phys: U.phys }),
-  gear("sinew-ring", "Кольцо жил", "rare", { maxHp: U.maxHp, elem: U.elem }),
-  gear("spirit-mask", "Маска духа", "rare", { elem: U.elem, dodge: U.dodge }),
-  gear("dog-collar", "Ошейник пса", "rare", { weaponPower: U.weaponPower, phys: U.phys }),
-  gear("mushroom-pouch", "Грибной мешочек", "rare", { phys: U.phys, elem: U.elem }),
-  gear("worm-wraps", "Обмотки червя", "rare", { phys: U.phys, dodge: U.dodge }),
-  gear("whisper-mirror", "Зеркальце шёпота", "rare", { critChance: U.critChance, critShare: U.critShare }),
-  gear("drowned-scale", "Чешуя утопленника", "rare", { maxHp: U.maxHp, elem: U.elem }),
-  gear("goblin-earring", "Серьга гоблина", "rare", { weaponPower: U.weaponPower, dodge: U.dodge }),
-  gear("crypt-crown", "Корона склепа", "epic", { maxHp: U.maxHp, weaponPower: U.weaponPower, phys: U.phys }),
-  gear("ember-heart", "Сердце уголька", "epic", { maxHp: U.maxHp, elem: U.elem, dodge: U.dodge }),
-  gear("mimic-fang", "Клык мимика", "epic", { maxHp: U.maxHp, phys: U.phys, elem: U.elem }),
-  gear("guard-wing", "Крыло стража", "epic", { maxHp: U.maxHp, phys: U.phys, dodge: U.dodge }),
-  gear("whisper-staff", "Посох шёпота", "epic", { weaponPower: U.weaponPower, elem: U.elem, dodge: U.dodge }),
-  gear("drowned-shell", "Панцирь утопленника", "epic", { maxHp: U.maxHp, phys: U.phys, elem: U.elem }),
-  gear("spider-eye", "Глаз паука", "epic", { weaponPower: U.weaponPower, elem: U.elem, dodge: U.dodge }),
-  gear("golem-core", "Ядро голема", "epic", { weaponPower: U.weaponPower, phys: U.phys, elem: U.elem }),
+  gear("fang", "Cracked Fang", "common"),
+  gear("rib", "Rib Fragment", "common"),
+  gear("buckle", "Worn Buckle", "common"),
+  gear("badge", "Dull Badge", "common"),
+  gear("sinew", "Dry Sinew", "common"),
+  gear("cloak-scrap", "Cloak Scrap", "common"),
+  gear("clay", "Clay Shard", "common"),
+  gear("rivet", "Rusty Rivet", "common"),
+  gear("token", "Worn Token", "common"),
+  gear("button", "Bone Button", "common"),
+  gear("splinter", "Coffin Splinter", "common"),
+  gear("pebble", "Cloudy Pebble", "common"),
+  gear("belt", "Sinew Belt", "uncommon", { maxHp: U.maxHp }),
+  gear("vial", "Vial of Rot", "uncommon", { phys: U.phys }),
+  gear("fang-ring", "Fang Ring", "uncommon", { weaponPower: U.weaponPower }),
+  gear("whisper-bead", "Whisper Bead", "uncommon", { elem: U.elem }),
+  gear("bone-plate", "Bone Plate", "uncommon", { phys: U.phys }),
+  gear("wax", "Wax Seal", "uncommon", { elem: U.elem }),
+  gear("spirit-ribbon", "Spirit Ribbon", "uncommon", { dodge: U.dodge }),
+  gear("spike", "Honed Spike", "uncommon", { weaponPower: U.weaponPower }),
+  gear("earring", "Heavy Earring", "uncommon", { dodge: U.dodge }),
+  gear("coal", "Coal Grit", "uncommon", { elem: U.elem }),
+  gear("crypt-hoop", "Crypt Hoop", "uncommon", { maxHp: U.maxHp }),
+  gear("guard-bracer", "Guard Bracer", "uncommon", { weaponPower: U.weaponPower }),
+  gear("spider-hood", "Spider Hood", "uncommon", { dodge: U.dodge }),
+  gear("golem-shard", "Golem Shard", "uncommon", { phys: U.phys }),
+  gear("acolyte-beads", "Acolyte Beads", "uncommon", { maxHp: U.maxHp }),
+  gear("hound-ash", "Hound Ash", "uncommon", { elem: U.elem }),
+  gear("bone-shell", "Bone Shell", "rare", { maxHp: U.maxHp, phys: U.phys }),
+  gear("spiked-hide", "Spiked Hide", "rare", { weaponPower: U.weaponPower, dodge: U.dodge }),
+  gear("ember-cloak", "Ember Cloak", "rare", { weaponPower: U.weaponPower, elem: U.elem }),
+  gear("burrow-boots", "Burrow Boots", "rare", { maxHp: U.maxHp, dodge: U.dodge }),
+  gear("hone-gloves", "Hone Gloves", "rare", { maxHp: U.maxHp, weaponPower: U.weaponPower }),
+  gear("bone-amulet", "Bone Amulet", "rare", { maxHp: U.maxHp, phys: U.phys }),
+  gear("sinew-ring", "Sinew Ring", "rare", { maxHp: U.maxHp, elem: U.elem }),
+  gear("spirit-mask", "Spirit Mask", "rare", { elem: U.elem, dodge: U.dodge }),
+  gear("dog-collar", "Dog Collar", "rare", { weaponPower: U.weaponPower, phys: U.phys }),
+  gear("mushroom-pouch", "Mushroom Pouch", "rare", { phys: U.phys, elem: U.elem }),
+  gear("worm-wraps", "Worm Wraps", "rare", { phys: U.phys, dodge: U.dodge }),
+  gear("whisper-mirror", "Whisper Mirror", "rare", { critChance: U.critChance, critShare: U.critShare }),
+  gear("drowned-scale", "Drowned Scale", "rare", { maxHp: U.maxHp, elem: U.elem }),
+  gear("goblin-earring", "Goblin Earring", "rare", { weaponPower: U.weaponPower, dodge: U.dodge }),
+  gear("crypt-crown", "Crypt Crown", "epic", { maxHp: U.maxHp, weaponPower: U.weaponPower, phys: U.phys }),
+  gear("ember-heart", "Ember Heart", "epic", { maxHp: U.maxHp, elem: U.elem, dodge: U.dodge }),
+  gear("mimic-fang", "Mimic Fang", "epic", { maxHp: U.maxHp, phys: U.phys, elem: U.elem }),
+  gear("guard-wing", "Guard Wing", "epic", { maxHp: U.maxHp, phys: U.phys, dodge: U.dodge }),
+  gear("whisper-staff", "Whisper Staff", "epic", { weaponPower: U.weaponPower, elem: U.elem, dodge: U.dodge }),
+  gear("drowned-shell", "Drowned Shell", "epic", { maxHp: U.maxHp, phys: U.phys, elem: U.elem }),
+  gear("spider-eye", "Spider Eye", "epic", { weaponPower: U.weaponPower, elem: U.elem, dodge: U.dodge }),
+  gear("golem-core", "Golem Core", "epic", { weaponPower: U.weaponPower, phys: U.phys, elem: U.elem }),
 ];
 
 export const EQUIPMENT_SLOTS = 6;
@@ -138,16 +138,4 @@ export function gearBonus(ids: readonly (string | null)[]): GearBonus {
 export function critFactor(chance: number, share: number): number {
   if (chance <= 0 || share <= 0) return 1;
   return 1 + chance * share;
-}
-
-export interface Loadout {
-  bag: string[];
-  worn: (string | null)[];
-}
-
-export function freshLoadout(): Loadout {
-  return {
-    bag: GEAR.map((item) => item.id),
-    worn: Array.from({ length: EQUIPMENT_SLOTS }, () => null),
-  };
 }

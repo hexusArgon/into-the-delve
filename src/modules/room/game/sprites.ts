@@ -19,7 +19,7 @@ import woodFloorUrl from "../../../../assets/wood-floor.jpg";
 import goldUrl from "../../../../assets/gold.png";
 import { WEAPONS, type WeaponId } from "../data/weapons.ts";
 
-/** Спрайт каждого типа оружия. Имя файла — id из таблицы. */
+/** Спрайт каждого типа оружия. Name файла — id из таблицы. */
 const weaponFiles = import.meta.glob("../../../../assets/weapons/*.jpg", {
   eager: true,
   import: "default",
@@ -30,7 +30,17 @@ const propFiles = import.meta.glob("../../../../assets/props/*.jpg", {
   import: "default",
 }) as Record<string, string>;
 
-/** Спрайты из колонки «Спрайт» таблицы монстров. Имя файла — номер строки. */
+const itemFiles = import.meta.glob("../../../../assets/items/*.jpg", {
+  eager: true,
+  import: "default",
+}) as Record<string, string>;
+
+const abilityFiles = import.meta.glob("../../../../assets/abilities/*.jpg", {
+  eager: true,
+  import: "default",
+}) as Record<string, string>;
+
+/** Спрайты из колонки «Спрайт» таблицы монстров. Name файла — номер строки. */
 const monsterFiles = import.meta.glob("../../../../assets/monsters/*.jpg", {
   eager: true,
   import: "default",
@@ -65,6 +75,10 @@ export interface Sprites {
   weapons: Readonly<Partial<Record<WeaponId, HTMLCanvasElement>>>;
   /** Новые предметы комнат. Ключ — имя файла в assets/props. */
   props: Readonly<Record<string, HTMLCanvasElement>>;
+  /** Иконки снаряжения. Ключ — id вещи. */
+  items: Readonly<Record<string, HTMLCanvasElement>>;
+  /** Иконки способностей героя. Ключ — id способности. */
+  abilities: Readonly<Record<string, HTMLCanvasElement>>;
 }
 
 export const FLOOR_STONES = 6;
@@ -199,7 +213,33 @@ export async function loadSprites(): Promise<Sprites> {
     monsters: await loadMonsterSprites(),
     weapons: await loadWeaponSprites(),
     props: await loadPropSprites(),
+    items: await loadItemIcons(),
+    abilities: await loadAbilityIcons(),
   };
+}
+
+async function loadAbilityIcons(): Promise<Record<string, HTMLCanvasElement>> {
+  const abilities: Record<string, HTMLCanvasElement> = {};
+  await Promise.all(
+    Object.entries(abilityFiles).map(async ([path, url]) => {
+      const id = /[/\\]([a-z0-9-]+)\.jpg$/.exec(path)?.[1];
+      if (!id) return;
+      abilities[id] = trimmed(keyed(await loadImage(url)));
+    }),
+  );
+  return abilities;
+}
+
+async function loadItemIcons(): Promise<Record<string, HTMLCanvasElement>> {
+  const items: Record<string, HTMLCanvasElement> = {};
+  await Promise.all(
+    Object.entries(itemFiles).map(async ([path, url]) => {
+      const id = /[/\\]([a-z0-9-]+)\.jpg$/.exec(path)?.[1];
+      if (!id) return;
+      items[id] = trimmed(keyed(await loadImage(url)));
+    }),
+  );
+  return items;
 }
 
 async function loadPropSprites(): Promise<Record<string, HTMLCanvasElement>> {

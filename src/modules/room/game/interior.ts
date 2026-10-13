@@ -99,38 +99,38 @@ const ROOM_FURN: readonly PropKind[] = ["bed", "wardrobe", "cupboard", "nightsta
 
 /** Мебель стоит у другой стены, не вперемешку с мелким реквизитом. */
 const FURN_BY_ROOM: Readonly<Record<string, readonly PropKind[]>> = {
-  "Колонный зал": HALL_FURN,
-  Перекрёсток: HALL_FURN,
-  Излом: HALL_FURN,
-  Склеп: GRAVE_FURN,
-  Катакомбы: GRAVE_FURN,
-  "Галерея ниш": GRAVE_FURN,
-  Темница: PRISON_FURN,
-  Ротонда: STUDY_FURN,
-  "Крестовый зал": STUDY_FURN,
-  Колодец: STUDY_FURN,
-  Обвал: FORGE_FURN,
-  Пещера: FORGE_FURN,
-  Уступы: FORGE_FURN,
-  Ромб: ROOM_FURN,
+  "Column Hall": HALL_FURN,
+  Crossroads: HALL_FURN,
+  Fracture: HALL_FURN,
+  Crypt: GRAVE_FURN,
+  Catacombs: GRAVE_FURN,
+  "Niche Gallery": GRAVE_FURN,
+  Oubliette: PRISON_FURN,
+  Rotunda: STUDY_FURN,
+  "Cross Hall": STUDY_FURN,
+  Well: STUDY_FURN,
+  "Cave-in": FORGE_FURN,
+  Cave: FORGE_FURN,
+  Ledges: FORGE_FURN,
+  Diamond: ROOM_FURN,
 };
 
 /** Один набор на комнату, чтобы вещи читались как обстановка, а не как свалка. */
 const KIT_BY_ROOM: Readonly<Record<string, readonly PropKind[]>> = {
-  "Колонный зал": ARMORY,
-  Склеп: GRAVE,
-  Обвал: RUIN,
-  Катакомбы: GRAVE,
-  Перекрёсток: ARMORY,
-  Темница: PRISON,
-  Ротонда: RITUAL,
-  "Крестовый зал": RITUAL,
-  Излом: ARMORY,
-  Пещера: RUIN,
-  "Галерея ниш": GRAVE,
-  Ромб: SCRIPT,
-  Колодец: RITUAL,
-  Уступы: RUIN,
+  "Column Hall": ARMORY,
+  Crypt: GRAVE,
+  "Cave-in": RUIN,
+  Catacombs: GRAVE,
+  Crossroads: ARMORY,
+  Oubliette: PRISON,
+  Rotunda: RITUAL,
+  "Cross Hall": RITUAL,
+  Fracture: ARMORY,
+  Cave: RUIN,
+  "Niche Gallery": GRAVE,
+  Diamond: SCRIPT,
+  Well: RITUAL,
+  Ledges: RUIN,
 };
 
 export interface Furniture {
@@ -421,7 +421,7 @@ function cellFree(room: RoomLayout, extra: Set<string>, banned: Set<string>, x: 
   return !room.spawns.some((spawn) => spawn.x === x && spawn.y === y);
 }
 
-/** Столы, полки и стулья жилых комнат замка. Стул потом можно разбить. */
+/** Столы, полки и стулья жилых rooms замка. Стул потом можно разбить. */
 export function placeFurniture(room: RoomLayout, doors: readonly Cell[]): { pieces: Furniture[]; chairs: Cell[] } {
   if (!LIVING.has(room.theme)) return { pieces: [], chairs: [] };
   const banned = doorBan(doors);

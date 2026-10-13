@@ -1,15 +1,30 @@
 import { attrText, heroAttributes, type AttrId } from "../data/attributes.ts";
 import {
   EQUIPMENT_SLOTS,
-  GEAR,
-  freshLoadout,
-  gearBonus,
   itemById,
   EMPTY_GEAR,
   type GearBonus,
-  type Loadout,
   type Rarity,
 } from "../data/items.ts";
+import { heroAbilityById, abilityTip, type RunAbility } from "../data/hero-abilities.ts";
+import {
+  abilityAmount,
+  abilitySplash,
+  addInstance,
+  removeInstance,
+  equippedWeaponHit,
+  equippedWeaponId,
+  freshLoadout,
+  grantHeroAbilities,
+  instanceById,
+  pointChance,
+  scaled,
+  sharpen,
+  unworn,
+  wornGearBonus,
+  type ItemInstance,
+  type Loadout,
+} from "../data/instances.ts";
 import { WEAPONS, weaponById, type WeaponDef, type WeaponId } from "../data/weapons.ts";
 import { createHouse } from "./auction.ts";
 import { paintAuction, type AuctionKit } from "./auction-view.ts";
@@ -18,23 +33,47 @@ import { RoomController } from "./controller.ts";
 import { installDungeonMusic } from "./music.ts";
 import { openSettings } from "./settings-view.ts";
 import { BLINK_CHARGES, HERO_HP } from "./rules.ts";
-import { HUB_COPY, tutorialMark, tutorialPending, type LessonStep } from "./tutorial.ts";
+import { HUB_COPY, tutorialMark, tutorialPending, tutorialWeapon, WEAPON_KEY, type LessonStep } from "./tutorial.ts";
 import { loadSprites } from "./sprites.ts";
+import { freshShelf, shelfBar, shelfMatch, shelfOrder, type ShelfBar, type ShelfKind } from "./shelf-bar.ts";
+import { bindTip, hideTip, moveTip, tipBox } from "./tip.ts";
 import menuUrl from "../../../../assets/menu-depart.jpg";
 import "./ui.css";
 
 const spritesReady = loadSprites();
 
+function wornAbilities(loadout: Loadout): (RunAbility | null)[] {
+  return loadout.wornAbilities.map((id) => {
+    const inst = instanceById(loadout, id);
+    const row = inst?.kind === "ability" ? heroAbilityById(inst.catalogId) : undefined;
+    if (!inst || !row) return null;
+    return {
+      id: row.id,
+      name: row.name,
+      cooldown: row.cooldown,
+      damage: abilityAmount(inst),
+      splash: abilitySplash(inst),
+      mp: row.mp,
+      cast: row.cast,
+      playable: row.playable,
+    };
+  });
+}
+
 const SLOTS = 4;
 
-/** Классическое меню: забег, инвентарь, аукцион. Оружие и слоты — окно инвентаря. */
+/** Классическое меню: забег, инвентарь, аукцион. Weapons и слоты — окно инвентаря. */
 export function mountGame(host: HTMLElement): { setRunning: (running: boolean) => void; destroy: () => void } {
   let room: RoomController | null = null;
   let wantRun = false;
   let alive = true;
-  const kit: AuctionKit = { weapon: "sword", gold: 0, owned: WEAPONS.map((weapon) => weapon.id) };
+  const startWeapon = tutorialWeapon();
+  const kit: AuctionKit = { weapon: startWeapon, gold: 0, owned: [startWeapon] };
   let level = 0;
-  const loadout = freshLoadout();
+  const loadout = freshLoadout(startWeapon);
+  grantHeroAbilities(loadout);
+  const shelf = freshShelf();
+  const hone = { target: null as string | null, copy: null as string | null, pick: null as "target" | "copy" | null, result: "" };
   const house = createHouse();
   let lesson: "hub" | LessonStep | null = tutorialPending() ? "hub" : null;
 
@@ -47,13 +86,23 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
     showMenu();
   };
 
+  const chooseWeapon = (id: WeaponId): void => {
+    localStorage.setItem(WEAPON_KEY, id);
+    const held = loadout.weapon;
+    if (held) removeInstance(loadout, held);
+    loadout.weapon = addInstance(loadout, "weapon", id).id;
+    kit.weapon = id;
+    kit.owned = [id];
+    endLesson();
+  };
+
   const openLesson = (step: LessonStep): void => {
     lesson = step;
     room?.destroy();
     room = new RoomController(host, showMenu, "sword", EMPTY_GEAR, {
       step,
       skip: endLesson,
-      finish: endLesson,
+      finish: chooseWeapon,
       dead: (same) => openLesson(same),
     });
     if (import.meta.env.DEV) {
@@ -80,10 +129,14 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
         },
         onInventory: () => {
           void spritesReady.then((sprites) => {
-            if (alive) paintInventory(host, kit, loadout, showMenu, sprites.gold, sprites.weapons);
+            if (alive) paintInventory(host, kit, loadout, shelf, hone, showMenu, sprites.gold, sprites.weapons, sprites.items, sprites.abilities);
           });
         },
-        onAuction: () => paintAuction(host, kit, house, showMenu),
+        onAuction: () => {
+          void spritesReady.then((sprites) => {
+            if (alive) paintAuction(host, kit, loadout, house, showMenu, sprites);
+          });
+        },
         onGuild: () => paintGuild(host, level, showMenu),
       },
       lesson === "hub" ? endLesson : undefined,
@@ -92,7 +145,15 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
 
   const showRoom = (): void => {
     if (!alive) return;
-    room = new RoomController(host, showMenu, kit.weapon, gearBonus(loadout.worn));
+    room = new RoomController(
+      host,
+      showMenu,
+      equippedWeaponId(loadout) ?? "sword",
+      wornGearBonus(loadout),
+      null,
+      equippedWeaponHit(loadout),
+      wornAbilities(loadout),
+    );
     if (import.meta.env.DEV) {
       (globalThis as typeof globalThis & { roomController?: RoomController }).roomController = room;
     }
@@ -144,27 +205,27 @@ function paintMenu(
   map.setAttribute("preserveAspectRatio", "none");
   map.classList.add("dungeon-hotmap");
   const quiet = (): void => {};
-  const play = hotShape("В приключение", actions.onPlay, "70,0 71,8 76,30 76,50 76,65 78,78 87,95 93,99 100,99 100,40 100,0");
+  const play = hotShape("Adventure", actions.onPlay, "70,0 71,8 76,30 76,50 76,65 78,78 87,95 93,99 100,99 100,40 100,0");
   if (skipLesson) play.classList.add("dungeon-shape-lesson");
   map.append(menuGlow(), 
-    hotShape("Аукцион", skipLesson ? quiet : actions.onAuction, "8,1 6,10 5,20 4,32 6,48 6,64 27,66 28,74 31,78 36,78 46,77 50,70 50,48 48,25 45,18 42,12 38,4 22,0 8,1"),
-    hotShape("Гильдия", skipLesson ? quiet : actions.onGuild, "47,4 45,16 45,32 48,42 48,66 49,74 51,76 68,77 76,66 79,50 79,16 73,5 60,0 47,4"),
+    hotShape("Auction", skipLesson ? quiet : actions.onAuction, "8,1 6,10 5,20 4,32 6,48 6,64 27,66 28,74 31,78 36,78 46,77 50,70 50,48 48,25 45,18 42,12 38,4 22,0 8,1"),
+    hotShape("Guild", skipLesson ? quiet : actions.onGuild, "47,4 45,16 45,32 48,42 48,66 49,74 51,76 68,77 76,66 79,50 79,16 73,5 60,0 47,4"),
     play,
-    hotShape("Инвентарь", skipLesson ? quiet : actions.onInventory, "15,53 10,60 2,64 1,78 0,88 2,93 6,96 27,96 30,80 32,63 28,55 15,53"),
+    hotShape("Inventory", skipLesson ? quiet : actions.onInventory, "15,53 10,60 2,64 1,78 0,88 2,93 6,96 27,96 30,80 32,63 28,55 15,53"),
   );
   frame.append(
     picture,
     map,
-    hotLabel("Аукцион", "38%", "62%"),
-    hotLabel("Гильдия", "61%", "42%"),
-    hotLabel("В приключение", "86%", "68%"),
-    hotLabel("Инвентарь", "8%", "84%"),
+    hotLabel("Auction", "38%", "62%"),
+    hotLabel("Guild", "61%", "42%"),
+    hotLabel("Adventure", "86%", "68%"),
+    hotLabel("Inventory", "8%", "84%"),
   );
   scene.append(frame);
   const gear = document.createElement("button");
   gear.type = "button";
   gear.className = "dungeon-gear";
-  gear.setAttribute("aria-label", "Настройки");
+  gear.setAttribute("aria-label", "Settings");
   gear.innerHTML =
     '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.22-1.14.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.49.4 1.04.72 1.63.94l.36 2.54c.05.24.26.42.5.42h3.84c.24 0 .45-.18.5-.42l.36-2.54c.59-.22 1.14-.54 1.63-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>';
   gear.addEventListener("click", () => openSettings(scene));
@@ -217,7 +278,7 @@ function lessonCard(text: string, skip: () => void): HTMLElement {
   button.className = "dungeon-button";
   button.style.padding = "8px 12px";
   button.style.alignSelf = "flex-start";
-  button.textContent = "Пропустить";
+  button.textContent = "Skip";
   button.addEventListener("click", skip);
   card.append(copy, button);
   return card;
@@ -248,13 +309,122 @@ function hotLabel(label: string, x: string, y: string): HTMLSpanElement {
   return text;
 }
 
+interface Hone {
+  target: string | null;
+  copy: string | null;
+  pick: "target" | "copy" | null;
+  result: string;
+}
+
+function claim(loadout: Loadout, hone: Hone, id: string): boolean {
+  if (!hone.pick) return false;
+  const item = instanceById(loadout, id);
+  if (!item) return false;
+  if (hone.pick === "target") {
+    if (hone.copy === id) hone.copy = null;
+    hone.target = id;
+    hone.result = "";
+  } else if (id === hone.target) {
+    hone.result = "The same piece cannot be picked twice.";
+  } else {
+    const target = instanceById(loadout, hone.target);
+    if (!target || target.catalogId !== item.catalogId || target.kind !== item.kind) hone.result = "That is not a copy.";
+    else {
+      hone.copy = id;
+      hone.result = "";
+    }
+  }
+  hone.pick = null;
+  return true;
+}
+
+function instanceName(item: ItemInstance): string {
+  if (item.kind === "weapon") return weaponById(item.catalogId as WeaponId).name;
+  if (item.kind === "gear") return itemById(item.catalogId)?.name ?? "Item";
+  return heroAbilityName(item.catalogId);
+}
+
+function heroAbilityName(id: string): string {
+  return heroAbilityById(id)?.name ?? "Ability";
+}
+
+function line(text: string): HTMLElement {
+  const el = document.createElement("p");
+  el.textContent = text;
+  el.style.margin = "0";
+  el.style.opacity = "0.8";
+  return el;
+}
+
+function honePanel(kit: AuctionKit, loadout: Loadout, hone: Hone, note: HTMLElement, redraw: () => void): HTMLElement {
+  const box = panel();
+  box.append(heading("Sharpen"));
+  const target = instanceById(loadout, hone.target);
+  const copy = instanceById(loadout, hone.copy);
+  const lines = document.createElement("div");
+  lines.style.display = "flex";
+  lines.style.flexDirection = "column";
+  lines.style.gap = "6px";
+  lines.append(
+    line(`Target: ${target ? `${instanceName(target)}, level ${target.level}` : "none"}.`),
+    line(`Copy: ${copy ? `${instanceName(copy)}, level ${copy.level}` : "none"}. The copy's level is not transferred.`),
+    line("Failure destroys both the target and the copy."),
+  );
+  if (hone.result) lines.append(line(hone.result));
+  const row = document.createElement("div");
+  row.style.display = "flex";
+  row.style.gap = "8px";
+  row.style.flexWrap = "wrap";
+  row.append(
+    menuButton("Target", () => {
+      hone.pick = "target";
+      redraw();
+    }, hone.pick === "target"),
+    menuButton("Copy", () => {
+      hone.pick = "copy";
+      redraw();
+    }, hone.pick === "copy"),
+    menuButton("Sharpen", () => {
+      if (!hone.target || !hone.copy) {
+        hone.result = "Pick a target and a copy.";
+        redraw();
+        return;
+      }
+      const outcome = sharpen(loadout, hone.target, hone.copy, Math.random);
+      hone.target = null;
+      hone.copy = null;
+      hone.pick = null;
+      hone.result = outcome.ok
+        ? outcome.success
+          ? `Success. Level ${outcome.level}.`
+          : "Failed. Target and copy are gone."
+        : outcome.reason;
+      note.textContent = hone.result;
+      syncKit(kit, loadout);
+      redraw();
+    }, false),
+  );
+  box.append(lines, row);
+  return box;
+}
+
+function syncKit(kit: AuctionKit, loadout: Loadout): void {
+  kit.owned = loadout.items.filter((item) => item.kind === "weapon").map((item) => item.catalogId as WeaponId);
+  const worn = equippedWeaponId(loadout);
+  if (worn) kit.weapon = worn;
+}
+
 function paintInventory(
   host: HTMLElement,
   kit: AuctionKit,
   loadout: Loadout,
+  shelf: ShelfBar,
+  hone: Hone,
   onBack: () => void,
   gold: HTMLCanvasElement,
   weapons: Readonly<Partial<Record<WeaponId, HTMLCanvasElement>>>,
+  items: Readonly<Record<string, HTMLCanvasElement>>,
+  abilities: Readonly<Record<string, HTMLCanvasElement>>,
 ): void {
   paintShell(host);
   const page = document.createElement("div");
@@ -267,19 +437,19 @@ function paintInventory(
   const note = document.createElement("div");
   note.style.minHeight = "1.2em";
   note.style.opacity = "0.85";
-  const redraw = (): void => paintInventory(host, kit, loadout, onBack, gold, weapons);
+  const redraw = (): void => paintInventory(host, kit, loadout, shelf, hone, onBack, gold, weapons, items, abilities);
   const columns = document.createElement("div");
   columns.className = "dungeon-columns";
   const left = document.createElement("div");
   left.className = "dungeon-stack";
   const right = document.createElement("div");
   right.className = "dungeon-stack";
-  left.append(heroCard(gearBonus(loadout.worn)), equipmentRow(kit, loadout, weapons, note, redraw), slotRow(note));
-  right.append(weaponCard(kit.weapon, weapons), gearBag(loadout, note, redraw), bankRow(kit, gold, weapons, redraw));
+  left.append(heroCard(wornGearBonus(loadout)), equipmentRow(kit, loadout, hone, weapons, items, note, redraw), slotRow(loadout, hone, abilities, note, redraw));
+  right.append(bankRow(kit, loadout, shelf, hone, gold, weapons, items, abilities, note, redraw), honePanel(kit, loadout, hone, note, redraw));
   columns.append(left, right);
-  const back = menuButton("Назад", onBack, false);
+  const back = menuButton("Back", onBack, false);
   back.classList.add("dungeon-back");
-  page.append(screenTitle("Инвентарь"), columns, note);
+  page.append(screenTitle("Inventory"), columns, note);
   host.append(back, page);
 }
 
@@ -306,60 +476,28 @@ function heading(text: string): HTMLElement {
   return el;
 }
 
-function weaponCard(id: WeaponId, weapons: Readonly<Partial<Record<WeaponId, HTMLCanvasElement>>>): HTMLElement {
-  const weapon = weaponById(id);
-  const box = panel();
-  box.append(heading("Оружие"));
-  const row = document.createElement("div");
-  row.style.display = "flex";
-  row.style.gap = "14px";
-  row.style.alignItems = "center";
-  const icon = document.createElement("canvas");
-  icon.width = 96;
-  icon.height = 96;
-  icon.className = "dungeon-icon";
-  icon.style.width = "96px";
-  icon.style.height = "96px";
-  const text = document.createElement("div");
-  const name = document.createElement("div");
-  name.textContent = weapon.name;
-  name.style.fontSize = "20px";
-  const figure = document.createElement("div");
-  figure.textContent = weapon.figure;
-  figure.style.opacity = "0.75";
-  figure.style.marginTop = "4px";
-  text.append(name, figure);
-  row.append(icon, text);
-  bindWeaponTip(icon, weapon);
-  box.append(row);
-  const ctx = icon.getContext("2d");
-  const art = weapons[id];
-  if (ctx && art) {
-    const fit = Math.min(84 / art.width, 56 / art.height);
-    const w = art.width * fit;
-    const h = art.height * fit;
-    ctx.drawImage(art, (96 - w) / 2, (96 - h) / 2, w, h);
-  }
-  return box;
-}
-
 function equipmentRow(
   kit: AuctionKit,
   loadout: Loadout,
+  hone: Hone,
   weapons: Readonly<Partial<Record<WeaponId, HTMLCanvasElement>>>,
+  items: Readonly<Record<string, HTMLCanvasElement>>,
   note: HTMLElement,
   redraw: () => void,
 ): HTMLElement {
   const box = panel();
-  box.append(heading("Экипировка"));
+  box.append(heading("Equipment"));
   const row = document.createElement("div");
   row.style.display = "flex";
   row.style.gap = "10px";
   row.style.flexWrap = "wrap";
-  const worn = weaponById(kit.weapon);
+  const weaponInst = instanceById(loadout, loadout.weapon);
+  const worn = weaponInst?.kind === "weapon" ? weaponById(weaponInst.catalogId as WeaponId) : weaponById(kit.weapon);
   const weaponSlot = document.createElement("button");
   weaponSlot.type = "button";
-  weaponSlot.className = "dungeon-slot dungeon-slot-worn";
+  weaponSlot.className = weaponInst && (hone.target === weaponInst.id || hone.copy === weaponInst.id)
+    ? "dungeon-slot dungeon-slot-worn"
+    : "dungeon-slot dungeon-slot-worn";
   weaponSlot.style.width = "108px";
   weaponSlot.style.height = "88px";
   weaponSlot.style.padding = "8px";
@@ -370,104 +508,186 @@ function equipmentRow(
   icon.style.width = "72px";
   icon.style.height = "72px";
   weaponSlot.append(icon);
-  paintWeaponIcon(icon, weapons[kit.weapon]);
-  bindWeaponTip(weaponSlot, worn);
-  weaponSlot.addEventListener("click", () => {
-    note.textContent = `Надето: ${worn.name}.`;
-  });
+  if (weaponInst) {
+    paintWeaponIcon(icon, weapons[weaponInst.catalogId as WeaponId]);
+    stampLevel(icon, weaponInst.level);
+    bindWeaponTip(weaponSlot, worn);
+    weaponSlot.addEventListener("click", () => {
+      if (claim(loadout, hone, weaponInst.id)) redraw();
+    });
+  }
   row.append(weaponSlot);
   for (let i = 0; i < EQUIPMENT_SLOTS; i += 1) {
     const wornId = loadout.worn[i] ?? null;
-    const wornItem = wornId ? itemById(wornId) : undefined;
+    const wornInst = instanceById(loadout, wornId);
+    const wornItem = wornInst?.kind === "gear" ? itemById(wornInst.catalogId) : undefined;
+    const picked = wornInst && (hone.target === wornInst.id || hone.copy === wornInst.id);
     const slot = document.createElement("button");
     slot.type = "button";
-    slot.textContent = wornItem?.name ?? "Пусто";
-    slot.className = wornItem ? "dungeon-slot dungeon-slot-worn" : "dungeon-slot";
+    slot.className = wornItem ? `dungeon-slot dungeon-slot-worn${rarityClass(wornItem.rarity)}` : "dungeon-slot";
     slot.style.font = "inherit";
-    slot.style.width = "108px";
+    slot.style.width = "88px";
     slot.style.height = "88px";
     slot.style.cursor = "pointer";
-    slot.style.fontSize = "13px";
+    slot.style.padding = "6px";
+    if (wornItem) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 72;
+      canvas.height = 72;
+      canvas.style.width = "72px";
+      canvas.style.height = "72px";
+      paintItemIcon(canvas, items[wornItem.id]);
+      if (wornInst) stampLevel(canvas, wornInst.level);
+      slot.append(canvas);
+    } else {
+      slot.textContent = "Empty";
+      slot.style.fontSize = "13px";
+    }
     slot.addEventListener("click", () => {
-      if (!wornId) {
-        note.textContent = "Слот пуст. Надень вещь из списка.";
+      if (!wornId || !wornInst) {
+        note.textContent = "Empty slot. Equip an item from storage.";
+        return;
+      }
+      if (claim(loadout, hone, wornInst.id)) {
+        redraw();
         return;
       }
       loadout.worn[i] = null;
-      loadout.bag.push(wornId);
-      note.textContent = `${wornItem?.name ?? "Вещь"} снята.`;
+      note.textContent = `${wornItem?.name ?? "Item"} unequipped.`;
       redraw();
     });
-    bindTip(slot, wornItem?.name ?? "Экипировка", wornItem ? gearLine(wornItem) : "Пустой слот.");
+    bindTip(slot, wornItem?.name ?? "Equipment", wornItem && wornInst ? gearLine(wornItem, wornInst.level) : "Empty slot.", rarityNameColor(wornItem?.rarity));
     row.append(slot);
   }
   box.append(row);
   return box;
 }
 
-const RARITY_LABEL: Record<Rarity, string> = {
-  common: "Обычные",
-  uncommon: "Необычные",
-  rare: "Редкие",
-  epic: "Эпические",
-};
-
-function gearBag(loadout: Loadout, note: HTMLElement, redraw: () => void): HTMLElement {
+function bankRow(
+  kit: AuctionKit,
+  loadout: Loadout,
+  shelf: ShelfBar,
+  hone: Hone,
+  gold: HTMLCanvasElement,
+  weapons: Readonly<Partial<Record<WeaponId, HTMLCanvasElement>>>,
+  items: Readonly<Record<string, HTMLCanvasElement>>,
+  abilities: Readonly<Record<string, HTMLCanvasElement>>,
+  note: HTMLElement,
+  redraw: () => void,
+): HTMLElement {
   const box = panel();
-  box.append(heading("Снаряжение"));
-  const owned = new Set(loadout.bag);
-  for (const rarity of ["common", "uncommon", "rare", "epic"] as const) {
-    const items = GEAR.filter((item) => item.rarity === rarity && owned.has(item.id));
-    if (items.length === 0) continue;
-    const title = document.createElement("div");
-    title.textContent = RARITY_LABEL[rarity];
-    title.style.opacity = "0.6";
-    title.style.fontSize = "12px";
-    title.style.margin = "8px 0 6px";
-    box.append(title);
-    const row = document.createElement("div");
-    row.style.display = "flex";
-    row.style.flexWrap = "wrap";
-    row.style.gap = "8px";
-    for (const item of items) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "dungeon-slot";
-      button.textContent = item.name;
-      button.style.font = "inherit";
-      button.style.width = "148px";
-      button.style.height = "64px";
-      button.style.cursor = "pointer";
-      button.style.fontSize = "13px";
-      bindTip(button, item.name, gearLine(item));
-      button.addEventListener("click", () => {
-        const slot = loadout.worn.findIndex((worn) => worn === null);
-        if (slot < 0) {
-          note.textContent = "Все шесть слотов заняты.";
+  box.append(heading("Storage"), shelfBar(shelf, redraw));
+  const lead = document.createElement("p");
+  lead.textContent = "Gear and abilities sit here. Equipped pieces stay in the slots on the left.";
+  lead.style.margin = "0 0 12px";
+  lead.style.opacity = "0.7";
+  const row = document.createElement("div");
+  row.className = "dungeon-storage";
+  type Cell =
+    | { kind: "gold"; count: number }
+    | { kind: "weapon" | "gear" | "ability"; id: string; catalogId: string; level: number };
+  const stored: Cell[] = [];
+  if (kit.gold > 0) stored.push({ kind: "gold", count: kit.gold });
+  for (const item of unworn(loadout)) {
+    stored.push({ kind: item.kind, id: item.id, catalogId: item.catalogId, level: item.level });
+  }
+  const visible = shelfOrder(
+    stored.filter((item) => shelfMatch(item.kind, cellName(item), shelf)),
+    shelf,
+    cellName,
+    (item) => (item.kind === "gear" ? itemById(item.catalogId)?.rarity : undefined),
+  );
+  const cells = Math.max(30, Math.ceil(visible.length / 6) * 6);
+  for (let i = 0; i < cells; i += 1) {
+    const item = visible[i];
+    const slot = iconButton(() => {
+      if (!item || item.kind === "gold") return;
+      if (claim(loadout, hone, item.id)) {
+        redraw();
+        return;
+      }
+      if (item.kind === "weapon") {
+        loadout.weapon = item.id;
+        syncKit(kit, loadout);
+        redraw();
+        return;
+      }
+      if (item.kind === "gear") {
+        const index = loadout.worn.findIndex((worn) => worn === null);
+        if (index < 0) {
+          note.textContent = "All six slots are full.";
           return;
         }
-        loadout.worn[slot] = item.id;
-        loadout.bag = loadout.bag.filter((id) => id !== item.id);
-        note.textContent = `Надето: ${item.name}.`;
+        loadout.worn[index] = item.id;
         redraw();
-      });
-      row.append(button);
+        return;
+      }
+      const index = loadout.wornAbilities.findIndex((worn) => worn === null);
+      if (index < 0) {
+        note.textContent = "All ability slots are full.";
+        return;
+      }
+      loadout.wornAbilities[index] = item.id;
+      redraw();
+    }, item !== undefined && item.kind !== "gold" && (hone.target === item.id || hone.copy === item.id));
+    if (item?.kind === "gold") {
+      itemPaint(slot.canvas, (ctx) => paintGoldIcon(ctx, gold));
+      if (item.count > 1) stampCount(slot.canvas, item.count);
+      bindTip(slot.button, "Gold", "Coins carried out of the dungeon to the base.");
+    } else if (item?.kind === "weapon") {
+      const weapon = weaponById(item.catalogId as WeaponId);
+      paintWeaponIcon(slot.canvas, weapons[item.catalogId as WeaponId]);
+      stampLevel(slot.canvas, item.level);
+      bindWeaponTip(slot.button, weapon);
+    } else if (item?.kind === "gear") {
+      const gear = itemById(item.catalogId);
+      paintItemIcon(slot.canvas, items[item.catalogId]);
+      stampLevel(slot.canvas, item.level);
+      if (gear) slot.button.className += rarityClass(gear.rarity);
+      bindTip(slot.button, gear?.name ?? "Item", gear ? gearLine(gear, item.level) : "", rarityNameColor(gear?.rarity));
+    } else if (item?.kind === "ability") {
+      paintItemIcon(slot.canvas, abilities[item.catalogId]);
+      stampLevel(slot.canvas, item.level);
+      const worn = instanceById(loadout, item.id);
+      const tip = abilityTip(item.catalogId, worn ? abilityAmount(worn) : 0, item.level, worn ? abilitySplash(worn) : 0);
+      bindTip(slot.button, tip.name, tip.text);
     }
-    box.append(row);
+    row.append(slot.button);
   }
+  box.append(lead, row);
   return box;
 }
 
-function gearLine(item: { name: string; maxHp?: number; weaponPower?: number; phys?: number; elem?: number; dodge?: number; critChance?: number; critShare?: number }): string {
-  const parts: string[] = [];
-  if (item.maxHp) parts.push(`MaxHP +${plain(item.maxHp)}`);
-  if (item.weaponPower) parts.push(`Weapon Power +${plain(item.weaponPower)}`);
-  if (item.phys) parts.push(`физ. ${plain(item.phys)}`);
-  if (item.elem) parts.push(`стихии ${plain(item.elem)}`);
-  if (item.dodge) parts.push(`уклонение ${percent(item.dodge)}`);
-  if (item.critChance) parts.push(`крит шанс ${percent(item.critChance)}`);
-  if (item.critShare) parts.push(`крит урон ${percent(item.critShare)}`);
-  return parts.length > 0 ? parts.join(", ") : "Без атрибутов.";
+function cellName(item: { kind: ShelfKind; catalogId?: string }): string {
+  if (item.kind === "gold") return "Gold";
+  if (item.kind === "weapon" && item.catalogId) return weaponById(item.catalogId as WeaponId).name;
+  if (item.kind === "gear" && item.catalogId) return itemById(item.catalogId)?.name ?? "Item";
+  if (item.kind === "ability" && item.catalogId) return heroAbilityName(item.catalogId);
+  return "Ability";
+}
+
+function itemPaint(canvas: HTMLCanvasElement, paint: (ctx: CanvasRenderingContext2D) => void): void {
+  const ctx = canvas.getContext("2d");
+  if (ctx) paint(ctx);
+}
+
+function gearLine(item: { name: string; maxHp?: number; weaponPower?: number; phys?: number; elem?: number; dodge?: number; critChance?: number; critShare?: number }, level: number): string {
+  const parts = [`Level ${level}`];
+  const maxHp = scaled(item.maxHp, level);
+  const weaponPower = scaled(item.weaponPower, level);
+  const phys = scaled(item.phys, level);
+  const elem = scaled(item.elem, level);
+  const dodge = scaled(item.dodge, level);
+  const critChance = scaled(item.critChance, level);
+  const critShare = scaled(item.critShare, level);
+  if (maxHp) parts.push(`MaxHP +${plain(maxHp)}`);
+  if (weaponPower) parts.push(`Weapon Power +${plain(weaponPower)}`);
+  if (phys) parts.push(`phys ${plain(phys)}`);
+  if (elem) parts.push(`elem ${plain(elem)}`);
+  if (dodge) parts.push(`dodge ${plain(dodge)}`);
+  if (critChance) parts.push(`crit chance ${plain(critChance)}`);
+  if (critShare) parts.push(`crit damage ${percent(critShare)}`);
+  return parts.join(", ");
 }
 
 function plain(value: number): string {
@@ -476,71 +696,6 @@ function plain(value: number): string {
 
 function percent(value: number): string {
   return `${plain(value * 100)}%`;
-}
-
-function bankRow(
-  kit: AuctionKit,
-  gold: HTMLCanvasElement,
-  weapons: Readonly<Partial<Record<WeaponId, HTMLCanvasElement>>>,
-  redraw: () => void,
-): HTMLElement {
-  const box = panel();
-  box.append(heading("Хранилище"));
-  const lead = document.createElement("p");
-  lead.textContent = "Предметы на базе. Надетое оружие лежит в экипировке.";
-  lead.style.margin = "0 0 12px";
-  lead.style.opacity = "0.7";
-  const row = document.createElement("div");
-  row.style.display = "grid";
-  row.style.gridTemplateColumns = "repeat(6, 52px)";
-  row.style.gap = "8px";
-  const items: { name: string; text: string; count: number; paint: (ctx: CanvasRenderingContext2D) => void }[] = [];
-  if (kit.gold > 0) {
-    items.push({
-      name: "Золото",
-      text: "Монеты, принесённые из подземелья на базу.",
-      count: kit.gold,
-      paint: (ctx) => paintGoldIcon(ctx, gold),
-    });
-  }
-  for (const weapon of WEAPONS) {
-    if (!kit.owned.includes(weapon.id) || weapon.id === kit.weapon) continue;
-    items.push({
-      name: weapon.name,
-      text: weapon.figure,
-      count: 1,
-      paint: (ctx) => {
-        ctx.clearRect(0, 0, 44, 44);
-        const art = weapons[weapon.id];
-        if (!art) return;
-        const fit = 36 / Math.max(art.width, art.height);
-        const w = art.width * fit;
-        const h = art.height * fit;
-        ctx.drawImage(art, (44 - w) / 2, (44 - h) / 2, w, h);
-      },
-    });
-  }
-  const cells = 30;
-  for (let i = 0; i < cells; i += 1) {
-    const item = items[i];
-    const slot = iconButton(() => {
-      if (!item || item.name === "Золото") return;
-      const weapon = WEAPONS.find((entry) => entry.name === item.name);
-      if (!weapon) return;
-      kit.weapon = weapon.id;
-      redraw();
-    }, false);
-    if (item) {
-      item.paint(slot.canvas.getContext("2d")!);
-      if (item.count > 1) stampCount(slot.canvas, item.count);
-      const weapon = WEAPONS.find((entry) => entry.name === item.name);
-      if (weapon) bindWeaponTip(slot.button, weapon);
-      else bindTip(slot.button, item.name, item.text);
-    }
-    row.append(slot.button);
-  }
-  box.append(lead, row);
-  return box;
 }
 
 function iconButton(onClick: () => void, worn: boolean): { button: HTMLButtonElement; canvas: HTMLCanvasElement } {
@@ -561,7 +716,17 @@ function iconButton(onClick: () => void, worn: boolean): { button: HTMLButtonEle
   return { button, canvas };
 }
 
-function paintWeaponIcon(canvas: HTMLCanvasElement, art: HTMLCanvasElement | undefined): void {
+function paintItemIcon(canvas: HTMLCanvasElement, art: HTMLCanvasElement | undefined): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx || !art) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const fit = Math.min(canvas.width, canvas.height) / Math.max(art.width, art.height);
+  const w = art.width * fit;
+  const h = art.height * fit;
+  ctx.drawImage(art, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+}
+
+export function paintWeaponIcon(canvas: HTMLCanvasElement, art: HTMLCanvasElement | undefined): void {
   const ctx = canvas.getContext("2d");
   if (!ctx || !art) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -580,6 +745,16 @@ function paintGoldIcon(ctx: CanvasRenderingContext2D, gold: HTMLCanvasElement): 
   ctx.drawImage(gold, (44 - w) / 2, (44 - h) / 2, w, h);
 }
 
+function stampLevel(canvas: HTMLCanvasElement, level: number): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.fillStyle = "#f4f7fb";
+  ctx.font = "700 12px Palatino Linotype, Palatino, serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText(String(level), 2, 2);
+}
+
 function stampCount(canvas: HTMLCanvasElement, count: number): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -589,8 +764,6 @@ function stampCount(canvas: HTMLCanvasElement, count: number): void {
   ctx.textBaseline = "bottom";
   ctx.fillText(String(count), 42, 42);
 }
-
-let tip: HTMLElement | null = null;
 
 function bindWeaponTip(el: HTMLElement, weapon: WeaponDef): void {
   el.style.cursor = "pointer";
@@ -662,76 +835,74 @@ function paintStrike(canvas: HTMLCanvasElement, weapon: WeaponDef): void {
   }
 }
 
-function bindTip(el: HTMLElement, name: string, text: string): void {
-  const show = (event: PointerEvent): void => {
-    const node = tipBox();
-    node.replaceChildren();
-    const title = document.createElement("div");
-    title.textContent = name;
-    title.style.color = "#f4f7fb";
-    title.style.fontWeight = "700";
-    const body = document.createElement("div");
-    body.textContent = text;
-    body.style.marginTop = "4px";
-    body.style.color = "#d4bc82";
-    node.append(title, body);
-    node.style.display = "block";
-    moveTip(event);
-  };
-  el.addEventListener("pointerenter", show);
-  el.addEventListener("pointermove", moveTip);
-  el.addEventListener("pointerleave", hideTip);
+const RARITY_NAME: Partial<Record<Rarity, string>> = {
+  uncommon: "#7dce88",
+  rare: "#7eb6e8",
+  epic: "#c48ae0",
+};
+
+function rarityClass(rarity: Rarity): string {
+  if (rarity === "common") return "";
+  return ` dungeon-rarity-${rarity}`;
 }
 
-function tipBox(): HTMLElement {
-  if (tip) return tip;
-  tip = document.createElement("div");
-  tip.className = "dungeon-tip";
-  tip.style.position = "fixed";
-  tip.style.zIndex = "30";
-  tip.style.display = "none";
-  tip.style.maxWidth = "240px";
-  tip.style.padding = "8px 10px";
-  tip.style.pointerEvents = "none";
-  tip.style.font = "14px Palatino Linotype, Palatino, serif";
-  document.body.append(tip);
-  return tip;
+function rarityNameColor(rarity: Rarity | undefined): string | undefined {
+  return rarity ? RARITY_NAME[rarity] : undefined;
 }
 
-function moveTip(event: PointerEvent): void {
-  const node = tipBox();
-  const width = node.offsetWidth || 240;
-  const height = node.offsetHeight || 80;
-  const x = Math.min(Math.max(8, event.clientX + 14), window.innerWidth - width - 8);
-  const y = Math.min(Math.max(8, event.clientY + 16), window.innerHeight - height - 8);
-  node.style.left = `${x}px`;
-  node.style.top = `${y}px`;
-}
-
-function hideTip(): void {
-  if (tip) tip.style.display = "none";
-}
-
-function slotRow(note: HTMLElement): HTMLElement {
+function slotRow(
+  loadout: Loadout,
+  hone: Hone,
+  abilities: Readonly<Record<string, HTMLCanvasElement>>,
+  note: HTMLElement,
+  redraw: () => void,
+): HTMLElement {
   const box = panel();
-  box.append(heading("Способности"));
+  box.append(heading("Abilities"));
   const row = document.createElement("div");
   row.style.display = "flex";
   row.style.gap = "10px";
   row.style.flexWrap = "wrap";
   for (let i = 0; i < SLOTS; i += 1) {
+    const wornId = loadout.wornAbilities[i] ?? null;
+    const wornInst = instanceById(loadout, wornId);
     const slot = document.createElement("button");
     slot.type = "button";
-    slot.textContent = "Пусто";
-    slot.className = "dungeon-slot-empty";
+    slot.className = wornInst ? "dungeon-slot dungeon-slot-worn" : "dungeon-slot-empty";
     slot.style.font = "inherit";
-    slot.style.width = "120px";
+    slot.style.width = "88px";
     slot.style.height = "88px";
     slot.style.cursor = "pointer";
+    slot.style.padding = "6px";
+    if (wornInst) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 72;
+      canvas.height = 72;
+      canvas.style.width = "72px";
+      canvas.style.height = "72px";
+      paintItemIcon(canvas, abilities[wornInst.catalogId]);
+      stampLevel(canvas, wornInst.level);
+      slot.append(canvas);
+      const tip = abilityTip(wornInst.catalogId, abilityAmount(wornInst), wornInst.level, abilitySplash(wornInst));
+      bindTip(slot, tip.name, tip.text);
+    } else {
+      slot.textContent = "Empty";
+      slot.style.fontSize = "13px";
+      bindTip(slot, "Ability", "Empty slot.");
+    }
     slot.addEventListener("click", () => {
-      note.textContent = "Слот пустой. Сначала оружие, способности пока не надеваются.";
+      if (!wornInst) {
+        note.textContent = "Empty slot. Take an ability from storage.";
+        return;
+      }
+      if (claim(loadout, hone, wornInst.id)) {
+        redraw();
+        return;
+      }
+      loadout.wornAbilities[i] = null;
+      note.textContent = "Ability unequipped.";
+      redraw();
     });
-    bindTip(slot, "Способность", "Пустой слот.");
     row.append(slot);
   }
   box.append(row);
@@ -743,17 +914,17 @@ const HERO_STATS: readonly { label: string; id?: AttrId }[] = [
   { label: "MaxMP", id: "MaxMp" },
   { label: "Weapon Power", id: "WpATK" },
   { label: "Ability Power", id: "SkillDamage" },
-  { label: "Сопротивление к физ. урону", id: "DEF" },
-  { label: "Сопротивление прочим типам стихий" },
-  { label: "Вероятность уклонения", id: "Dodge" },
-  { label: "Крит шанс", id: "CritOdds" },
-  { label: "Крит урон", id: "CritFactor" },
-  { label: "Модификатор урона стихий" },
+  { label: "Physical resistance", id: "DEF" },
+  { label: "Elemental resistance" },
+  { label: "Dodge chance", id: "Dodge" },
+  { label: "Crit chance", id: "CritOdds" },
+  { label: "Crit damage", id: "CritFactor" },
+  { label: "Elemental damage modifier" },
 ];
 
 function heroCard(bonus: GearBonus): HTMLElement {
   const box = panel();
-  box.append(heading("Герой"));
+  box.append(heading("Hero"));
   const row = document.createElement("div");
   row.style.display = "flex";
   row.style.gap = "16px";
@@ -807,9 +978,9 @@ function heroStat(
   if (stat.id === "MaxHp") return String(HERO_HP + bonus.maxHp);
   if (stat.id === "WpATK") return bonus.weaponPower > 0 ? plain(bonus.weaponPower) : "—";
   if (stat.id === "DEF") return plain(bonus.phys);
-  if (stat.label.startsWith("Сопротивление прочим")) return bonus.elem > 0 ? plain(bonus.elem) : "—";
-  if (stat.id === "Dodge") return bonus.dodge > 0 ? percent(bonus.dodge) : "—";
-  if (stat.id === "CritOdds") return bonus.critChance > 0 ? percent(bonus.critChance) : "—";
+  if (stat.label.startsWith("Elemental resistance")) return bonus.elem > 0 ? plain(bonus.elem) : "—";
+  if (stat.id === "Dodge") return bonus.dodge > 0 ? percent(pointChance(bonus.dodge)) : "—";
+  if (stat.id === "CritOdds") return bonus.critChance > 0 ? percent(pointChance(bonus.critChance)) : "—";
   if (stat.id === "CritFactor") return bonus.critShare > 0 ? percent(bonus.critShare) : "—";
   return stat.id ? attrText(attrs, stat.id) : "—";
 }

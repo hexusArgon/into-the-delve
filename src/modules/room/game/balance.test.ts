@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import type { RoomPattern } from "../data/rooms.ts";
-import { EMPTY_GEAR, GEAR, UNIT, critFactor, gearBonus, type GearItem } from "../data/items.ts";
+import { EMPTY_GEAR, GEAR, UNIT, critFactor, gearBonus } from "../data/items.ts";
+import { pointChance } from "../data/instances.ts";
 import { ELEMENTS, KIT, MONSTER_GOLD, RARE_GOLD, MONSTERS, SPORE, monsterById } from "../data/monsters.ts";
 import { buildFloor } from "./floor.ts";
 import { BLINK_CHARGES, HERO_HP, armorFactor } from "./rules.ts";
@@ -39,7 +40,7 @@ for (const id of ["6", "11", "14", "19"]) assert.equal(monsterById(id)?.bite, 0)
 assert.equal(SPORE.maxHp, 200);
 assert.equal(SPORE.shield, 0);
 
-// Герой входит с 400 HP. Меч бьёт на 100. Укус рядового — 10.
+// Hero входит с 400 HP. Sword бьёт на 100. Укус рядового — 10.
 const fresh = room("7");
 assert.equal(fresh.hero.hp, HERO_HP);
 fresh.monster.cooldowns.swing = 99;
@@ -61,7 +62,7 @@ assert.equal(clearedRoom.blink, BLINK_CHARGES + 1);
 wait(clearedRoom, () => 0);
 assert.equal(clearedRoom.blink, BLINK_CHARGES + 1);
 
-// Спора умирает от двух ударов меча и не взрывается, если убита до запала.
+// Spore умирает от двух ударов меча и не взрывается, если убита до запала.
 const spored = room("7");
 spored.monster.cooldowns.swing = 99;
 const spore = monsterFighter(SPORE, { x: 3, y: 6, facing: "left" }, true);
@@ -87,7 +88,7 @@ assert.equal(grabbed.hero.iceGuard, 1);
 assert.equal(grabbed.hero.x, 8);
 assert.equal(grabbed.hero.hp, HERO_HP - 3 * 20);
 
-// Урон монстра по щиту другого монстра снимает 1.
+// Damage монстра по щиту другого монстра снимает 1.
 const friendly = room("7");
 friendly.monster.x = 4;
 const acolyte = monsterFighter(monsterById("14"), { x: 3, y: 5, facing: "left" }, true);
@@ -100,7 +101,7 @@ assert.equal(acolyte.shield, 3);
 assert.equal(acolyte.hp, acolyte.maxHp - KIT.skeleton.damage);
 assert.equal(friendly.hero.hp, HERO_HP - KIT.skeleton.damage);
 
-// Прыжок мертвеца взрывается на клетке каста, даже если игрок ушёл.
+// Leap мертвеца взрывается на клетке каста, даже если игрок ушёл.
 const leap = room("3");
 leap.monster.x = 8;
 keeper(leap);
@@ -126,9 +127,16 @@ dig.monster.x = 4;
 attack(dig, () => 0);
 assert.equal(dig.monster.hp, dig.monster.maxHp);
 
-// Паук: порция яда сразу, и ещё одна на тике, пока герой стоит на клетке.
+// Паук метит клетку на ход. Плевок кладёт порцию, тик той же клетки добавляет left одну.
 const spit = room("2");
 spit.monster.x = 6;
+wait(spit, () => 0);
+assert.equal(spit.monster.windup?.kind, "spit");
+assert.equal(spit.monster.windup?.turns, 1);
+assert.equal(spit.monster.windup?.center.x, spit.hero.x);
+assert.equal(spit.monster.windup?.center.y, spit.hero.y);
+assert.equal(groundAt(spit, spit.hero.x, spit.hero.y), null);
+assert.equal(spit.hero.hp, HERO_HP);
 wait(spit, () => 0);
 assert.equal(groundAt(spit, 2, 6)?.stacks, KIT.spider.stacks);
 assert.equal(spit.hero.hp, HERO_HP - 1);
@@ -155,13 +163,14 @@ hoard.monster.maxShield = 0;
 attack(hoard, () => 0);
 assert.equal(hoard.piles.length, RARE_GOLD);
 
-// Новая лужа лежит 5 ходов и на шестом тике её уже нет.
+// Новая лужа лежит 7 ходов. Ход появления уже списывает один.
 const fade = room("2");
 fade.monster.x = 6;
 wait(fade, () => 0);
+wait(fade, () => 0);
 fade.monster.cooldowns.shot = 99;
 assert.equal(groundAt(fade, 2, 6)?.turns, ELEMENTS.puddleTurns - 1);
-for (let turn = 0; turn < 4; turn += 1) wait(fade, () => 0);
+for (let turn = 0; turn < ELEMENTS.puddleTurns - 1; turn += 1) wait(fade, () => 0);
 assert.equal(groundAt(fade, 2, 6), null);
 
 // Гейзеры: центр и кольца с задержками 1–4.
@@ -234,7 +243,8 @@ attack(dodging, () => 0);
 assert.equal(dodging.hero.hp, HERO_HP);
 
 const pair = gearBonus(["whisper-mirror", "whisper-mirror"]);
-assert.equal(critFactor(pair.critChance, pair.critShare), 1.2);
+const pairChance = pointChance(pair.critChance);
+assert.equal(critFactor(pairChance, pair.critShare), 1 + pairChance * pair.critShare);
 assert.equal(gearBonus([null]).maxHp, EMPTY_GEAR.maxHp);
 
 console.log("balance ok");

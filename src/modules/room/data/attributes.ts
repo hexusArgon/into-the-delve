@@ -1,4 +1,4 @@
-import { HERO_HP } from "../game/rules.ts";
+import { HERO_HP, HERO_MP } from "../game/rules.ts";
 
 /**
  * Имена из раздела «Атрибуты Crown Trick» в ГДД.
@@ -54,11 +54,11 @@ export interface AttrGroup {
 
 /** Группы как в ГДД. */
 export const ATTR_GROUPS: readonly AttrGroup[] = [
-  { title: "Жизнь и мана", ids: ["Hp", "MaxHp", "ExtraMaxHP", "Mp", "MaxMp", "ExtraMaxMP"] },
-  { title: "Бой", ids: ["ATK", "MATK", "DEF", "MDEF", "WpATK", "WpAttrATK"] },
-  { title: "Крит и уклонение", ids: ["CritOdds", "CritFactor", "Dodge"] },
+  { title: "Life and mana", ids: ["Hp", "MaxHp", "ExtraMaxHP", "Mp", "MaxMp", "ExtraMaxMP"] },
+  { title: "Combat", ids: ["ATK", "MATK", "DEF", "MDEF", "WpATK", "WpAttrATK"] },
+  { title: "Crit and dodge", ids: ["CritOdds", "CritFactor", "Dodge"] },
   {
-    title: "Урон",
+    title: "Damage",
     ids: [
       "NormalAttackDamage",
       "SkillDamage",
@@ -70,22 +70,23 @@ export const ATTR_GROUPS: readonly AttrGroup[] = [
       "BlastDamage",
     ],
   },
-  { title: "Цена навыков", ids: ["SkillMPFactor"] },
+  { title: "Skill cost", ids: ["SkillMPFactor"] },
   {
-    title: "Сопротивления",
+    title: "Resistances",
     ids: ["FireRes", "IceRes", "WaterRes", "WindRes", "EarthRes", "ElectyRes", "BlastRes", "PosionRes"],
   },
   {
-    title: "Сила статусов",
+    title: "Status power",
     ids: ["BurningEnhance", "BurningExtension", "FreezeExtension", "PoisoningEnhance"],
   },
 ];
 
-/** База героя. Урон удара в бою берётся у надетого оружия, не отсюда. Обе брони 0. */
+/** База героя. Damage удара в бою берётся у надетого оружия, не отсюда. Обе брони 0. */
 export function heroAttributes(hit = 0): Attributes {
   return {
     Hp: HERO_HP,
     MaxHp: HERO_HP,
+    MaxMp: HERO_MP,
     ATK: hit || undefined,
     SwordDamage: hit || undefined,
     DEF: 0,
@@ -110,7 +111,7 @@ export function attrText(attrs: Attributes, id: AttrId): string {
   return value === undefined ? "—" : String(value);
 }
 
-/** Удар героя. Оружие прибавляет атаку, но размер прибавки не задан. Защиту оружие не даёт. */
+/** Удар героя. Weapons прибавляет атаку, но размер прибавки не задан. Защиту оружие не даёт. */
 export function heroStrike(attrs: Attributes): number {
   return attrs.SwordDamage ?? attrs.ATK ?? 0;
 }

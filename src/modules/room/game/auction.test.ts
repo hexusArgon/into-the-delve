@@ -12,18 +12,18 @@ import {
 } from "./auction.ts";
 
 const now = 1_000_000;
-const sword = { kind: "unique" as const, key: "sword", name: "Меч", text: "Оружие." };
-const axe = { kind: "unique" as const, key: "axe", name: "Топор", text: "Оружие." };
+const sword = { kind: "unique" as const, key: "sword", name: "Sword", text: "Weapon." };
+const axe = { kind: "unique" as const, key: "axe", name: "Axe", text: "Weapon." };
 
 const house = createHouse();
 const stack = listStack(house, {
   sellerId: "ann",
-  goods: { kind: "stack", key: "oil", name: "Масло", text: "Стопка." },
+  goods: { kind: "stack", key: "oil", name: "Oil", text: "Stack." },
   count: 47,
   unitPrice: 2,
 });
 assert.equal(stack.error, undefined);
-assert.equal(placeBid(house, house.lots[0]!.id, "bob", 3, 10).error, "На этот лот ставку поставить нельзя.");
+assert.equal(placeBid(house, house.lots[0]!.id, "bob", 3, 10).error, "This lot does not take bids.");
 
 const bought = buyStack(house, house.lots[0]!.id, "bob", 10, 20);
 assert.equal(bought.error, undefined);
@@ -58,7 +58,7 @@ assert.equal(house.lots.filter((lot) => lot.goods.key === "sword").length, 2);
 
 const lot = house.lots.find((item) => item.goods.key === "sword" && item.minBid === 320)!;
 assert.equal("endsAt" in toPublic(lot), false);
-assert.equal(placeBid(house, lot.id, "bob", 319, 1000).error, "Ставка ниже минимума.");
+assert.equal(placeBid(house, lot.id, "bob", 319, 1000).error, "Bid is below the minimum.");
 const first = placeBid(house, lot.id, "bob", 320, 320);
 assert.equal(first.error, undefined);
 assert.deepEqual(first.gold, [{ id: "bob", delta: -320 }]);
@@ -70,7 +70,7 @@ assert.deepEqual(raised.gold, [
 ]);
 assert.equal(house.watches.find((watch) => watch.bidderId === "bob")?.winning, false);
 assert.equal(house.watches.find((watch) => watch.bidderId === "cam")?.winning, true);
-assert.equal(placeBid(house, lot.id, "ann", 322, 999).error, "На свой лот ставку поставить нельзя.");
+assert.equal(placeBid(house, lot.id, "ann", 322, 999).error, "You cannot bid on your own lot.");
 
 const only = listUnique(house, {
   sellerId: "ann",
@@ -83,7 +83,7 @@ const only = listUnique(house, {
 });
 assert.equal(only.error, undefined);
 const axeLot = house.lots.find((item) => item.goods.key === "axe")!;
-assert.equal(placeBid(house, axeLot.id, "bob", 15, 20).error, "На этот лот ставку поставить нельзя.");
+assert.equal(placeBid(house, axeLot.id, "bob", 15, 20).error, "This lot does not take bids.");
 const taken = buyout(house, axeLot.id, "bob", 15);
 assert.equal(taken.error, undefined);
 assert.deepEqual(taken.gold, [

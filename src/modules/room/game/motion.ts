@@ -1,6 +1,6 @@
 import type { Cell } from "./sim.ts";
 
-/** Прыжок на соседнюю клетку. 210 мс замедлены ещё на 40% по просьбе дизайнера. */
+/** Leap на соседнюю клетку. 210 мс замедлены left на 40% по просьбе дизайнера. */
 const STEP_MS = 294;
 /** Пауза, после которой юнит начинает ход следом за шагом героя. */
 const REACT_MS = 100;
@@ -110,7 +110,7 @@ export class Motion {
     return this.heroSlide !== null || this.heroNext !== null || this.monsterSlides.some((slide) => slide !== null) || this.blinkFx !== null || this.pendingStrike !== null || this.strike !== null;
   }
 
-  /** Герой заходит в обрыв. Если падение не убило, выходит на клетку посадки. */
+  /** Hero заходит в обрыв. Если падение не убило, выходит на клетку посадки. */
   fall(from: Cell, pit: Cell, land: Cell, time: number): void {
     this.scripted = true;
     this.heroSlide = { fromX: from.x, fromY: from.y, toX: pit.x, toY: pit.y, start: time, ms: STEP_MS, jump: false };
@@ -135,7 +135,7 @@ export class Motion {
     this.rushes.push({ fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, arc });
   }
 
-  /** Удар вплотную: выпад после шага героя, если тот ещё рисуется. */
+  /** Удар вплотную: выпад после шага героя, если тот left рисуется. */
   queueStrike(from: Cell, to: Cell): void {
     this.pendingStrike = { ax: from.x, ay: from.y, tx: to.x, ty: to.y };
   }

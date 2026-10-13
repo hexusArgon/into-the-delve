@@ -2,6 +2,7 @@ import { MONSTER_DOOR_GAP, ROOMS, type Door, type RoomPattern, type Side } from 
 import { placeFurniture, scatterInterior } from "./interior.ts";
 import { FLOOR_ROOMS, HERO_HP, PORTAL_SHARE } from "./rules.ts";
 import { ELEMENTS, KIT, MONSTERS, monsterById } from "../data/monsters.ts";
+import type { RunAbility } from "../data/hero-abilities.ts";
 import { EMPTY_GEAR, type GearBonus } from "../data/items.ts";
 import { weaponById, type WeaponId } from "../data/weapons.ts";
 import {
@@ -24,7 +25,7 @@ import {
 export type RoomRole = "start" | "fight";
 
 export interface FloorRoom {
-  /** Место комнаты на карте этажа. Соседи по карте соединены дверью. */
+  /** Rank комнаты на карте этажа. Соседи по карте соединены дверью. */
   slot: Cell;
   pattern: RoomPattern;
   role: RoomRole;
@@ -35,7 +36,7 @@ export interface FloorRoom {
   monsterIds: string[];
 }
 
-/** В боевой комнате от 2 до 6 монстров. Тип каждый раз заново, повторы можно. */
+/** В боевой комнате от 2 до 6 монстров. Тип каждый раз заново, повторы можно. Рарников не больше одного. */
 const FIGHT_PACK_MIN = 2;
 const FIGHT_PACK_MAX = 6;
 
@@ -52,7 +53,11 @@ export interface Run {
   weapon: WeaponId;
   /** Надетая экипировка на весь забег. */
   gear: GearBonus;
-  /** Остаток магазина на весь забег. Пусто у оружия без магазина. */
+  /** Damage попадания надетого экземпляра. Empty — база каталога. */
+  weaponHit: number | null;
+  abilities: (RunAbility | null)[];
+  abilityCd: Record<string, number>;
+  /** Остаток магазина на весь забег. Empty у оружия без магазина. */
   ammo: number | null;
   visited: boolean[];
   cleared: boolean[];
@@ -133,18 +138,23 @@ export function buildFloor(seed: number, count: number = FLOOR_ROOMS): FloorRoom
 }
 
 function placeMonsters(rooms: FloorRoom[], rng: () => number): void {
-  const ids = MONSTERS.filter((monster) => monster.id !== "8" && monster.id !== "20").map((monster) => monster.id);
+  const roster = MONSTERS.filter((monster) => monster.spawn);
   for (const room of rooms) {
     if (room.role !== "fight") continue;
     const count = FIGHT_PACK_MIN + Math.floor(rng() * (FIGHT_PACK_MAX - FIGHT_PACK_MIN + 1));
     room.monsterIds = [];
+    let rare = false;
     for (let n = 0; n < count; n += 1) {
-      room.monsterIds.push(ids[Math.floor(rng() * ids.length)]!);
+      const pool = rare ? roster.filter((monster) => !monster.rare) : roster;
+      const pick = pool[Math.floor(rng() * pool.length)];
+      if (!pick) continue;
+      room.monsterIds.push(pick.id);
+      if (pick.rare) rare = true;
     }
   }
 }
 
-/** Сколько комнат этажа получают телепорт: доля PORTAL_SHARE, округление до целого. */
+/** Сколько rooms этажа получают телепорт: доля PORTAL_SHARE, округление до целого. */
 export function portalRoomCount(rooms: number): number {
   return Math.round(rooms * PORTAL_SHARE);
 }
@@ -274,7 +284,7 @@ function exitsOf(room: FloorRoom): Door[] {
 }
 
 function enter(
-  run: Pick<Run, "rooms" | "cleared" | "goods" | "weapon" | "ammo" | "gear">,
+  run: Pick<Run, "rooms" | "cleared" | "goods" | "weapon" | "ammo" | "gear" | "weaponHit" | "abilities" | "abilityCd">,
   index: number,
   via: Side | null,
   heroHp: number,
@@ -292,6 +302,9 @@ function enter(
     weapon: run.weapon,
     ammo: run.ammo,
     gear: run.gear,
+    weaponHit: run.weaponHit,
+    abilities: run.abilities,
+    abilityCd: run.abilityCd,
     monsterKind: room.monsterIds[0],
   });
   const goods = run.goods[index] ?? { broken: [], piles: [] };
@@ -322,12 +335,18 @@ function enter(
   }
   state.carried = carried;
   if (room.role === "fight") seedGround(state);
-  if (room.role === "start" && !via) state.note = "Начало этажа. Выходы — проёмы в стенах.";
-  else if (!cleared) state.note = "Двери захлопнулись. Победи монстров, чтобы выйти.";
+  if (room.role === "start" && !via) state.note = "Start of the floor. Exits are the gaps in the walls.";
+  else if (!cleared) state.note = "The doors slammed shut. Defeat the monsters to leave.";
   return state;
 }
 
-export function createRun(seed: number, weapon: WeaponId = "sword", gear: GearBonus = EMPTY_GEAR): Run {
+export function createRun(
+  seed: number,
+  weapon: WeaponId = "sword",
+  gear: GearBonus = EMPTY_GEAR,
+  weaponHit: number | null = null,
+  abilities: (RunAbility | null)[] = [],
+): Run {
   const rooms = buildFloor(seed);
   const cleared = rooms.map((room) => room.role === "start");
   const visited = rooms.map((_, index) => index === 0);
@@ -338,6 +357,9 @@ export function createRun(seed: number, weapon: WeaponId = "sword", gear: GearBo
     goods,
     weapon,
     gear,
+    weaponHit,
+    abilities,
+    abilityCd: {},
     ammo: weaponById(weapon).magazine,
     visited,
     cleared,
@@ -358,7 +380,12 @@ export function syncRun(run: Run): void {
   };
   if (!run.exit && run.cleared.every(Boolean)) {
     run.exit = { room: run.current, cell: exitCell(run.state) };
-    run.state.note = `${run.state.note} Портал в хаб открылся.`.trim();
+    run.state.note = `${run.state.note} The hub portal is open.`.trim();
+  }
+  run.abilityCd = {};
+  for (const ability of run.abilities) {
+    if (!ability) continue;
+    run.abilityCd[ability.id] = run.state.hero.cooldowns[ability.id] ?? 0;
   }
 }
 
@@ -409,19 +436,19 @@ export function teleport(run: Run, to: number): boolean {
   const from = run.rooms[run.current]!;
   const dest = run.rooms[to]!;
   if (!run.visited[to]) {
-    run.state.note = "Эта комната ещё не открыта.";
+    run.state.note = "That room is not open yet.";
     return false;
   }
   if (!from.portal) {
-    run.state.note = "Телепорт работает только из комнаты с телепортом.";
+    run.state.note = "Teleport only works from a room that has one.";
     return false;
   }
   if (run.state.outcome !== "won") {
-    run.state.note = run.state.outcome === "lost" ? "Телепорт недоступен." : "Телепорт закрыт, пока враг жив.";
+    run.state.note = run.state.outcome === "lost" ? "Teleport is unavailable." : "Teleport is shut while an enemy lives.";
     return false;
   }
   if (!dest.portal) {
-    run.state.note = "В этой комнате нет телепорта.";
+    run.state.note = "This room has no teleport.";
     return false;
   }
   const hp = run.state.hero.hp;
@@ -435,6 +462,6 @@ export function teleport(run: Run, to: number): boolean {
   run.state.hero.x = dest.portal.x;
   run.state.hero.y = dest.portal.y;
   run.state.hero.facing = facing;
-  run.state.note = "Телепорт перенёс тебя в другую комнату.";
+  run.state.note = "The teleport moved you to another room.";
   return true;
 }

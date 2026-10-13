@@ -12,7 +12,7 @@ export function openSettings(host: HTMLElement): void {
 
   const title = document.createElement("h1");
   title.className = "dungeon-title";
-  title.textContent = "Настройки";
+  title.textContent = "Settings";
 
   const close = (): void => {
     veil.remove();
@@ -27,13 +27,13 @@ export function openSettings(host: HTMLElement): void {
   const done = document.createElement("button");
   done.type = "button";
   done.className = "dungeon-button";
-  done.textContent = "Закрыть";
+  done.textContent = "Close";
   done.addEventListener("click", close);
 
   panel.append(
     title,
-    channelRow("Музыка", musicEnabled, setMusicEnabled, musicVolume, setMusicVolume),
-    channelRow("Звуки", sfxEnabled, setSfxEnabled, sfxVolume, setSfxVolume, () => {
+    channelRow("Music", musicEnabled, setMusicEnabled, musicVolume, setMusicVolume),
+    channelRow("Sounds", sfxEnabled, setSfxEnabled, sfxVolume, setSfxVolume, () => {
       if (sfxEnabled()) playFootstep("right", 0.2);
     }),
     done,
@@ -61,7 +61,7 @@ function channelRow(
   slider.max = "100";
   slider.step = "1";
   slider.className = "dungeon-setting-slider";
-  slider.setAttribute("aria-label", `Громкость: ${label}`);
+  slider.setAttribute("aria-label", `Volume: ${label}`);
 
   const value = document.createElement("span");
   value.className = "dungeon-setting-value";
@@ -75,7 +75,7 @@ function channelRow(
     const pct = Math.round(readVolume() * 100);
     slider.value = String(pct);
     value.textContent = `${pct}%`;
-    button.textContent = on ? "Вкл" : "Выкл";
+    button.textContent = on ? "On" : "Off";
     button.setAttribute("aria-pressed", on ? "true" : "false");
   };
   slider.addEventListener("input", () => {

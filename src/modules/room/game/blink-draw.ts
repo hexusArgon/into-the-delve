@@ -41,7 +41,7 @@ function burst(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: numb
   ctx.restore();
 }
 
-/** Герой уже в новой клетке. Здесь гаснущий силуэт на старой и вспышка на обеих. */
+/** Hero уже в новой клетке. Здесь гаснущий силуэт на старой и вспышка на обеих. */
 export function drawBlinkFx(
   ctx: CanvasRenderingContext2D,
   box: Box,

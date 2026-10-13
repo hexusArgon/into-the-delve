@@ -82,7 +82,7 @@ const door = (side: Side, x: number, y: number): Door => ({ side, x, y });
 export const ROOMS: readonly RoomPattern[] = [
   {
     id: "cp1_20_12X12_9001",
-    name: "Колонный зал",
+    name: "Column Hall",
     theme: "crypt",
     w: 12,
     h: 12,
@@ -94,7 +94,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_10X10_9001",
-    name: "Склеп",
+    name: "Crypt",
     theme: "crypt",
     w: 10,
     h: 10,
@@ -106,7 +106,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_13X13_9001",
-    name: "Обвал",
+    name: "Cave-in",
     theme: "crypt",
     w: 13,
     h: 13,
@@ -133,7 +133,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_14X10_9001",
-    name: "Катакомбы",
+    name: "Catacombs",
     theme: "crypt",
     w: 14,
     h: 10,
@@ -154,7 +154,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_14X14_9001",
-    name: "Перекрёсток",
+    name: "Crossroads",
     theme: "crypt",
     w: 14,
     h: 14,
@@ -166,7 +166,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_12X12_9002",
-    name: "Темница",
+    name: "Oubliette",
     theme: "crypt",
     w: 12,
     h: 12,
@@ -187,7 +187,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_13X13_9002",
-    name: "Ротонда",
+    name: "Rotunda",
     theme: "crypt",
     w: 13,
     h: 13,
@@ -214,7 +214,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_14X14_9002",
-    name: "Крестовый зал",
+    name: "Cross Hall",
     theme: "crypt",
     w: 14,
     h: 14,
@@ -242,7 +242,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_12X12_9003",
-    name: "Излом",
+    name: "Fracture",
     theme: "crypt",
     w: 12,
     h: 12,
@@ -268,7 +268,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_15X15_9001",
-    name: "Пещера",
+    name: "Cave",
     theme: "crypt",
     w: 15,
     h: 15,
@@ -297,7 +297,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_18X10_9001",
-    name: "Галерея ниш",
+    name: "Niche Gallery",
     theme: "crypt",
     w: 18,
     h: 10,
@@ -321,7 +321,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_13X13_9003",
-    name: "Ромб",
+    name: "Diamond",
     theme: "crypt",
     w: 13,
     h: 13,
@@ -348,7 +348,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_12X12_9004",
-    name: "Колодец",
+    name: "Well",
     theme: "crypt",
     w: 12,
     h: 12,
@@ -374,7 +374,7 @@ export const ROOMS: readonly RoomPattern[] = [
   },
   {
     id: "cp1_20_14X8_9001",
-    name: "Уступы",
+    name: "Ledges",
     theme: "crypt",
     w: 14,
     h: 8,

@@ -1,10 +1,10 @@
 import { SHIELD } from "../game/rules.ts";
 import type { BodyKind } from "./rooms.ts";
 
-/** Тип урона. Без подписи — физический. Урон землёй оставляет на клетке масло. */
+/** Тип урона. Без подписи — физический. Damage землёй оставляет на клетке масло. */
 export type DamageType = "physical" | "fire" | "earth" | "poison" | "water" | "ice";
 
-/** Ручки вкладки «Способности», строки «Стихии». */
+/** Ручки вкладки «Abilities», строки «Стихии». */
 export const ELEMENTS = {
   fireTick: 10,
   fireTurns: 3,
@@ -23,7 +23,7 @@ export const ELEMENTS = {
   iceStun: 1,
   iceStunCooldown: 3,
   /** Новая лужа живёт столько ходов, потом клетка снова обычная. */
-  puddleTurns: 5,
+  puddleTurns: 7,
 } as const;
 
 export type MonsterRole =
@@ -34,7 +34,6 @@ export type MonsterRole =
   | "bat"
   | "slime"
   | "skeleton"
-  | "rat"
   | "spirit"
   | "goblin"
   | "mushroom"
@@ -46,7 +45,6 @@ export type MonsterRole =
   | "gargoyle"
   | "drowned"
   | "whisper"
-  | "centipede"
   | "spore";
 
 /** Строка таблицы монстров. MaxHp — точная дробь колонки U, у рарных 800. */
@@ -68,23 +66,23 @@ export interface MonsterDef {
 }
 
 /**
- * Вкладка «Способности». КД, задержки, радиусы и урон — с листа, не подбирать.
+ * Onадка «Abilities». КД, задержки, радиусы и урон — с листа, не подбирать.
  * Радиус 1 — квадрат 3×3 по Чебышёву. Кольца: центр с задержкой 1, каждое следующее на ход позже.
  */
 export const KIT = {
   dog: { dash: 4, damage: 30, cooldown: 4, delay: 1 },
-  spider: { range: 4, stacks: 1, cooldown: 3 },
+  spider: { range: 4, stacks: 1, cooldown: 3, delay: 1 },
   corpse: { reach: 6, delay: 2, radius: 1, stacks: 1 },
   golem: { delay: 1, damage: 25, cooldown: 3 },
   bat: { cooldown: 3, sleepBelow: 0.5, heal: 0.2 },
   slime: { steps: 2, stacks: 1 },
   skeleton: { reach: 2, depth: 2, width: 3, delay: 1, damage: 35, cooldown: 4 },
-  spirit: { damage: 20, cooldown: 3 },
+  spirit: { damage: 20, cooldown: 3, delay: 1 },
   goblin: { dash: 2, damage: 20, cooldown: 2 },
-  mushroom: { keep: 4, cooldown: 2 },
+  mushroom: { keep: 4, cooldown: 3 },
   spore: { fuse: 1, radius: 1, stacks: 1 },
-  ember: { pause: 1, delay: 1, radius: 1, damage: 40, cooldown: 4 },
-  worm: { delay: 2, radius: 1, damage: 70, push: 2, cooldown: 3 },
+  ember: { pause: 1, delay: 1, radius: 1, damage: 40, cooldown: 7 },
+  worm: { delay: 2, radius: 1, damage: 70, push: 2, cooldown: 6 },
   /** Аура — квадрат 15×15 вокруг послушника: так решил дизайнер, лист пишет 8×8. */
   acolyte: { delay: 2, radius: 1, root: 2, cooldown: 7, aura: 7, vampirism: 1 },
   hound: { dash: 4, damage: 30, cooldown: 4 },
@@ -112,39 +110,37 @@ function row(
   immune: readonly DamageType[] = [],
 ): MonsterDef {
   const rare = role === "chest" || role === "gargoyle" || role === "drowned";
-  const spawn = role !== "rat" && role !== "centipede";
+  const spawn = true;
   return { id, role, name, who, body, maxHp, bite, shield: SHIELD, immune, rare, spawn };
 }
 
 export const MONSTERS: readonly MonsterDef[] = [
-  row("1", "dog", "Костяной пёс", "Скелет гончей", "bone", BASE_HP, BITE),
-  row("2", "spider", "Пещерный паук", "Мохнатый паук с красными глазами", "flesh", BASE_HP, BITE),
-  row("3", "corpse", "Гнилой мертвец", "Сгорбленный зомби", "flesh", BASE_HP / 1.2, BITE, ["poison"]),
-  row("4", "golem", "Осколок голема", "Маленький каменный голем", "stone", BASE_HP / 1.35, BITE, ["earth"]),
-  row("5", "bat", "Кровосос", "Летучая мышь", "flesh", BASE_HP / 1.05, BITE),
-  row("6", "slime", "Слизь склепа", "Зелёная слизь с черепом внутри", "flesh", BASE_HP, 0, ["poison"]),
-  row("7", "skeleton", "Скелет-страж", "Скелет с коротким мечом", "bone", BASE_HP, BITE),
-  row("8", "rat", "Чумная крыса", "Крупная крыса", "flesh", BASE_HP, BITE),
-  row("9", "spirit", "Бледный дух", "Потрёпанное привидение", "flesh", BASE_HP / 1.25, BITE),
-  row("10", "goblin", "Норный гоблин", "Гоблин с кинжалом", "flesh", BASE_HP / 1.25, BITE),
-  row("11", "mushroom", "Грибник", "Существо-поганка", "flesh", BASE_HP, 0),
-  row("12", "ember", "Уголёк", "Маленький огненный имп", "flesh", BASE_HP, BITE, ["fire"]),
-  row("13", "worm", "Могильный червь", "Сегментный червь с пастью", "flesh", BASE_HP / 1.2, BITE, ["earth"]),
-  row("14", "acolyte", "Послушник", "Культист в капюшоне", "flesh", BASE_HP, 0),
-  row("15", "hound", "Пепельная гончая", "Демон-пёс с трещинами жара", "flesh", BASE_HP, BITE, ["fire"]),
-  row("16", "chest", "Ложный сундук", "Мимик", "flesh", RARE_HP, RARE_BITE),
-  row("17", "gargoyle", "Карнизный страж", "Маленькая гаргулья", "stone", RARE_HP, RARE_BITE),
-  row("18", "drowned", "Утопленник", "Раздутый утопленник с водорослями", "flesh", RARE_HP, RARE_BITE),
-  row("19", "whisper", "Костяной шёпот", "Скелет с посохом", "bone", BASE_HP / 1.5, 0),
-  row("20", "centipede", "Теневая многоножка", "Чёрная сколопендра", "flesh", BASE_HP, BITE),
+  row("1", "dog", "Bone Hound", "Hound skeleton", "bone", BASE_HP, BITE),
+  row("2", "spider", "Cave Spider", "Hairy spider with red eyes", "flesh", BASE_HP, BITE),
+  row("3", "corpse", "Rotten Corpse", "Hunched zombie", "flesh", BASE_HP / 1.2, BITE, ["poison"]),
+  row("4", "golem", "Golem Shard", "Small stone golem", "stone", BASE_HP / 1.35, BITE, ["earth"]),
+  row("5", "bat", "Bloodsucker", "Bat", "flesh", BASE_HP / 1.05, BITE),
+  row("6", "slime", "Crypt Slime", "Green slime with a skull inside", "flesh", BASE_HP, 0, ["poison"]),
+  row("7", "skeleton", "Skeleton Guard", "Skeleton with a short sword", "bone", BASE_HP, BITE),
+  row("9", "spirit", "Pale Spirit", "Tattered ghost", "flesh", BASE_HP / 1.25, BITE),
+  row("10", "goblin", "Burrow Goblin", "Goblin with a dagger", "flesh", BASE_HP / 1.25, BITE),
+  row("11", "mushroom", "Mushroom", "Toadstool creature", "flesh", BASE_HP, 0),
+  row("12", "ember", "Ember", "Small fire imp", "flesh", BASE_HP, BITE, ["fire"]),
+  row("13", "worm", "Grave Worm", "Segmented worm with a maw", "flesh", BASE_HP / 1.2, BITE, ["earth"]),
+  row("14", "acolyte", "Acolyte", "Hooded cultist", "flesh", BASE_HP, 0),
+  row("15", "hound", "Ash Hound", "Demon hound cracked with heat", "flesh", BASE_HP, BITE, ["fire"]),
+  row("16", "chest", "False Chest", "Mimic", "flesh", RARE_HP, RARE_BITE),
+  row("17", "gargoyle", "Gargoyle", "Small gargoyle", "stone", RARE_HP, RARE_BITE),
+  row("18", "drowned", "Drowned", "Bloated drowned one tangled in weeds", "flesh", RARE_HP, RARE_BITE),
+  row("19", "whisper", "Bone Whisper", "Skeleton with a staff", "bone", BASE_HP / 1.5, 0),
 ];
 
-/** Спора грибника — существо: 200 HP, щита и укуса нет. */
+/** Mushroom spore — существо: 200 HP, щита и укуса нет. */
 export const SPORE: MonsterDef = {
   id: "spore",
   role: "spore",
-  name: "Спора",
-  who: "Спора грибника",
+  name: "Spore",
+  who: "Mushroom spore",
   body: "flesh",
   maxHp: 200,
   bite: 0,

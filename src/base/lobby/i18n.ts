@@ -21,18 +21,4 @@ const EN = {
 
 export type StringKey = keyof typeof EN;
 
-export const t = makeT<StringKey>(EN, {
-  lobby: "Лобби",
-  toLobby: "В лобби",
-  play: "Играть",
-  withFriends: "С друзьями",
-  more: "Ещё",
-  profile: "Профиль",
-  playerId: "ID игрока",
-  copyId: "Скопировать ID",
-  copied: "Скопировано",
-  logout: "Выйти",
-  wallet: "Кошелёк",
-  noFeatures:
-    "Пока здесь пусто. Вкладки появляются, когда модулям приложения (магазин, герои, лидеры…) заданы настройки в тайтле.",
-});
+export const t = makeT<StringKey>(EN, EN);

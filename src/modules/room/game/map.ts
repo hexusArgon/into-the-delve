@@ -2,7 +2,7 @@ import type { Side } from "../data/rooms.ts";
 import type { Box } from "./dungeon.ts";
 import type { Cell } from "./sim.ts";
 
-/** Карта этажа: где какая комната, что уже пройдено и где стоит телепорт. */
+/** Floor map: где какая комната, что уже пройдено и где стоит телепорт. */
 export interface MapView {
   rooms: readonly {
     slot: Cell;
@@ -13,9 +13,9 @@ export interface MapView {
   visited: readonly boolean[];
   cleared: readonly boolean[];
   current: number;
-  /** Почему клик по карте не переносит. Пусто — переход доступен. */
+  /** Почему клик по карте не переносит. Empty — переход доступен. */
   teleportBlock: string | null;
-  /** Портал в хаб в текущей комнате. Пусто, пока этаж не пройден. */
+  /** Портал в хаб в текущей комнате. Empty, пока этаж не пройден. */
   exit: Cell | null;
 }
 
@@ -159,7 +159,7 @@ export function drawMinimap(ctx: CanvasRenderingContext2D, width: number, map: M
   ctx.restore();
 }
 
-/** Большая карта на весь экран. Возвращает квадраты комнат для клика. */
+/** Большая карта на весь экран. Возвращает квадраты rooms для клика. */
 export function drawMapOverlay(ctx: CanvasRenderingContext2D, width: number, height: number, map: MapView): MapHit[] {
   const known = knownRooms(map);
   if (known.length === 0) return [];
@@ -206,10 +206,10 @@ export function drawMapOverlay(ctx: CanvasRenderingContext2D, width: number, hei
   ctx.font = "600 28px Palatino Linotype, Palatino, serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("Карта этажа", left + panelW / 2, top + 32);
+  ctx.fillText("Floor map", left + panelW / 2, top + 32);
   ctx.fillStyle = "rgba(230, 220, 200, 0.72)";
   ctx.font = "18px Palatino Linotype, Palatino, serif";
-  ctx.fillText(`Открыто телепортов: ${portals}`, left + panelW / 2, top + 62);
+  ctx.fillText(`Teleports open: ${portals}`, left + panelW / 2, top + 62);
 
   ctx.strokeStyle = "rgba(110, 88, 48, 0.75)";
   ctx.lineWidth = Math.max(4, cell * 0.16);
@@ -237,10 +237,10 @@ export function drawMapOverlay(ctx: CanvasRenderingContext2D, width: number, hei
 
   ctx.fillStyle = "rgba(230, 220, 200, 0.78)";
   ctx.font = "18px Palatino Linotype, Palatino, serif";
-  const hint = map.teleportBlock ?? (canLeave ? "Кликни по другой комнате с телепортом" : "Найди ещё комнату с телепортом");
+  const hint = map.teleportBlock ?? (canLeave ? "Click another room that has a teleport" : "Find another room with a teleport");
   ctx.fillText(hint, left + panelW / 2, top + panelH - 46);
   ctx.fillStyle = "rgba(154, 141, 120, 0.7)";
-  ctx.fillText("Tab — закрыть", left + panelW / 2, top + panelH - 22);
+  ctx.fillText("Tab — close", left + panelW / 2, top + panelH - 22);
   ctx.restore();
   return hits;
 }

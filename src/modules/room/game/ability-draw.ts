@@ -259,6 +259,117 @@ function drawWisp(ctx: CanvasRenderingContext2D, box: Box, from: Cell, to: Cell,
   }
 }
 
+function drawBolt(ctx: CanvasRenderingContext2D, box: Box, cells: readonly Cell[], t: number): void {
+  const alpha = fade(t, 0.22);
+  for (const cell of cells) {
+    const p = pt(box, cell.x, cell.y);
+    const top = p.y - box.size * 0.95;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = "#fff1c2";
+    ctx.lineWidth = Math.max(2, box.size * 0.055);
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(p.x, top);
+    ctx.lineTo(p.x + box.size * 0.1, mix(top, p.y, 0.42));
+    ctx.lineTo(p.x - box.size * 0.08, mix(top, p.y, 0.68));
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    ctx.restore();
+    puff(ctx, p.x, p.y, box.size * (0.1 + t * 0.16), "#ffb15a", alpha * 0.75);
+  }
+}
+
+function drawArrow(ctx: CanvasRenderingContext2D, box: Box, from: Cell, to: Cell, t: number): void {
+  const a = pt(box, from.x, from.y);
+  const b = pt(box, to.x, to.y);
+  const u = Math.min(1, t / 0.55);
+  const x = mix(a.x, b.x, u);
+  const y = mix(a.y, b.y, u);
+  const ang = Math.atan2(b.y - a.y, b.x - a.x);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(ang);
+  ctx.globalAlpha = fade(t, 0.55);
+  ctx.strokeStyle = "#7ed34a";
+  ctx.fillStyle = "#b6e36a";
+  ctx.lineWidth = Math.max(2, box.size * 0.045);
+  ctx.beginPath();
+  ctx.moveTo(-box.size * 0.28, 0);
+  ctx.lineTo(0, 0);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(box.size * 0.16, 0);
+  ctx.lineTo(-box.size * 0.02, -box.size * 0.07);
+  ctx.lineTo(-box.size * 0.02, box.size * 0.07);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawQuake(ctx: CanvasRenderingContext2D, box: Box, cells: readonly Cell[], t: number): void {
+  const alpha = fade(t, 0.35);
+  for (const cell of cells) {
+    const p = pt(box, cell.x, cell.y);
+    const kick = Math.sin(t * 18) * box.size * 0.03;
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.85;
+    ctx.strokeStyle = "#c4a15a";
+    ctx.lineWidth = Math.max(1, box.size * 0.03);
+    ctx.beginPath();
+    ctx.moveTo(p.x - box.size * 0.28, p.y + box.size * 0.08 + kick);
+    ctx.lineTo(p.x - box.size * 0.05, p.y - box.size * 0.04);
+    ctx.lineTo(p.x + box.size * 0.22, p.y + box.size * 0.1);
+    ctx.stroke();
+    ctx.restore();
+    puff(ctx, p.x, p.y - t * box.size * 0.2, box.size * 0.08, "#8a7348", alpha * 0.45);
+  }
+}
+
+function drawShardBurst(ctx: CanvasRenderingContext2D, box: Box, cells: readonly Cell[], t: number): void {
+  const alpha = fade(t, 0.3);
+  for (const cell of cells) {
+    const p = pt(box, cell.x, cell.y);
+    for (let i = 0; i < 3; i += 1) {
+      const ang = -0.8 + i * 0.8;
+      const dist = box.size * (0.08 + t * 0.28);
+      ctx.save();
+      ctx.translate(p.x + Math.cos(ang) * dist, p.y - t * box.size * 0.35 + Math.sin(ang) * dist * 0.25);
+      ctx.rotate(ang);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = "#e7f6ff";
+      ctx.fillRect(-box.size * 0.025, -box.size * 0.08, box.size * 0.05, box.size * 0.16);
+      ctx.restore();
+    }
+  }
+}
+
+function drawSleep(ctx: CanvasRenderingContext2D, box: Box, cells: readonly Cell[], t: number): void {
+  for (const cell of cells) {
+    const p = pt(box, cell.x, cell.y);
+    puff(ctx, p.x, p.y, box.size * (0.2 + t * 0.15), "#c9b3ef", fade(t, 0.4) * 0.35);
+    ctx.save();
+    ctx.globalAlpha = fade(t, 0.45);
+    ctx.fillStyle = "#e4d8f6";
+    ctx.font = `700 ${Math.max(12, Math.floor(box.size * 0.28))}px Arial`;
+    ctx.textAlign = "center";
+    ctx.fillText("z", p.x + box.size * 0.12, p.y - t * box.size * 0.45);
+    ctx.restore();
+  }
+}
+
+function drawFlakes(ctx: CanvasRenderingContext2D, box: Box, cells: readonly Cell[], t: number, time: number): void {
+  for (const cell of cells) {
+    const p = pt(box, cell.x, cell.y);
+    for (let i = 0; i < 3; i += 1) {
+      const phase = (time / 520 + t + i * 0.33) % 1;
+      const x = p.x + (i - 1) * box.size * 0.18 + Math.sin(phase * Math.PI * 2) * box.size * 0.06;
+      const y = p.y - box.size * 0.35 + phase * box.size * 0.55;
+      puff(ctx, x, y, box.size * 0.035, i === 1 ? "#e7f6ff" : "#9ec8ee", (1 - phase) * 0.8);
+    }
+  }
+}
+
 function drawShards(ctx: CanvasRenderingContext2D, box: Box, cells: readonly Cell[], t: number): void {
   const alpha = fade(t, 0.3);
   for (const cell of cells) {
@@ -335,6 +446,7 @@ function drawAct(ctx: CanvasRenderingContext2D, box: Box, burst: AbilityBurst, t
       const p = arc(box, burst.from, burst.to, u, 0.12);
       puff(ctx, p.x, p.y, box.size * 0.08, "#d7c6f2", fade(t, 0.75));
     } else if (act === "beam") drawLineGrow(ctx, box, burst.from, burst.to, t, "#bfe6f5", 0.1, 0.32);
+    else if (act === "arrow") drawArrow(ctx, box, burst.from, burst.to, t);
     else return false;
     return true;
   }
@@ -351,6 +463,12 @@ function drawAct(ctx: CanvasRenderingContext2D, box: Box, burst: AbilityBurst, t
   else if (act === "splash") drawRings(ctx, box, cells, t, "#7eb6ee", 0.4);
   else if (act === "hail") drawHail(ctx, box, cells, t);
   else if (act === "shards") drawShards(ctx, box, cells, t);
+  else if (act === "sleep") drawSleep(ctx, box, cells, t);
+  else if (act === "bolt") drawBolt(ctx, box, cells, t);
+  else if (act === "ward") drawRings(ctx, box, cells, t, "#ffb15a", 0.35);
+  else if (act === "blizzard") drawFlakes(ctx, box, cells, t, t * 520);
+  else if (act === "quake") drawQuake(ctx, box, cells, t);
+  else if (act === "shard") drawShardBurst(ctx, box, cells, t);
   else return false;
   return true;
 }
@@ -417,13 +535,53 @@ export function drawWindupHint(ctx: CanvasRenderingContext2D, box: Box, monster:
   else if (cast.kind === "charge") {
     drawLineGrow(ctx, box, monster, cast.center, 0.4 + a * 0.2, "#e8dcc8", 0.07, 1);
     drawRings(ctx, box, cast.cells, 0.25 + a * 0.2, "#e07060", 0.35);
+  } else if (cast.kind === "wisp") drawRings(ctx, box, cast.cells, 0.25 + a * 0.25, "#d7e4ff", 0.45);
+  else if (cast.kind === "spit") {
+    drawLineGrow(ctx, box, monster, cast.center, 0.4 + a * 0.2, "#b6e24a", 0.05, 1);
+    drawRings(ctx, box, cast.cells, 0.25 + a * 0.2, "#b6e24a", 0.35);
   }
 }
 
-/** Гейзер, град и камень, пока они ещё ждут своего хода. */
+/** Гейзер, град и камень, пока они left ждут своего хода. */
 export function drawHazardHint(ctx: CanvasRenderingContext2D, box: Box, hazard: Hazard, time: number): void {
   const a = pulse(time);
   if (hazard.kind === "rock") drawFall(ctx, box, hazard.center, 0.25 + a * 0.15);
   else if (hazard.kind === "geyser") drawColumns(ctx, box, hazard.cells, 0.15 + a * 0.2, "#3a7fd4", 0.35);
   else drawHail(ctx, box, hazard.cells, 0.2 + a * 0.25);
+}
+
+/** Щит, буран и землетрясение, пока они ещё держатся. */
+export function drawHeroZones(
+  ctx: CanvasRenderingContext2D,
+  box: Box,
+  zones: { ward: readonly Cell[]; storm: readonly Cell[]; quakes: readonly (readonly Cell[])[] },
+  time: number,
+): void {
+  if (zones.ward.length > 0) {
+    const center = centroid(box, zones.ward);
+    ctx.save();
+    ctx.globalAlpha = 0.35 + 0.15 * Math.sin(time / 220);
+    ctx.strokeStyle = "#ffb15a";
+    ctx.lineWidth = Math.max(2, box.size * 0.045);
+    ctx.beginPath();
+    ctx.ellipse(center.x, center.y + box.size * 0.1, box.size * 1.15, box.size * 0.42, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (zones.storm.length > 0) drawFlakes(ctx, box, zones.storm, 0.2, time);
+  for (const cells of zones.quakes) {
+    for (const cell of cells) {
+      const p = pt(box, cell.x, cell.y);
+      const kick = Math.sin(time / 90 + cell.x) * box.size * 0.03;
+      ctx.save();
+      ctx.globalAlpha = 0.45;
+      ctx.strokeStyle = "#c4a15a";
+      ctx.lineWidth = Math.max(1, box.size * 0.025);
+      ctx.beginPath();
+      ctx.moveTo(p.x - box.size * 0.22, p.y + box.size * 0.1 + kick);
+      ctx.lineTo(p.x + box.size * 0.18, p.y + kick);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
 }

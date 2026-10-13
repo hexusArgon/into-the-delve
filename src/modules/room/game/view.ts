@@ -16,7 +16,7 @@ import {
   type Dressing,
 } from "./dungeon.ts";
 import { drawBlinkFx } from "./blink-draw.ts";
-import { burstAge, drawAbilityBurst, drawHazardHint, drawWindupHint, type AbilityBurst } from "./ability-draw.ts";
+import { burstAge, drawAbilityBurst, drawHazardHint, drawHeroZones, drawWindupHint, type AbilityBurst } from "./ability-draw.ts";
 import { drawExitPad, drawMapOverlay, drawMinimap, drawPortalPad, hitMapRoom, type MapHit, type MapView } from "./map.ts";
 import { Motion, type Pose } from "./motion.ts";
 import { weaponById, type WeaponId } from "../data/weapons.ts";
@@ -26,6 +26,7 @@ import {
   blinkCells,
   isBlocked,
   isPit,
+  activeHeroZones,
   roomMonsters,
   type Cell,
   type Dir,
@@ -159,7 +160,7 @@ function drawGroundShadow(ctx: CanvasRenderingContext2D, px: number, py: number,
   ctx.fill();
 }
 
-/** Прыжок шага: тело вверх, в воздухе вытянуто, на земле чуть прижато. Тень остаётся на клетке. */
+/** Leap шага: тело вверх, в воздухе вытянуто, на земле чуть прижато. Тень остаётся на клетке. */
 function stepJump(pose: Pose, size: number): { lift: number; sx: number; sy: number; shadow: number } {
   if (!pose.jump || pose.travel === null) return { lift: 0, sx: 1, sy: 1, shadow: 1 };
   const air = Math.sin(pose.travel * Math.PI);
@@ -219,7 +220,7 @@ function attackPose(weapon: WeaponId, t: number): AttackPose {
   return { reach: 0.5 - kick * 0.16, along: 0, rot: -kick * 0.28, flash: kick };
 }
 
-/** Патрон летит по линии удара. Дробовик — три дробины, по одной на каждый луч веера. */
+/** Патрон летит по линии удара. Shotgun — три дробины, по одной на каждый луч веера. */
 function drawFlyingRound(
   ctx: CanvasRenderingContext2D,
   box: Box,
@@ -1034,8 +1035,9 @@ export class RoomRenderer {
     if (state.outcome !== "won") drawDoorBars(ctx, box, background.dressing);
     const pattern = this.patternFor(ctx, sprites);
     if (pattern) alignWallPattern(pattern, box, sprites);
-    const blinks = aimBlink ? blinkCells(state) : [];
-    const attacks = state.outcome !== "lost" && !aimBlink ? attackCells(state) : [];
+    const blinks = aimBlink ? blinkCells(state) : (state.aim ?? []);
+    const abilityAiming = !aimBlink && (state.aim?.length ?? 0) > 0;
+    const attacks = state.outcome !== "lost" && !aimBlink && !abilityAiming ? attackCells(state) : [];
     const portal = map?.rooms[map.current]?.portal ?? null;
     const exit = map?.exit ?? null;
     drawGround(ctx, box, state, time);
@@ -1065,6 +1067,7 @@ export class RoomRenderer {
       }
     }
     if (swing !== null) drawFlyingRound(ctx, box, room, poses.hero, state.hero.facing, state.weapon, swing);
+    drawHeroZones(ctx, box, activeHeroZones(state), time);
     for (const burst of this.ability) drawAbilityBurst(ctx, box, burst, time);
     this.blendOccluded(ctx, width, height, box, state, sprites, swing, time, attacks, blinks, portal, exit, poses.hero, poses.monsters, pop, dying);
     if (blink) drawBlinkFx(ctx, box, state.hero, blink, sprites);
@@ -1295,10 +1298,13 @@ export class RoomRenderer {
       ctx.translate(-anchorX, -anchorY);
     }
     const spore = monster.role === "spore";
-    const art = (spore ? sprites.monsters["11"] : monster.kind ? sprites.monsters[monster.kind] : undefined) ?? sprites.monster;
-    const scale = spore ? SPORE_SCALE : 1;
+    const closedChest = monster.role === "chest" && monster.mode === "passive";
+    const art = closedChest
+      ? (sprites.props.chest ?? sprites.monsters["16"] ?? sprites.monster)
+      : (spore ? sprites.monsters["11"] : monster.kind ? sprites.monsters[monster.kind] : undefined) ?? sprites.monster;
+    const scale = spore ? SPORE_SCALE : closedChest ? 0.84 : 1;
     const inset = (box.size * (1 - scale)) / 2;
-    drawSprite(ctx, art, px + inset, py + inset * 1.6, box.size * scale, monster.facing);
+    drawSprite(ctx, art, px + inset, py + inset * 1.6, box.size * scale, closedChest ? "right" : monster.facing);
     ctx.restore();
   }
 

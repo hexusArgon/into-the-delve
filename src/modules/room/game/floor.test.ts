@@ -4,6 +4,8 @@ import { MONSTERS } from "../data/monsters.ts";
 import { buildFloor, createRun, portalRoomCount, syncRun, teleport, travel } from "./floor.ts";
 import { DIRS, OPPOSITE, SIDE_FACING, buildLayout, distancesTo, isBlocked, livingMonsters, step } from "./sim.ts";
 
+const rareIds = new Set(MONSTERS.filter((monster) => monster.rare).map((monster) => monster.id));
+let sawRare = false;
 for (let seed = 1; seed <= 200; seed += 1) {
   const rooms = buildFloor(seed);
   assert.equal(rooms.length, FLOOR_ROOMS, `seed ${seed}: комнат`);
@@ -13,6 +15,9 @@ for (let seed = 1; seed <= 200; seed += 1) {
   for (const room of rooms) {
     if (room.role !== "fight") continue;
     assert.ok(room.monsterIds.length >= 2 && room.monsterIds.length <= 6, `seed ${seed}: в бою ${room.monsterIds.length}`);
+    const rares = room.monsterIds.filter((id) => rareIds.has(id));
+    if (rares.length === 1) sawRare = true;
+    assert.ok(rares.length <= 1, `seed ${seed}: рарников ${rares.length}`);
     for (const id of room.monsterIds) {
       assert.equal(ids.has(id), true, `seed ${seed}: монстр не из таблицы`);
       assert.equal(id === "8" || id === "20", false, `seed ${seed}: крыса или многоножка в пуле`);
@@ -56,6 +61,7 @@ for (let seed = 1; seed <= 200; seed += 1) {
     assert.ok(reach[pad.y * layout.w + pad.x]! >= 0, `seed ${seed}: до телепорта не дойти`);
   }
 }
+assert.equal(sawRare, true);
 
 const run = createRun(7);
 assert.equal(run.state.outcome, "won");
