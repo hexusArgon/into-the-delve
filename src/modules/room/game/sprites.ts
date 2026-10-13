@@ -96,12 +96,29 @@ function plain(source: HTMLImageElement): HTMLCanvasElement {
   return canvas;
 }
 
+/**
+ * Бандл на static.idos.games, страница — на домене игры. Картинка с чужого домена без CORS
+ * портит холст, и комната остаётся чёрной. Тот же файл есть рядом со страницей.
+ */
+function assetOnPage(url: string): string {
+  try {
+    const parsed = new URL(url, window.location.href);
+    if (parsed.origin === window.location.origin) return parsed.href;
+    const file = parsed.pathname.split("/").pop();
+    if (!file) return parsed.href;
+    return new URL(`assets/${file}`, new URL("./", window.location.href)).href;
+  } catch {
+    return url;
+  }
+}
+
 function loadImage(url: string): Promise<HTMLImageElement> {
+  const src = assetOnPage(url);
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error(`sprite ${url}`));
-    image.src = url;
+    image.onerror = () => reject(new Error(`sprite ${src}`));
+    image.src = src;
   });
 }
 
