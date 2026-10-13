@@ -183,8 +183,8 @@ function trimmed(source: HTMLCanvasElement): HTMLCanvasElement {
 }
 
 export async function loadSprites(): Promise<Sprites> {
-  const [hero, sword, monster, floor, wall, pillar, sarcophagus, torch, bones, candle, web, blood, barrel, chain, shelf, table, chair, woodFloor, gold] =
-    await Promise.all(
+  const [core, monsters, weapons, props] = await Promise.all([
+    Promise.all(
       [
         heroUrl,
         swordUrl,
@@ -206,8 +206,13 @@ export async function loadSprites(): Promise<Sprites> {
         woodFloorUrl,
         goldUrl,
       ].map(loadImage),
-    );
-  return {
+    ),
+    loadMonsterSprites(),
+    loadWeaponSprites(),
+    loadPropSprites(),
+  ]);
+  const [hero, sword, monster, floor, wall, pillar, sarcophagus, torch, bones, candle, web, blood, barrel, chain, shelf, table, chair, woodFloor, gold] = core;
+  const sprites: Sprites = {
     hero: keyed(hero!),
     sword: keyed(sword!),
     monster: keyed(monster!),
@@ -227,12 +232,16 @@ export async function loadSprites(): Promise<Sprites> {
     chair: trimmed(keyed(chair!)),
     woodFloor: woodFloor!,
     gold: trimmed(plain(gold!)),
-    monsters: await loadMonsterSprites(),
-    weapons: await loadWeaponSprites(),
-    props: await loadPropSprites(),
-    items: await loadItemIcons(),
-    abilities: await loadAbilityIcons(),
+    monsters,
+    weapons,
+    props,
+    items: {},
+    abilities: {},
   };
+  // Иконки инвентаря не держат первый кадр комнаты: их очередь на том же хосте оставляла урок чёрным.
+  void loadItemIcons().then((items) => Object.assign(sprites.items, items));
+  void loadAbilityIcons().then((abilities) => Object.assign(sprites.abilities, abilities));
+  return sprites;
 }
 
 async function loadAbilityIcons(): Promise<Record<string, HTMLCanvasElement>> {
