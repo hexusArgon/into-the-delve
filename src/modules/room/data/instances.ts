@@ -48,6 +48,52 @@ export function instanceById(loadout: Loadout, id: string | null): ItemInstance 
   return loadout.items.find((item) => item.id === id);
 }
 
+export type WearSlot = { kind: "weapon" } | { kind: "gear" | "ability"; index: number };
+
+function readSlot(loadout: Loadout, slot: WearSlot): string | null {
+  if (slot.kind === "weapon") return loadout.weapon;
+  const list = slot.kind === "gear" ? loadout.worn : loadout.wornAbilities;
+  return list[slot.index] ?? null;
+}
+
+function writeSlot(loadout: Loadout, slot: WearSlot, id: string | null): void {
+  if (slot.kind === "weapon") loadout.weapon = id;
+  else if (slot.kind === "gear") loadout.worn[slot.index] = id;
+  else loadout.wornAbilities[slot.index] = id;
+}
+
+export function wornSlot(loadout: Loadout, id: string): WearSlot | null {
+  if (loadout.weapon === id) return { kind: "weapon" };
+  const gear = loadout.worn.indexOf(id);
+  if (gear >= 0) return { kind: "gear", index: gear };
+  const ability = loadout.wornAbilities.indexOf(id);
+  if (ability >= 0) return { kind: "ability", index: ability };
+  return null;
+}
+
+/** Надеть, снять или поменять два слота. Чужая вещь в слот не встаёт. */
+export function placeInstance(loadout: Loadout, id: string, to: WearSlot | "storage"): "ok" | "missing" | "fit" | "same" {
+  const item = instanceById(loadout, id);
+  if (!item) return "missing";
+  if (to === "storage") {
+    const from = wornSlot(loadout, id);
+    if (!from) return "same";
+    writeSlot(loadout, from, null);
+    return "ok";
+  }
+  if (item.kind !== to.kind) return "fit";
+  if (to.kind !== "weapon") {
+    const list = to.kind === "gear" ? loadout.worn : loadout.wornAbilities;
+    if (to.index < 0 || to.index >= list.length) return "fit";
+  }
+  const previous = readSlot(loadout, to);
+  if (previous === id) return "same";
+  const from = wornSlot(loadout, id);
+  writeSlot(loadout, to, id);
+  if (from) writeSlot(loadout, from, previous);
+  return "ok";
+}
+
 export function unworn(loadout: Loadout): ItemInstance[] {
   const held = new Set(
     [loadout.weapon, ...loadout.worn, ...loadout.wornAbilities].filter((id): id is string => id !== null),
@@ -92,12 +138,36 @@ function catalogOk(kind: InstanceKind, catalogId: string): boolean {
   return heroAbilityById(catalogId) !== undefined;
 }
 
+let afterSave: ((loadout: Loadout) => void) | null = null;
+
+/** Сервер подписывается после входа, чтобы не затереть чужое сохранение своим. */
+export function onLoadoutSaved(listener: (loadout: Loadout) => void): void {
+  afterSave = listener;
+}
+
 /** Надетое и мешок. Без хранилища остаётся стартовый набор. */
 export function saveLoadout(loadout: Loadout): void {
   try {
     localStorage.setItem(LOADOUT_KEY, JSON.stringify(loadout));
   } catch {
     /* приватный режим или тест без браузера */
+  }
+  afterSave?.(loadout);
+}
+
+export function copyLoadout(from: Loadout, to: Loadout): void {
+  to.nextId = from.nextId;
+  to.items = from.items.map((item) => ({ ...item }));
+  to.weapon = from.weapon;
+  to.worn = [...from.worn];
+  to.wornAbilities = [...from.wornAbilities];
+}
+
+export function loadoutFromJson(raw: string, weapon: WeaponId = "sword"): Loadout | null {
+  try {
+    return parseLoadout(JSON.parse(raw), weapon);
+  } catch {
+    return null;
   }
 }
 

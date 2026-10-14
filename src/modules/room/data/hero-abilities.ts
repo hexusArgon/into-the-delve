@@ -89,16 +89,57 @@ export function heroAbilityById(id: string): HeroAbility | undefined {
   return BY_ID.get(id);
 }
 
-/** Текст подсказки: как работает, затем числа экземпляра. Мана и кулдаун не растут от заточки. */
-export function abilityTip(id: string, damage: number, level: number | null, splash = 0): { name: string; text: string } {
+export type AbilityElement = "fire" | "earth" | "poison" | "water" | "ice";
+
+const CAST_ELEMENT: Record<HeroCast, AbilityElement> = {
+  bolt: "fire",
+  ward: "fire",
+  blizzard: "water",
+  arrow: "poison",
+  quake: "earth",
+  shard: "ice",
+};
+
+export interface AbilityView {
+  id: HeroCast;
+  name: string;
+  element: AbilityElement;
+  damage: number;
+  splash: number;
+  mp: number;
+  cooldown: number;
+  level: number | null;
+  lines: readonly string[];
+}
+
+/** Карточка подсказки. Числа урона отдельно от текста, мана и кулдаун не растут от заточки. */
+export function abilityView(id: string, damage: number, level: number | null, splash = 0): AbilityView | null {
   const row = heroAbilityById(id);
-  if (!row) return { name: "Ability", text: "" };
-  const harm = splash > 0 ? `Damage ${damage} or ${splash}.` : `Damage ${damage}.`;
-  const cool = row.cooldown > 0 ? `Cooldown ${row.cooldown}.` : "Cooldown none.";
-  const stats = `${harm} Mana ${row.mp}. ${cool}`;
+  if (!row) return null;
   return {
+    id: row.cast,
     name: row.name,
-    text: level === null ? `${row.text} ${stats}` : `${row.text} ${stats} Level ${level}.`,
+    element: CAST_ELEMENT[row.cast],
+    damage,
+    splash,
+    mp: row.mp,
+    cooldown: row.cooldown,
+    level,
+    lines: row.text.split(/(?<=\.)\s+/),
+  };
+}
+
+/** Текст подсказки: как работает, затем числа экземпляра. */
+export function abilityTip(id: string, damage: number, level: number | null, splash = 0): { name: string; text: string } {
+  const view = abilityView(id, damage, level, splash);
+  if (!view) return { name: "Ability", text: "" };
+  const harm = view.splash > 0 ? `Damage ${view.damage} or ${view.splash}.` : `Damage ${view.damage}.`;
+  const cool = view.cooldown > 0 ? `Cooldown ${view.cooldown}.` : "Cooldown none.";
+  const stats = `${harm} Mana ${view.mp}. ${cool}`;
+  const body = view.lines.join(" ");
+  return {
+    name: view.name,
+    text: view.level === null ? `${body} ${stats}` : `${body} ${stats} Level ${view.level}.`,
   };
 }
 

@@ -1,9 +1,13 @@
+import { itemById } from "../data/items.ts";
+import { MONSTER_GOLD, RARE_GOLD } from "../data/monsters.ts";
+import { weaponById } from "../data/weapons.ts";
+
 /** Сроки лота из разбора аукциона: 12, 24 и 48 часов. */
 export const LOT_HOURS = [12, 24, 48] as const;
 
 export type LotHours = (typeof LOT_HOURS)[number];
 
-export type UniqueGoods = { kind: "unique"; key: string; name: string; text: string };
+export type UniqueGoods = { kind: "unique"; key: string; name: string; text: string; level?: number };
 
 export type StackGoods = { kind: "stack"; key: string; name: string; text: string; count: number };
 
@@ -69,8 +73,42 @@ export interface PublicLot {
 
 const HOUR_MS = 60 * 60 * 1000;
 
+export const TRADER = "trader";
+
 export function createHouse(): House {
   return { nextId: 1, lots: [], watches: [] };
+}
+
+/** Чужие лоты, чтобы ставку и покупку было на что нажать. Хаб свои вещи не продаёт. */
+export function stockHouse(house: House, now: number): void {
+  const belt = itemById("belt");
+  const fang = itemById("fang");
+  const axe = weaponById("axe");
+  if (!belt || !fang) return;
+  listUnique(house, {
+    sellerId: TRADER,
+    goods: { kind: "unique", key: belt.id, name: belt.name, text: belt.name, level: 0 },
+    buyoutOnly: false,
+    minBid: MONSTER_GOLD,
+    buyout: RARE_GOLD,
+    hours: 48,
+    now,
+  });
+  listUnique(house, {
+    sellerId: TRADER,
+    goods: { kind: "unique", key: axe.id, name: axe.name, text: axe.figure, level: 0 },
+    buyoutOnly: true,
+    minBid: null,
+    buyout: RARE_GOLD,
+    hours: 48,
+    now,
+  });
+  listStack(house, {
+    sellerId: TRADER,
+    goods: { kind: "stack", key: fang.id, name: fang.name, text: fang.name },
+    count: 3,
+    unitPrice: MONSTER_GOLD,
+  });
 }
 
 export function toPublic(lot: Lot): PublicLot {

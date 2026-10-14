@@ -135,6 +135,8 @@ export interface Fighter {
   /** Кулдаун ледяного стана. */
   iceGuard: number;
   cooldowns: Record<string, number>;
+  /** Номер в стае комнаты. По нему находится заранее назначенный лут. */
+  packIndex?: number;
   windup: Windup | null;
   mode: Mode;
   /** Bloodsucker уже спал, мертвец уже прыгнул. */
@@ -164,10 +166,18 @@ export interface RoomLayout {
 
 export type Outcome = "play" | "won" | "lost";
 
-/** Вещь с пола последней комнаты. Уровень при выдаче — 0. */
+/** Вещь с пола. Уровень при выдаче — 0. */
 export interface CarryLoot {
   kind: InstanceKind;
   catalogId: string;
+}
+
+/** Вещь, заранее назначенная рарнику, сундуку или монстру. */
+export interface LootParcel {
+  room: number;
+  monster?: number;
+  chest?: Cell;
+  item: CarryLoot;
 }
 
 export type FxTone = DamageType | "control";
@@ -256,8 +266,12 @@ export interface RoomState {
   broken: string[];
   /** Gold на полу. Каждая запись — одна монета. */
   piles: Cell[];
-  /** Шмотки с последней комнаты этажа. Пусто, пока этаж не зачищен. */
+  /** Шмотки на полу этой комнаты. */
   loot: (Cell & CarryLoot)[];
+  /** Назначенный лут этой комнаты, который ещё не выпал. */
+  pending: LootParcel[];
+  /** Имена вещей, выпавших в этот ход. */
+  spoilNames: string[];
   /** Выбранный уровень приключения. 0 — числа гайда. */
   adventure: number;
   /** Уже поднятые шмотки. Живут до хаба. */
@@ -695,6 +709,8 @@ export function createRoom(pattern: RoomPattern, entry: RoomEntry = {}): RoomSta
     broken: [],
     piles: [],
     loot: [],
+    pending: [],
+    spoilNames: [],
     adventure,
     found: [],
     drops: [],
@@ -1038,6 +1054,7 @@ function kill(state: RoomState, unit: Fighter, rng: () => number): void {
     if (charmer.hp > 0) shatter(state, charmer, spot(unit), rng);
   }
   if (unit.role !== "spore") spillGold(state, spot(unit), rng, specOf(unit)?.rare ? RARE_GOLD : MONSTER_GOLD);
+  if (unit.packIndex !== undefined) releaseParcels(state, spot(unit), (parcel) => parcel.monster === unit.packIndex && !parcel.chest);
 }
 
 /** Стаки вампиризма: по одному от каждого послушника, чья аура накрывает монстра. */
@@ -1202,16 +1219,13 @@ function rushLine(state: RoomState, monster: Fighter): Cell[] {
   return cells;
 }
 
-/** Тело проходит не дальше dash. Чужая клетка останавливает. Клетка игрока — место прибытия. */
+/** Тело проходит всю помеченную линию. Чужая клетка останавливает. Клетка игрока — место прибытия. */
 function houndStop(state: RoomState, monster: Fighter, line: readonly Cell[]): Cell | null {
   let land: Cell | null = null;
-  let steps = 0;
   for (const cell of line) {
-    if (steps >= KIT.hound.dash) break;
     const other = state.monsters.some((unit) => unit !== monster && onBoard(unit) && sameCell(unit, cell));
     if (other) break;
     land = cell;
-    steps += 1;
     if (state.hero.hp > 0 && sameCell(state.hero, cell)) break;
   }
   return land;
@@ -1275,7 +1289,7 @@ function dogTurn(state: RoomState, monster: Fighter, rng: () => number): string 
   return biteOrStep(state, monster, rng);
 }
 
-/** Прыжок с задержкой в ход. Клетка посадки подсвечена, сам гоблин стоит на месте. */
+/** Прыжок с задержкой в ход. Подсвечена только клетка посадки, и только она получает удар. */
 function goblinTurn(state: RoomState, monster: Fighter, rng: () => number): string {
   const hero = state.hero;
   if (manhattan(monster, hero) > 1 && ready(monster, "dash") && monster.root === 0) {
@@ -1860,26 +1874,21 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
     }
     case "pounce": {
       const from = spot(monster);
+      const hit = unitsIn(state, cast.cells, monster);
+      for (const unit of hit) hurt(state, unit, KIT.goblin.damage, "physical", monster, rng);
       arrive(state, monster, cast.center, rng);
-      const hero = state.hero;
-      if (hero.hp > 0 && manhattan(monster, hero) === 1) {
-        faceToward(monster, hero);
-        hurt(state, hero, KIT.goblin.damage, "physical", monster, rng);
-      }
       state.fx.push({ kind: "dash", from, to: spot(monster), tone: "physical", act: "dash" });
-      return "The goblin leaped.";
+      return hit.length > 0 ? "The goblin struck." : "The goblin leaped.";
     }
     case "wisp": {
       const from = spot(monster);
       const cell = spot(cast.center);
+      const hit = unitsIn(state, cast.cells, monster);
+      for (const unit of hit) hurt(state, unit, KIT.spirit.damage, "physical", monster, rng);
       arrive(state, monster, cell, rng);
       faceToward(monster, state.hero);
       state.fx.push({ kind: "blink", from, to: spot(monster), act: "wisp" });
-      if (state.hero.hp > 0 && chebyshev(state.hero, monster) <= 1) {
-        hurt(state, state.hero, KIT.spirit.damage, "physical", monster, rng);
-        return "The spirit struck from its blink.";
-      }
-      return "The spirit appeared.";
+      return hit.length > 0 ? "The spirit struck from its blink." : "The spirit appeared.";
     }
     case "land": {
       monster.mode = "ground";
@@ -2150,6 +2159,42 @@ function openChest(state: RoomState, cell: Cell, rng: () => number): boolean {
   if (!chest) return false;
   chest.open = true;
   spillGold(state, cell, rng, CHEST_GOLD);
+  releaseParcels(state, cell, (parcel) => parcel.chest?.x === cell.x && parcel.chest?.y === cell.y);
+  return true;
+}
+
+/** Рядом: клетка объекта или любая из восьми соседних. Ближе — важнее, при равенстве — клетка перед героем, затем портал. */
+export function interactTarget(state: RoomState, exit: Cell | null): { kind: "chest" | "portal"; cell: Cell } | null {
+  if (state.hero.hp <= 0 || state.outcome === "lost") return null;
+  const hero = state.hero;
+  const face = DIRS[hero.facing];
+  const options: { kind: "chest" | "portal"; cell: Cell; cheb: number; man: number; front: number }[] = [];
+  const push = (kind: "chest" | "portal", cell: Cell): void => {
+    const dx = Math.abs(cell.x - hero.x);
+    const dy = Math.abs(cell.y - hero.y);
+    const cheb = Math.max(dx, dy);
+    if (cheb > 1) return;
+    options.push({
+      kind,
+      cell,
+      cheb,
+      man: dx + dy,
+      front: cell.x === hero.x + face.x && cell.y === hero.y + face.y ? 0 : 1,
+    });
+  };
+  if (exit) push("portal", exit);
+  for (const chest of state.chests) if (!chest.open) push("chest", chest);
+  options.sort((a, b) => a.cheb - b.cheb || a.man - b.man || a.front - b.front || (a.kind === "portal" ? -1 : 1) - (b.kind === "portal" ? -1 : 1));
+  const pick = options[0];
+  return pick ? { kind: pick.kind, cell: pick.cell } : null;
+}
+
+/** Space у сундука. Ход не тратится. */
+export function useChest(state: RoomState, x: number, y: number, rng: () => number = Math.random): boolean {
+  if (state.hero.hp <= 0 || state.outcome === "lost") return false;
+  if (!openChest(state, { x, y }, rng)) return false;
+  state.note = "The chest opens.";
+  if (state.spoilNames.length > 0) state.note = `${state.note} ${state.spoilNames.splice(0).join(", ")} dropped.`.trim();
   return true;
 }
 
@@ -2183,6 +2228,39 @@ function goldCell(state: RoomState, origin: Cell, rng: () => number): Cell | nul
     }
   }
   return pick(options, rng);
+}
+
+function releaseParcels(state: RoomState, origin: Cell, match: (parcel: LootParcel) => boolean): void {
+  const due = state.pending.filter(match);
+  if (due.length === 0) return;
+  state.pending = state.pending.filter((parcel) => !match(parcel));
+  const taken = new Set(state.loot.map((loot) => `${loot.x},${loot.y}`));
+  for (const parcel of due) {
+    const cell = prizeCell(state, origin, taken) ?? origin;
+    taken.add(`${cell.x},${cell.y}`);
+    state.loot.push({ ...parcel.item, x: cell.x, y: cell.y });
+    state.spoilNames.push(lootName(parcel.item));
+  }
+}
+
+function prizeCell(state: RoomState, origin: Cell, taken: ReadonlySet<string>): Cell | null {
+  let best = Number.POSITIVE_INFINITY;
+  const options: Cell[] = [];
+  for (let y = 0; y < state.room.h; y += 1) {
+    for (let x = 0; x < state.room.w; x += 1) {
+      if (taken.has(`${x},${y}`)) continue;
+      if (x === state.hero.x && y === state.hero.y) continue;
+      if (state.monsters.some((monster) => onBoard(monster) && monster.x === x && monster.y === y)) continue;
+      if (!isFloor(state.room, x, y) || isBlocked(state.room, x, y) || isPit(state.room, x, y)) continue;
+      const distance = Math.abs(x - origin.x) + Math.abs(y - origin.y);
+      if (distance < best) {
+        best = distance;
+        options.length = 0;
+        options.push({ x, y });
+      } else if (distance === best) options.push({ x, y });
+    }
+  }
+  return options[0] ?? null;
 }
 
 function takeGold(state: RoomState): number {
@@ -2220,6 +2298,7 @@ function canControl(state: RoomState): boolean {
 /** Начало хода героя: тела, убитые в прошлый ход, больше не держат клетку. */
 function beginHeroTurn(state: RoomState): void {
   state.bodies = [];
+  state.spoilNames = [];
   if (state.hero.stun > 0) return;
   const seen = new Set<string>();
   for (const ability of state.abilities) {
@@ -2238,32 +2317,51 @@ function doorsNote(state: RoomState): string {
  * После действия героя ходит мир: монстры, потом тики.
  * Пока герой в стане, мир не даёт ему ход: раунды идут дальше, его кулдауны стоят.
  */
+function flushSpoils(state: RoomState): void {
+  if (state.spoilNames.length === 0) return;
+  const names = state.spoilNames.splice(0).join(", ");
+  state.note = `${state.note} ${names} dropped.`.trim();
+}
+
 function afterAction(state: RoomState, refreshed: boolean, rng: () => number): void {
   const heroNote = state.note;
-  if (state.outcome === "won" || state.outcome === "lost") return;
+  if (state.outcome === "won" || state.outcome === "lost") {
+    flushSpoils(state);
+    return;
+  }
   const hero = state.hero;
   tickRoot(hero);
   if (hero.iceGuard > 0) hero.iceGuard -= 1;
   if (hero.hp <= 0) {
     finish(state);
+    flushSpoils(state);
     return;
   }
   if (cleared(state)) {
     finish(state);
     state.note = `${heroNote}${doorsNote(state)}`;
+    flushSpoils(state);
     return;
   }
   tickMeter(state, refreshed);
-  const parts = [heroNote, round(state, rng)];
+  round(state, rng);
+  let stunned = false;
   while (state.outcome === "play" && hero.hp > 0 && hero.stun > 0 && !cleared(state)) {
     hero.stun -= 1;
     tickRoot(hero);
-    parts.push("Hero is stunned.", round(state, rng));
+    stunned = true;
+    round(state, rng);
   }
+  const parts = [heroNote];
+  if (stunned) parts.push("Hero is stunned.");
   const outcome = finish(state);
-  if (outcome === "lost") return;
+  if (outcome === "lost") {
+    flushSpoils(state);
+    return;
+  }
   state.note = parts.filter((part) => part.length > 0).join(" ");
   if (outcome === "won") state.note += doorsNote(state);
+  flushSpoils(state);
 }
 
 export function face(state: RoomState, dir: Dir): void {

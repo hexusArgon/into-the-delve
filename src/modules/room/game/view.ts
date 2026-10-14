@@ -23,6 +23,7 @@ import { weaponById, type WeaponId } from "../data/weapons.ts";
 import {
   DIRS,
   attackCells,
+  interactTarget,
   blinkCells,
   isBlocked,
   isPit,
@@ -526,6 +527,34 @@ function drawCoin(ctx: CanvasRenderingContext2D, sprite: HTMLCanvasElement, cx: 
   const w = sprite.width * fit;
   const h = sprite.height * fit;
   ctx.drawImage(sprite, cx - w / 2, cy - h / 2, w, h);
+}
+
+function drawInteractHint(ctx: CanvasRenderingContext2D, box: Box, cell: Cell): void {
+  const font = Math.max(13, Math.floor(box.size * 0.28));
+  ctx.save();
+  ctx.font = `700 ${font}px Arial`;
+  ctx.textBaseline = "middle";
+  const key = "Space";
+  const label = "Interact";
+  const pad = font * 0.45;
+  const keyW = ctx.measureText(key).width + pad * 2;
+  const gap = font * 0.4;
+  const labelW = ctx.measureText(label).width;
+  const h = font + pad;
+  const total = keyW + gap + labelW;
+  const x = box.ox + (cell.x + 0.5) * box.size - total / 2;
+  const y = box.oy + cell.y * box.size - h - Math.max(4, box.size * 0.12);
+  ctx.fillStyle = "rgba(12, 14, 18, 0.9)";
+  ctx.fillRect(x, y, keyW, h);
+  ctx.strokeStyle = "rgba(232, 214, 176, 0.75)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, keyW - 1, h - 1);
+  ctx.fillStyle = "#f6f1e6";
+  ctx.textAlign = "center";
+  ctx.fillText(key, x + keyW / 2, y + h / 2);
+  ctx.textAlign = "left";
+  ctx.fillText(label, x + keyW + gap, y + h / 2);
+  ctx.restore();
 }
 
 function drawChest(
@@ -1141,6 +1170,8 @@ export class RoomRenderer {
       const worn = weaponById(state.weapon);
       if (worn.magazine !== null) drawAmmoPips(ctx, box, poses.hero, worn.magazine, state.ammo ?? worn.magazine);
     }
+    const interact = interactTarget(state, exit);
+    if (interact) drawInteractHint(ctx, box, interact.cell);
     ctx.restore();
     if (map && !mapOpen) drawMinimap(ctx, width, map);
     const fade = this.fadeStart ? 1 - (time - this.fadeStart) / FADE_MS : 0;

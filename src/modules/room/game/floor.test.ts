@@ -2,9 +2,85 @@ import assert from "node:assert/strict";
 import { FLOOR_ROOMS, BLINK_CHARGES } from "./rules.ts";
 import { MONSTERS } from "../data/monsters.ts";
 import { EMPTY_GEAR } from "../data/items.ts";
-import { MONSTER_DOOR_GAP } from "../data/rooms.ts";
-import { buildFloor, createRun, portalRoomCount, syncRun, teleport, travel } from "./floor.ts";
+import { MONSTER_DOOR_GAP, type Side } from "../data/rooms.ts";
+import { assignLoot, buildFloor, createRun, portalRoomCount, syncRun, teleport, travel } from "./floor.ts";
 import { DIRS, OPPOSITE, SIDE_FACING, buildLayout, distancesTo, isBlocked, isPit, livingMonsters, step } from "./sim.ts";
+
+function doorDist(rooms: { links: Partial<Record<Side, number>> }[]): number[] {
+  const dist = rooms.map(() => -1);
+  dist[0] = 0;
+  const queue = [0];
+  for (let head = 0; head < queue.length; head += 1) {
+    const index = queue[head]!;
+    for (const next of Object.values(rooms[index]!.links)) {
+      if (next === undefined || dist[next] !== -1) continue;
+      dist[next] = dist[index]! + 1;
+      queue.push(next);
+    }
+  }
+  return dist;
+}
+
+function pathTo(rooms: { links: Partial<Record<Side, number>> }[], goal: number): Set<number> {
+  const prev = new Map<number, number>();
+  const queue = [0];
+  const seen = new Set([0]);
+  while (queue.length > 0) {
+    const index = queue.shift()!;
+    if (index === goal) break;
+    for (const next of Object.values(rooms[index]!.links)) {
+      if (next === undefined || seen.has(next)) continue;
+      seen.add(next);
+      prev.set(next, index);
+      queue.push(next);
+    }
+  }
+  const path = new Set<number>();
+  let cursor = goal;
+  while (cursor !== 0) {
+    path.add(cursor);
+    cursor = prev.get(cursor) ?? 0;
+  }
+  path.add(0);
+  return path;
+}
+
+function walkTo(run: ReturnType<typeof createRun>, goal: number): void {
+  const rooms = run.rooms;
+  const prev = new Map<number, { from: number; side: Side }>();
+  const queue = [run.current];
+  const seen = new Set(queue);
+  while (queue.length > 0) {
+    const index = queue.shift()!;
+    if (index === goal) break;
+    for (const [side, next] of Object.entries(rooms[index]!.links) as [Side, number][]) {
+      if (seen.has(next)) continue;
+      seen.add(next);
+      prev.set(next, { from: index, side });
+      queue.push(next);
+    }
+  }
+  const hops: Side[] = [];
+  let cursor = goal;
+  while (cursor !== run.current) {
+    const hop = prev.get(cursor);
+    if (!hop) throw new Error("нет пути к порталу");
+    hops.push(hop.side);
+    cursor = hop.from;
+  }
+  hops.reverse();
+  for (const side of hops) {
+    for (const monster of run.state.monsters) monster.hp = 0;
+    run.state.outcome = "won";
+    syncRun(run);
+    const door = run.state.exits.find((exit) => exit.side === side);
+    if (!door) throw new Error(`нет двери ${side}`);
+    run.state.hero.x = door.x;
+    run.state.hero.y = door.y;
+    assert.equal(step(run.state, SIDE_FACING[side]), true);
+    assert.equal(travel(run), true);
+  }
+}
 
 const rareIds = new Set(MONSTERS.filter((monster) => monster.rare).map((monster) => monster.id));
 let sawRare = false;
@@ -66,6 +142,8 @@ for (let seed = 1; seed <= 200; seed += 1) {
 assert.equal(sawRare, true);
 
 const run = createRun(7);
+const span = doorDist(run.rooms);
+assert.equal(span[run.hub], Math.max(...span));
 assert.equal(run.state.outcome, "won");
 assert.equal(run.state.monster.hp, 0);
 assert.equal(run.state.exits.length, Object.keys(run.rooms[0]!.links).length);
@@ -112,27 +190,37 @@ assert.equal(step(run.state, SIDE_FACING[back.side]), false);
 assert.equal(travel(run), false);
 assert.equal(run.current, target);
 
-run.state.monster.hp = 0;
+for (const monster of run.state.monsters) monster.hp = 0;
 run.state.outcome = "won";
 syncRun(run);
 assert.equal(run.cleared[target], true);
-run.cleared.fill(true);
-run.state.outcome = "won";
+if (target === run.hub) {
+  assert.equal(run.exit?.room, run.hub);
+  assert.equal(isBlocked(run.state.room, run.exit!.cell.x, run.exit!.cell.y), false);
+} else assert.equal(run.exit, null);
+assert.equal(run.parcels.length, 1);
+assert.equal(["gear", "weapon", "ability"].includes(run.parcels[0]!.item.kind), true);
+const parcelKey = run.parcels[0]!.chest
+  ? `c${run.parcels[0]!.room}:${run.parcels[0]!.chest!.x},${run.parcels[0]!.chest!.y}`
+  : `m${run.parcels[0]!.room}:${run.parcels[0]!.monster}`;
 syncRun(run);
-assert.equal(run.exit?.room, target);
-assert.equal(isBlocked(run.state.room, run.exit!.cell.x, run.exit!.cell.y), false);
-assert.equal(run.state.loot.length, 1);
-const dropped = run.state.loot[0]!;
-assert.equal(dropped.x === run.state.hero.x && dropped.y === run.state.hero.y, false);
-assert.equal(dropped.x === run.exit!.cell.x && dropped.y === run.exit!.cell.y, false);
-assert.equal(["gear", "weapon", "ability"].includes(dropped.kind), true);
-const again = dropped.catalogId;
-syncRun(run);
-assert.equal(run.state.loot[0]?.catalogId, again);
+const again = run.parcels[0]!.chest
+  ? `c${run.parcels[0]!.room}:${run.parcels[0]!.chest!.x},${run.parcels[0]!.chest!.y}`
+  : `m${run.parcels[0]!.room}:${run.parcels[0]!.monster}`;
+assert.equal(again, parcelKey);
+assert.equal(run.state.loot.length, 0);
 assert.equal(step(run.state, SIDE_FACING[back.side]), true);
 assert.equal(travel(run), true);
 assert.equal(run.current, 0);
 assert.equal(run.state.monster.hp, 0);
+walkTo(run, run.hub);
+for (const monster of run.state.monsters) monster.hp = 0;
+run.state.outcome = "won";
+syncRun(run);
+assert.equal(run.exit?.room, run.hub);
+assert.equal(isBlocked(run.state.room, run.exit!.cell.x, run.exit!.cell.y), false);
+const aside = run.rooms.findIndex((_, index) => !pathTo(run.rooms, run.hub).has(index));
+if (aside >= 0) assert.equal(run.cleared[aside], false);
 
 const hop = createRun(3);
 const pads = hop.rooms.flatMap((room, index) => (room.portal ? [index] : []));
@@ -171,10 +259,20 @@ assert.equal(teleport(hop, to), false);
 assert.equal(hop.current, from);
 
 const hard = createRun(4, "sword", EMPTY_GEAR, null, [], 5);
-hard.cleared.fill(true);
-hard.state.outcome = "won";
-syncRun(hard);
-assert.equal(hard.state.loot.length, 2);
-assert.equal(new Set(hard.state.loot.map((item) => `${item.x},${item.y}`)).size, 2);
+assert.equal(hard.parcels.length, 2);
+
+const stacked = assignLoot(
+  [
+    { kind: "gear", catalogId: "a" },
+    { kind: "weapon", catalogId: "b" },
+    { kind: "ability", catalogId: "c" },
+  ],
+  [{ room: 1, monster: 0 }, { room: 2, chest: { x: 3, y: 4 } }],
+  [{ room: 1, monster: 0 }, { room: 1, monster: 1 }],
+);
+assert.equal(stacked.length, 3);
+const rareItems = stacked.filter((parcel) => parcel.monster === 0 && parcel.room === 1);
+assert.equal(rareItems.length, 2);
+assert.equal(stacked.filter((parcel) => parcel.chest).length, 1);
 
 console.log("floor ok");

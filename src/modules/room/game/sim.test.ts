@@ -5,6 +5,8 @@ import { ELEMENTS, KIT, monsterById } from "../data/monsters.ts";
 import {
   nearestAim,
   attack,
+  interactTarget,
+  useChest,
   attackCells,
   blink,
   blinkCells,
@@ -442,7 +444,7 @@ assert.equal(crushed.barrels.length, 0);
 assert.equal(crushed.broken.includes("8,6"), true);
 assert.equal(crushed.piles.length, 1);
 assert.equal(crushed.piles[0]!.x === 8 && crushed.piles[0]!.y === 6, false);
-assert.match(crushed.note, /Object broken/);
+assert.equal(crushed.note, "Wait.");
 
 const gun = createRoom(OPEN, { weapon: "pistol" });
 gun.hero.x = 8;
@@ -509,6 +511,29 @@ wait(goblin, () => 0);
 assert.equal(goblin.monster.x, 3);
 assert.equal(goblin.monster.windup, null);
 assert.equal(goblin.hero.hp, HERO_HP);
+const goblinBeside = createRoom(OPEN, { monsterKind: "10" });
+goblinBeside.hero.x = 3;
+goblinBeside.hero.y = 2;
+goblinBeside.monster.x = 5;
+goblinBeside.monster.y = 2;
+wait(goblinBeside, () => 0);
+assert.equal(goblinBeside.monster.windup?.center.x, 4);
+wait(goblinBeside, () => 0);
+assert.equal(goblinBeside.monster.x, 4);
+assert.equal(goblinBeside.hero.hp, HERO_HP);
+const goblinOn = createRoom(OPEN, { monsterKind: "10" });
+goblinOn.hero.x = 1;
+goblinOn.hero.y = 2;
+goblinOn.monster.x = 5;
+goblinOn.monster.y = 2;
+wait(goblinOn, () => 0);
+const goblinMark = goblinOn.monster.windup?.center;
+assert.ok(goblinMark);
+goblinOn.hero.x = goblinMark.x;
+goblinOn.hero.y = goblinMark.y;
+wait(goblinOn, () => 0);
+assert.equal(goblinOn.hero.hp, HERO_HP - KIT.goblin.damage);
+assert.equal(goblinOn.hero.x === goblinMark.x && goblinOn.hero.y === goblinMark.y, false);
 
 const chestRoom = createRoom(OPEN, { monsterKind: "1" });
 chestRoom.chests.push({ kind: "chest", x: 3, y: 6, open: false });
@@ -521,6 +546,19 @@ walked.chests.push({ kind: "chest", x: 3, y: 6, open: false });
 assert.equal(step(walked, "right", () => 0), true);
 assert.equal(walked.chests[0]!.open, true);
 assert.equal(walked.piles.length, 5);
+
+const near = createRoom(OPEN, { monsterKind: "1" });
+near.chests.push({ kind: "chest", x: 4, y: 6, open: false });
+near.hero.x = 2;
+near.hero.y = 6;
+assert.equal(interactTarget(near, { x: 3, y: 6 })?.kind, "portal");
+near.hero.x = 4;
+near.hero.y = 7;
+assert.equal(interactTarget(near, null)?.kind, "chest");
+assert.equal(useChest(near, 4, 6, () => 0), true);
+assert.equal(near.chests[0]!.open, true);
+assert.equal(near.piles.length, 5);
+assert.equal(interactTarget(near, null), null);
 
 const blocked = createRoom(
   {
@@ -605,7 +643,20 @@ wait(spirit, () => 0);
 assert.equal(spirit.monster.windup, null);
 assert.equal(spirit.monster.x, marked.x);
 assert.equal(spirit.monster.y, marked.y);
-assert.equal(spirit.hero.hp, HERO_HP - 20);
+assert.equal(spirit.hero.hp, HERO_HP);
+const spiritOn = createRoom(OPEN, { monsterKind: "9" });
+spiritOn.hero.x = 2;
+spiritOn.hero.y = 6;
+spiritOn.monster.x = 8;
+spiritOn.monster.y = 6;
+wait(spiritOn, () => 0);
+const spiritMark = spiritOn.monster.windup?.center;
+assert.ok(spiritMark);
+spiritOn.hero.x = spiritMark.x;
+spiritOn.hero.y = spiritMark.y;
+wait(spiritOn, () => 0);
+assert.equal(spiritOn.hero.hp, HERO_HP - KIT.spirit.damage);
+assert.equal(spiritOn.hero.x === spiritMark.x && spiritOn.hero.y === spiritMark.y, false);
 
 const missed = createRoom(OPEN, { monsterKind: "9" });
 missed.hero.x = 2;
@@ -658,8 +709,9 @@ assert.deepEqual(
 assert.equal(houndRow.hero.hp, HERO_HP);
 assert.equal(groundAt(houndRow, 1, 6), null);
 wait(houndRow, () => 0);
-assert.equal(houndRow.monster.x, 2);
+assert.equal(houndRow.monster.x, 1);
 assert.equal(houndRow.monster.y, 6);
+assert.equal(houndRow.hero.x === 1 && houndRow.hero.y === 6, false);
 assert.equal(houndRow.monster.windup, null);
 assert.equal(houndRow.hero.hp, HERO_HP - KIT.hound.damage - ELEMENTS.fireTick);
 const onto = createRoom(OPEN, { monsterKind: "15" });

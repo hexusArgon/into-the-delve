@@ -1,12 +1,13 @@
-import { attrText, heroAttributes, type AttrId } from "../data/attributes.ts";
+import { attrText, heroAttributes } from "../data/attributes.ts";
 import {
   EQUIPMENT_SLOTS,
   itemById,
   EMPTY_GEAR,
   type GearBonus,
+  type GearItem,
   type Rarity,
 } from "../data/items.ts";
-import { heroAbilityById, abilityTip, type RunAbility } from "../data/hero-abilities.ts";
+import { heroAbilityById, abilityView, type RunAbility } from "../data/hero-abilities.ts";
 import {
   abilityAmount,
   abilitySplash,
@@ -18,6 +19,7 @@ import {
   saveLoadout,
   storedLoadout,
   instanceById,
+  placeInstance,
   pointChance,
   scaled,
   sharpen,
@@ -27,19 +29,22 @@ import {
   type Loadout,
 } from "../data/instances.ts";
 import { WEAPONS, weaponById, type WeaponDef, type WeaponId } from "../data/weapons.ts";
-import { createHouse } from "./auction.ts";
+import { createHouse, stockHouse } from "./auction.ts";
 import { paintAuction, type AuctionKit } from "./auction-view.ts";
 import { paintGuild } from "./guild-view.ts";
 import { paintAdventure } from "./adventure-view.ts";
 import { bestAdventure, recordAdventure } from "./adventure.ts";
+import { loadBoard, openCloud } from "./cloud.ts";
+import { grantPersonalGear, keepPersonalGear } from "./personal-gear.ts";
+import { storageLayout, storageScroll } from "./storage.ts";
 import { RoomController } from "./controller.ts";
 import { installDungeonMusic } from "./music.ts";
 import { openSettings } from "./settings-view.ts";
-import { BLINK_CHARGES, HERO_HP } from "./rules.ts";
+import { HERO_HP } from "./rules.ts";
 import { HUB_COPY, tutorialMark, tutorialPending, tutorialWeapon, WEAPON_KEY, type LessonStep } from "./tutorial.ts";
 import { loadSprites } from "./sprites.ts";
 import { freshShelf, shelfBar, shelfMatch, shelfOrder, type ShelfBar, type ShelfKind } from "./shelf-bar.ts";
-import { bindTip, hideTip, moveTip, tipBox } from "./tip.ts";
+import { bindAbilityTip, bindCardTip, bindTip, hideTip } from "./tip.ts";
 import menuUrl from "../../../../assets/menu-depart.jpg";
 import "./ui.css";
 
@@ -74,11 +79,23 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
   const kit: AuctionKit = { weapon: startWeapon, gold: 0, owned: [startWeapon] };
   const loadout = storedLoadout(startWeapon);
   grantHeroAbilities(loadout);
+  grantPersonalGear(loadout);
   syncKit(kit, loadout);
   saveLoadout(loadout);
+  void openCloud(loadout, startWeapon).then(() => {
+    if (!alive) return;
+    keepPersonalGear(loadout);
+    grantHeroAbilities(loadout);
+    syncKit(kit, loadout);
+    saveLoadout(loadout);
+  });
   const shelf = freshShelf();
   const hone = { target: null as string | null, copy: null as string | null, made: null as string | null, result: "" };
   const house = createHouse();
+  stockHouse(house, Date.now());
+  if (import.meta.env.DEV) {
+    (globalThis as typeof globalThis & { dungeonKit?: AuctionKit }).dungeonKit = kit;
+  }
   let lesson: "hub" | LessonStep | null = tutorialPending() ? "hub" : null;
 
   const endLesson = (): void => {
@@ -145,7 +162,23 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
             if (alive) paintAuction(host, kit, loadout, house, showMenu, sprites);
           });
         },
-        onGuild: () => paintGuild(host, bestAdventure(), showMenu),
+        onGuild: () => {
+          paintGuild(host, [], showMenu, "Loading the board.");
+          void loadBoard().then(({ rows, online }) => {
+            if (!alive) return;
+            if (rows.length > 0) {
+              paintGuild(host, rows, showMenu);
+              return;
+            }
+            if (online) {
+              paintGuild(host, [], showMenu);
+              return;
+            }
+            const best = bestAdventure();
+            const shown = best === null ? [] : [{ rank: 1, name: "You", level: best, you: true }];
+            paintGuild(host, shown, showMenu, "Showing this browser until the server answers.");
+          });
+        },
       },
       lesson === "hub" ? endLesson : undefined,
     );
@@ -340,8 +373,25 @@ interface Hone {
 type HoneSlot = "target" | "copy";
 
 let dragMoved = false;
+let carryNote = "";
 let honeDrop: ((slot: HoneSlot, id: string) => void) | null = null;
+let placeDrop: ((id: string, hit: HTMLElement) => void) | null = null;
 let dragGhost: HTMLElement | null = null;
+
+function flashNote(text: string): void {
+  carryNote = text;
+}
+
+function dragTarget(x: number, y: number): HTMLElement | null {
+  return document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-hone], [data-drop]") ?? null;
+}
+
+function dragAccepts(hit: HTMLElement, kind: ItemInstance["kind"]): boolean {
+  const hone = hit.dataset.hone;
+  if (hone === "target" || hone === "copy") return true;
+  const drop = hit.dataset.drop;
+  return drop === "storage" || drop === kind;
+}
 
 function placeHone(loadout: Loadout, hone: Hone, slot: HoneSlot, id: string): void {
   const item = instanceById(loadout, id);
@@ -371,7 +421,7 @@ function placeHone(loadout: Loadout, hone: Hone, slot: HoneSlot, id: string): vo
   hone.result = "";
 }
 
-function armDrag(el: HTMLElement, id: string): void {
+function armDrag(el: HTMLElement, id: string, kind: ItemInstance["kind"]): void {
   el.style.cursor = "grab";
   el.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
@@ -393,19 +443,20 @@ function armDrag(el: HTMLElement, id: string): void {
         dragGhost.style.left = `${ev.clientX}px`;
         dragGhost.style.top = `${ev.clientY}px`;
       }
-      const hit = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>("[data-hone]");
-      document.querySelectorAll(".dungeon-hone-slot.is-over").forEach((node) => node.classList.remove("is-over"));
-      if (hit && (hit.dataset.hone === "target" || hit.dataset.hone === "copy")) hit.classList.add("is-over");
+      const hit = dragTarget(ev.clientX, ev.clientY);
+      document.querySelectorAll(".is-over").forEach((node) => node.classList.remove("is-over"));
+      if (hit && dragAccepts(hit, kind)) hit.classList.add("is-over");
     };
     const up = (ev: PointerEvent): void => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
-      document.querySelectorAll(".dungeon-hone-slot.is-over").forEach((node) => node.classList.remove("is-over"));
-      const hit = moving ? document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>("[data-hone]") : null;
+      document.querySelectorAll(".is-over").forEach((node) => node.classList.remove("is-over"));
+      const hit = moving ? dragTarget(ev.clientX, ev.clientY) : null;
       const role = hit?.dataset.hone;
       dragGhost?.remove();
       dragGhost = null;
-      if (role === "target" || role === "copy") honeDrop?.(role, id);
+      if (hit && (role === "target" || role === "copy")) honeDrop?.(role, id);
+      else if (hit?.dataset.drop) placeDrop?.(id, hit);
       window.setTimeout(() => {
         dragMoved = false;
       }, 0);
@@ -506,10 +557,10 @@ function honeCell(
     if (item.kind === "weapon") bindWeaponTip(slot, weaponById(item.catalogId as WeaponId));
     else if (item.kind === "gear") {
       const gear = itemById(item.catalogId);
-      bindTip(slot, gear?.name ?? "Item", gear ? gearLine(gear, item.level) : "", rarityNameColor(gear?.rarity));
+      if (gear) bindGearTip(slot, gear, item.level);
+      else bindTip(slot, "Item", "");
     } else {
-      const tip = abilityTip(item.catalogId, abilityAmount(item), item.level, abilitySplash(item));
-      bindTip(slot, tip.name, tip.text);
+      bindAbilityTip(slot, () => abilityView(item.catalogId, abilityAmount(item), item.level, abilitySplash(item)));
     }
   }
   const caption = document.createElement("span");
@@ -550,13 +601,9 @@ function paintInventory(
   abilities: Readonly<Record<string, HTMLCanvasElement>>,
 ): void {
   paintShell(host);
+  host.style.overflow = "hidden";
   const page = document.createElement("div");
-  page.style.maxWidth = "1080px";
-  page.style.margin = "0 auto";
-  page.style.padding = "36px 20px 48px";
-  page.style.display = "flex";
-  page.style.flexDirection = "column";
-  page.style.gap = "18px";
+  page.className = "dungeon-inventory";
   const note = document.createElement("div");
   note.style.minHeight = "1.2em";
   note.style.opacity = "0.85";
@@ -568,18 +615,38 @@ function paintInventory(
     placeHone(loadout, hone, slot, id);
     redraw();
   };
+  placeDrop = (id, hit) => {
+    const drop = hit.dataset.drop;
+    if (drop !== "weapon" && drop !== "gear" && drop !== "ability" && drop !== "storage") return;
+    const index = Number(hit.dataset.slot ?? "0");
+    const result = drop === "storage"
+      ? placeInstance(loadout, id, "storage")
+      : drop === "weapon"
+        ? placeInstance(loadout, id, { kind: "weapon" })
+        : placeInstance(loadout, id, { kind: drop, index });
+    if (result === "fit") flashNote("That does not fit this slot.");
+    else if (result === "ok") flashNote(drop === "storage" ? "Unequipped." : "Equipped.");
+    else return;
+    syncKit(kit, loadout);
+    redraw();
+  };
   const columns = document.createElement("div");
-  columns.className = "dungeon-columns";
-  const left = document.createElement("div");
-  left.className = "dungeon-stack";
-  const right = document.createElement("div");
-  right.className = "dungeon-stack";
-  left.append(heroCard(wornGearBonus(loadout)), equipmentRow(kit, loadout, hone, weapons, items, note, redraw), slotRow(loadout, hone, abilities, note, redraw));
-  right.append(bankRow(kit, loadout, shelf, hone, gold, weapons, items, abilities, note, redraw), honePanel(kit, loadout, hone, weapons, items, abilities, redraw));
-  columns.append(left, right);
+  columns.className = "dungeon-inventory-board";
+  const heroCol = document.createElement("div");
+  heroCol.className = "dungeon-stack";
+  const gearCol = document.createElement("div");
+  gearCol.className = "dungeon-stack";
+  const storeCol = document.createElement("div");
+  storeCol.className = "dungeon-stack dungeon-inventory-side";
+  heroCol.append(heroCard(wornGearBonus(loadout)));
+  gearCol.append(equipmentRow(kit, loadout, hone, weapons, items, redraw), slotRow(loadout, abilities, redraw));
+  storeCol.append(bankRow(kit, loadout, shelf, hone, gold, weapons, items, abilities, redraw), honePanel(kit, loadout, hone, weapons, items, abilities, redraw));
+  columns.append(heroCol, gearCol, storeCol);
   const back = menuButton("Back", onBack, false);
   back.classList.add("dungeon-back");
   if (hone.result) note.textContent = hone.result;
+  else if (carryNote) note.textContent = carryNote;
+  carryNote = "";
   page.append(screenTitle("Inventory"), columns, note);
   host.append(back, page);
 }
@@ -613,7 +680,6 @@ function equipmentRow(
   hone: Hone,
   weapons: Readonly<Partial<Record<WeaponId, HTMLCanvasElement>>>,
   items: Readonly<Record<string, HTMLCanvasElement>>,
-  note: HTMLElement,
   redraw: () => void,
 ): HTMLElement {
   const box = panel();
@@ -632,6 +698,7 @@ function equipmentRow(
   weaponSlot.style.width = "108px";
   weaponSlot.style.height = "88px";
   weaponSlot.style.padding = "8px";
+  weaponSlot.dataset.drop = "weapon";
   weaponSlot.style.cursor = "pointer";
   const icon = document.createElement("canvas");
   icon.width = 72;
@@ -643,7 +710,7 @@ function equipmentRow(
     paintWeaponIcon(icon, weapons[weaponInst.catalogId as WeaponId]);
     stampLevel(icon, weaponInst.level);
     bindWeaponTip(weaponSlot, worn);
-    armDrag(weaponSlot, weaponInst.id);
+    armDrag(weaponSlot, weaponInst.id, "weapon");
   }
   row.append(weaponSlot);
   for (let i = 0; i < EQUIPMENT_SLOTS; i += 1) {
@@ -654,6 +721,8 @@ function equipmentRow(
     const slot = document.createElement("button");
     slot.type = "button";
     slot.className = wornItem ? `dungeon-slot dungeon-slot-worn${rarityClass(wornItem.rarity)}` : "dungeon-slot";
+    slot.dataset.drop = "gear";
+    slot.dataset.slot = String(i);
     slot.style.font = "inherit";
     slot.style.width = "88px";
     slot.style.height = "88px";
@@ -675,15 +744,17 @@ function equipmentRow(
     slot.addEventListener("click", () => {
       if (dragMoved) return;
       if (!wornId || !wornInst) {
-        note.textContent = "Empty slot. Equip an item from storage.";
+        flashNote("Empty slot. Equip an item from storage.");
+        redraw();
         return;
       }
       loadout.worn[i] = null;
-      note.textContent = `${wornItem?.name ?? "Item"} unequipped.`;
+      flashNote(`${wornItem?.name ?? "Item"} unequipped.`);
       redraw();
     });
-    bindTip(slot, wornItem?.name ?? "Equipment", wornItem && wornInst ? gearLine(wornItem, wornInst.level) : "Empty slot.", rarityNameColor(wornItem?.rarity));
-    if (wornInst) armDrag(slot, wornInst.id);
+    if (wornItem && wornInst) bindGearTip(slot, wornItem, wornInst.level);
+    else bindTip(slot, "Equipment", "Empty slot.");
+    if (wornInst) armDrag(slot, wornInst.id, "gear");
     row.append(slot);
   }
   box.append(row);
@@ -699,10 +770,10 @@ function bankRow(
   weapons: Readonly<Partial<Record<WeaponId, HTMLCanvasElement>>>,
   items: Readonly<Record<string, HTMLCanvasElement>>,
   abilities: Readonly<Record<string, HTMLCanvasElement>>,
-  note: HTMLElement,
   redraw: () => void,
 ): HTMLElement {
   const box = panel();
+  box.classList.add("dungeon-bank");
   box.append(heading("Storage"), shelfBar(shelf, redraw));
   const lead = document.createElement("p");
   lead.textContent = "Gear and abilities sit here. Equipped pieces stay in the slots on the left.";
@@ -724,7 +795,12 @@ function bankRow(
     cellName,
     (item) => (item.kind === "gear" ? itemById(item.catalogId)?.rarity : undefined),
   );
-  const cells = Math.max(30, Math.ceil(visible.length / 6) * 6);
+  const layout = storageLayout(stored.length);
+  const frame = storageScroll(stored.length);
+  frame.style.maxHeight = "none";
+  frame.style.flex = "1";
+  frame.style.minHeight = "0";
+  const cells = layout.cells;
   for (let i = 0; i < cells; i += 1) {
     const item = visible[i];
     const slot = iconButton(() => {
@@ -739,7 +815,8 @@ function bankRow(
       if (item.kind === "gear") {
         const index = loadout.worn.findIndex((worn) => worn === null);
         if (index < 0) {
-          note.textContent = "All six slots are full.";
+          flashNote("All six slots are full.");
+          redraw();
           return;
         }
         loadout.worn[index] = item.id;
@@ -748,7 +825,8 @@ function bankRow(
       }
       const index = loadout.wornAbilities.findIndex((worn) => worn === null);
       if (index < 0) {
-        note.textContent = "All ability slots are full.";
+        flashNote("All ability slots are full.");
+        redraw();
         return;
       }
       loadout.wornAbilities[index] = item.id;
@@ -767,19 +845,22 @@ function bankRow(
       const gear = itemById(item.catalogId);
       paintItemIcon(slot.canvas, items[item.catalogId]);
       stampLevel(slot.canvas, item.level);
-      if (gear) slot.button.className += rarityClass(gear.rarity);
-      bindTip(slot.button, gear?.name ?? "Item", gear ? gearLine(gear, item.level) : "", rarityNameColor(gear?.rarity));
+      if (gear) {
+        slot.button.className += rarityClass(gear.rarity);
+        bindGearTip(slot.button, gear, item.level);
+      } else bindTip(slot.button, "Item", "");
     } else if (item?.kind === "ability") {
       paintItemIcon(slot.canvas, abilities[item.catalogId]);
       stampLevel(slot.canvas, item.level);
       const worn = instanceById(loadout, item.id);
-      const tip = abilityTip(item.catalogId, worn ? abilityAmount(worn) : 0, item.level, worn ? abilitySplash(worn) : 0);
-      bindTip(slot.button, tip.name, tip.text);
+      bindAbilityTip(slot.button, () => abilityView(item.catalogId, worn ? abilityAmount(worn) : 0, item.level, worn ? abilitySplash(worn) : 0));
     }
-    if (item && item.kind !== "gold") armDrag(slot.button, item.id);
+    slot.button.dataset.drop = "storage";
+    if (item && item.kind !== "gold") armDrag(slot.button, item.id, item.kind);
     row.append(slot.button);
   }
-  box.append(lead, row);
+  frame.append(row);
+  box.append(lead, frame);
   return box;
 }
 
@@ -796,23 +877,74 @@ function itemPaint(canvas: HTMLCanvasElement, paint: (ctx: CanvasRenderingContex
   if (ctx) paint(ctx);
 }
 
-function gearLine(item: { name: string; maxHp?: number; weaponPower?: number; phys?: number; elem?: number; dodge?: number; critChance?: number; critShare?: number }, level: number): string {
-  const parts = [`Level ${level}`];
-  const maxHp = scaled(item.maxHp, level);
-  const weaponPower = scaled(item.weaponPower, level);
-  const phys = scaled(item.phys, level);
-  const elem = scaled(item.elem, level);
-  const dodge = scaled(item.dodge, level);
-  const critChance = scaled(item.critChance, level);
-  const critShare = scaled(item.critShare, level);
-  if (maxHp) parts.push(`MaxHP +${plain(maxHp)}`);
-  if (weaponPower) parts.push(`Weapon Power +${plain(weaponPower)}`);
-  if (phys) parts.push(`phys ${plain(phys)}`);
-  if (elem) parts.push(`elem ${plain(elem)}`);
-  if (dodge) parts.push(`dodge ${plain(dodge)}`);
-  if (critChance) parts.push(`crit chance ${plain(critChance)}`);
-  if (critShare) parts.push(`crit damage ${percent(critShare)}`);
-  return parts.join(", ");
+function bindGearTip(el: HTMLElement, gear: GearItem, level: number): void {
+  bindCardTip(el, () => gearCard(gear, level));
+}
+
+function gearCard(gear: GearItem, level: number): HTMLElement {
+  const root = document.createElement("div");
+  root.className = "dungeon-ability-card";
+  const head = document.createElement("div");
+  head.className = "dungeon-ability-head";
+  const title = document.createElement("div");
+  title.className = "dungeon-ability-name";
+  title.textContent = gear.name;
+  title.style.color = rarityNameColor(gear.rarity) ?? "#f4f7fb";
+  const pill = document.createElement("div");
+  pill.className = "dungeon-ability-element";
+  pill.textContent = gear.rarity;
+  const tone = rarityNameColor(gear.rarity) ?? "#9a8d78";
+  pill.style.color = tone;
+  pill.style.borderColor = tone;
+  const lv = document.createElement("div");
+  lv.className = "dungeon-ability-level";
+  lv.textContent = `Lv ${level}`;
+  head.append(title, pill, lv);
+  const chips = gearChips(gear, level);
+  root.append(head);
+  if (chips.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "dungeon-ability-rule";
+    empty.style.borderLeftColor = tone;
+    empty.textContent = "No bonus.";
+    root.append(empty);
+  } else {
+    const stats = document.createElement("div");
+    stats.className = "dungeon-ability-stats";
+    for (const chip of chips) stats.append(chip);
+    root.append(stats);
+  }
+  return root;
+}
+
+function gearChips(gear: GearItem, level: number): HTMLElement[] {
+  const chips: HTMLElement[] = [];
+  const add = (label: string, value: string, color: string): void => {
+    const chip = document.createElement("div");
+    chip.className = "dungeon-ability-stat";
+    const name = document.createElement("span");
+    name.textContent = label;
+    const number = document.createElement("b");
+    number.textContent = value;
+    number.style.color = color;
+    chip.append(name, number);
+    chips.push(chip);
+  };
+  const maxHp = scaled(gear.maxHp, level);
+  const weaponPower = scaled(gear.weaponPower, level);
+  const phys = scaled(gear.phys, level);
+  const elem = scaled(gear.elem, level);
+  const dodge = scaled(gear.dodge, level);
+  const critChance = scaled(gear.critChance, level);
+  const critShare = scaled(gear.critShare, level);
+  if (maxHp) add("Max HP", `+${plain(maxHp)}`, "#f4efe4");
+  if (weaponPower) add("Weapon Power", `+${plain(weaponPower)}`, "#d4bc82");
+  if (phys) add("Physical resist", `+${plain(phys)}`, "#f0e2c4");
+  if (elem) add("Element resist", `+${plain(elem)}`, "#7eb6ee");
+  if (dodge) add("Dodge", percent(pointChance(dodge)), "#c9b3ef");
+  if (critChance) add("Crit chance", percent(pointChance(critChance)), "#e7c98a");
+  if (critShare) add("Crit damage", `+${percent(critShare)}`, "#e2582a");
+  return chips;
 }
 
 function plain(value: number): string {
@@ -827,15 +959,12 @@ function iconButton(onClick: () => void, worn: boolean): { button: HTMLButtonEle
   const button = document.createElement("button");
   button.type = "button";
   button.className = worn ? "dungeon-slot dungeon-slot-worn" : "dungeon-slot";
-  button.style.width = "52px";
-  button.style.height = "52px";
+  button.style.boxSizing = "border-box";
   button.style.padding = "4px";
   button.style.cursor = "pointer";
   const canvas = document.createElement("canvas");
   canvas.width = 44;
   canvas.height = 44;
-  canvas.style.width = "44px";
-  canvas.style.height = "44px";
   button.append(canvas);
   button.addEventListener("click", onClick);
   return { button, canvas };
@@ -892,32 +1021,56 @@ function stampCount(canvas: HTMLCanvasElement, count: number): void {
 
 function bindWeaponTip(el: HTMLElement, weapon: WeaponDef): void {
   el.style.cursor = "pointer";
-  const show = (event: PointerEvent): void => {
-    const node = tipBox();
-    node.replaceChildren();
-    const title = document.createElement("div");
-    title.textContent = weapon.name;
-    title.style.color = "#f4f7fb";
-    title.style.fontWeight = "700";
-    const diagram = document.createElement("canvas");
-    const cell = 14;
-    const gap = 3;
-    diagram.width = 3 * cell + 2 * gap;
-    diagram.height = 6 * cell + 5 * gap;
-    diagram.style.display = "block";
-    diagram.style.marginTop = "8px";
-    paintStrike(diagram, weapon);
-    const body = document.createElement("div");
-    body.textContent = weapon.figure;
-    body.style.marginTop = "6px";
-    body.style.color = "#d4bc82";
-    node.append(title, diagram, body);
-    node.style.display = "block";
-    moveTip(event);
-  };
-  el.addEventListener("pointerenter", show);
-  el.addEventListener("pointermove", moveTip);
-  el.addEventListener("pointerleave", hideTip);
+  bindCardTip(el, () => weaponCard(weapon));
+}
+
+function weaponCard(weapon: WeaponDef): HTMLElement {
+  const root = document.createElement("div");
+  root.className = "dungeon-ability-card";
+  const head = document.createElement("div");
+  head.className = "dungeon-ability-head";
+  const title = document.createElement("div");
+  title.className = "dungeon-ability-name";
+  title.textContent = weapon.name;
+  head.append(title);
+  const stats = document.createElement("div");
+  stats.className = "dungeon-ability-stats";
+  stats.append(
+    weaponChip("Damage", String(weapon.hitDamage), "#e7c98a"),
+    weaponChip("Range", String(weapon.range), "#f4efe4"),
+    weaponChip("Magazine", weapon.magazine === null ? "None" : String(weapon.magazine), "#d4bc82"),
+  );
+  if (weapon.twice) stats.append(weaponChip("Hits", "2", "#f0e2c4"));
+  const diagram = document.createElement("canvas");
+  const cell = 14;
+  const gap = 3;
+  diagram.width = 3 * cell + 2 * gap;
+  diagram.height = 6 * cell + 5 * gap;
+  diagram.className = "dungeon-weapon-diagram";
+  paintStrike(diagram, weapon);
+  const rules = document.createElement("div");
+  rules.className = "dungeon-ability-rules";
+  for (const line of weapon.figure.split(/(?<=\.)\s+/)) {
+    const row = document.createElement("p");
+    row.className = "dungeon-ability-rule";
+    row.style.borderLeftColor = "#d4bc82";
+    row.textContent = line;
+    rules.append(row);
+  }
+  root.append(head, stats, diagram, rules);
+  return root;
+}
+
+function weaponChip(label: string, value: string, color: string): HTMLElement {
+  const chip = document.createElement("div");
+  chip.className = "dungeon-ability-stat";
+  const name = document.createElement("span");
+  name.textContent = label;
+  const number = document.createElement("b");
+  number.textContent = value;
+  number.style.color = color;
+  chip.append(name, number);
+  return chip;
 }
 
 /** Схема удара: герой смотрит вверх, подсвечены клетки попадания. */
@@ -977,9 +1130,7 @@ function rarityNameColor(rarity: Rarity | undefined): string | undefined {
 
 function slotRow(
   loadout: Loadout,
-  hone: Hone,
   abilities: Readonly<Record<string, HTMLCanvasElement>>,
-  note: HTMLElement,
   redraw: () => void,
 ): HTMLElement {
   const box = panel();
@@ -994,6 +1145,8 @@ function slotRow(
     const slot = document.createElement("button");
     slot.type = "button";
     slot.className = wornInst ? "dungeon-slot dungeon-slot-worn" : "dungeon-slot-empty";
+    slot.dataset.drop = "ability";
+    slot.dataset.slot = String(i);
     slot.style.font = "inherit";
     slot.style.width = "88px";
     slot.style.height = "88px";
@@ -1008,9 +1161,8 @@ function slotRow(
       paintItemIcon(canvas, abilities[wornInst.catalogId]);
       stampLevel(canvas, wornInst.level);
       slot.append(canvas);
-      const tip = abilityTip(wornInst.catalogId, abilityAmount(wornInst), wornInst.level, abilitySplash(wornInst));
-      bindTip(slot, tip.name, tip.text);
-      armDrag(slot, wornInst.id);
+      bindAbilityTip(slot, () => abilityView(wornInst.catalogId, abilityAmount(wornInst), wornInst.level, abilitySplash(wornInst)));
+      armDrag(slot, wornInst.id, "ability");
     } else {
       slot.textContent = "Empty";
       slot.style.fontSize = "13px";
@@ -1019,11 +1171,12 @@ function slotRow(
     slot.addEventListener("click", () => {
       if (dragMoved) return;
       if (!wornInst) {
-        note.textContent = "Empty slot. Take an ability from storage.";
+        flashNote("Empty slot. Take an ability from storage.");
+        redraw();
         return;
       }
       loadout.wornAbilities[i] = null;
-      note.textContent = "Ability unequipped.";
+      flashNote("Ability unequipped.");
       redraw();
     });
     row.append(slot);
@@ -1032,59 +1185,51 @@ function slotRow(
   return box;
 }
 
-const HERO_STATS: readonly { label: string; id?: AttrId }[] = [
-  { label: "MaxHP", id: "MaxHp" },
-  { label: "MaxMP", id: "MaxMp" },
-  { label: "Weapon Power", id: "WpATK" },
-  { label: "Ability Power", id: "SkillDamage" },
-  { label: "Physical resistance", id: "DEF" },
-  { label: "Elemental resistance" },
-  { label: "Dodge chance", id: "Dodge" },
-  { label: "Crit chance", id: "CritOdds" },
-  { label: "Crit damage", id: "CritFactor" },
-  { label: "Elemental damage modifier" },
+const HERO_ELEMENTS: readonly { name: string; color: string }[] = [
+  { name: "Fire", color: "#e2582a" },
+  { name: "Earth", color: "#9a7434" },
+  { name: "Poison", color: "#5fae3a" },
+  { name: "Water", color: "#3a7fd4" },
+  { name: "Ice", color: "#bfe6f5" },
 ];
 
 function heroCard(bonus: GearBonus): HTMLElement {
   const box = panel();
+  box.classList.add("dungeon-hero-panel");
   box.append(heading("Hero"));
   const row = document.createElement("div");
-  row.style.display = "flex";
-  row.style.gap = "16px";
-  row.style.alignItems = "flex-start";
+  row.className = "dungeon-hero";
   const portrait = document.createElement("canvas");
   portrait.width = 96;
   portrait.height = 96;
-  portrait.className = "dungeon-icon";
-  portrait.style.width = "96px";
-  portrait.style.height = "96px";
-  const list = document.createElement("div");
-  list.style.display = "flex";
-  list.style.flexDirection = "column";
-  list.style.gap = "12px";
-  list.style.flex = "1";
+  portrait.className = "dungeon-icon dungeon-hero-portrait";
+  const sheet = document.createElement("div");
+  sheet.className = "dungeon-hero-sheet";
   const attrs = heroAttributes();
-  const grid = document.createElement("div");
-  grid.style.display = "grid";
-  grid.style.gridTemplateColumns = "repeat(auto-fill, minmax(180px, 1fr))";
-  grid.style.gap = "8px 16px";
-  for (const stat of HERO_STATS) {
-    const item = document.createElement("div");
-    const name = document.createElement("div");
-    name.textContent = stat.label;
-    name.style.opacity = "0.6";
-    name.style.fontSize = "12px";
-    const number = document.createElement("div");
-    number.textContent = heroStat(stat, attrs, bonus);
-    item.append(name, number);
-    grid.append(item);
-  }
-  list.append(grid);
-  const blink = document.createElement("div");
-  blink.textContent = `Blink ${BLINK_CHARGES}`;
-  blink.style.opacity = "0.75";
-  list.append(blink);
-  row.append(portrait, list);
+  sheet.append(
+    heroGroup("Body", [
+      ["Max HP", String(HERO_HP + bonus.maxHp)],
+      ["Max MP", attrText(attrs, "MaxMp")],
+    ]),
+    heroGroup("Power", [
+      ["Weapon Power", withGear("100%", bonus.weaponPower)],
+      ["Ability Power", "100%"],
+    ]),
+    heroGroup("Resistance", [
+      ["Physical", plain(bonus.phys)],
+      ...HERO_ELEMENTS.map((element) => [element.name, withGear("0%", bonus.elem), element.color] as const),
+    ]),
+    heroGroup("Chance", [
+      ["Dodge", percent(pointChance(bonus.dodge))],
+      ["Crit chance", percent(pointChance(bonus.critChance))],
+      ["Crit damage", percent(2 + bonus.critShare)],
+    ]),
+    heroGroup(
+      "Element damage",
+      HERO_ELEMENTS.map((element) => [element.name, "0%", element.color] as const),
+    ),
+  );
+  row.append(portrait, sheet);
   box.append(row);
   void loadSprites().then((sprites) => {
     const ctx = portrait.getContext("2d");
@@ -1093,19 +1238,29 @@ function heroCard(bonus: GearBonus): HTMLElement {
   return box;
 }
 
-function heroStat(
-  stat: { label: string; id?: AttrId },
-  attrs: ReturnType<typeof heroAttributes>,
-  bonus: GearBonus,
-): string {
-  if (stat.id === "MaxHp") return String(HERO_HP + bonus.maxHp);
-  if (stat.id === "WpATK") return bonus.weaponPower > 0 ? plain(bonus.weaponPower) : "—";
-  if (stat.id === "DEF") return plain(bonus.phys);
-  if (stat.label.startsWith("Elemental resistance")) return bonus.elem > 0 ? plain(bonus.elem) : "—";
-  if (stat.id === "Dodge") return bonus.dodge > 0 ? percent(pointChance(bonus.dodge)) : "—";
-  if (stat.id === "CritOdds") return bonus.critChance > 0 ? percent(pointChance(bonus.critChance)) : "—";
-  if (stat.id === "CritFactor") return bonus.critShare > 0 ? percent(bonus.critShare) : "—";
-  return stat.id ? attrText(attrs, stat.id) : "—";
+function withGear(base: string, bonus: number): string {
+  return bonus > 0 ? `${base} + ${plain(bonus)}` : base;
+}
+
+function heroGroup(title: string, rows: readonly (readonly [string, string, string?])[]): HTMLElement {
+  const group = document.createElement("section");
+  group.className = "dungeon-hero-group";
+  const label = document.createElement("h3");
+  label.className = "dungeon-hero-group-title";
+  label.textContent = title;
+  group.append(label);
+  for (const [name, value, color] of rows) {
+    const line = document.createElement("div");
+    line.className = "dungeon-hero-row";
+    const key = document.createElement("span");
+    key.textContent = name;
+    if (color) key.style.color = color;
+    const number = document.createElement("b");
+    number.textContent = value;
+    line.append(key, number);
+    group.append(line);
+  }
+  return group;
 }
 
 function menuButton(label: string, onClick: () => void, primary: boolean): HTMLButtonElement {

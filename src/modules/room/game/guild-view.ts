@@ -1,5 +1,7 @@
-/** Доска гильдии. Чужих имён в этой сборке нет: тайтл не подключён, места не выдумываются. */
-export function paintGuild(host: HTMLElement, best: number | null, onBack: () => void): void {
+import type { GuildRow } from "./cloud.ts";
+
+/** Доска гильдии: все игроки тайтла, по лучшему пройденному уровню. */
+export function paintGuild(host: HTMLElement, rows: readonly GuildRow[], onBack: () => void, status = ""): void {
   host.replaceChildren();
   host.className = "dungeon";
   host.style.display = "flex";
@@ -22,7 +24,7 @@ export function paintGuild(host: HTMLElement, best: number | null, onBack: () =>
   const lead = document.createElement("p");
   lead.style.margin = "0";
   lead.style.opacity = "0.75";
-  lead.textContent = "Highest adventure level cleared. No one else's runs are listed.";
+  lead.textContent = status || "Highest adventure level. Every player of the game is listed.";
 
   const table = document.createElement("div");
   table.style.display = "grid";
@@ -37,17 +39,19 @@ export function paintGuild(host: HTMLElement, best: number | null, onBack: () =>
     cell.style.textTransform = "uppercase";
     table.append(cell);
   }
-  const row = best === null ? null : ["1", "You", String(best)];
-  if (!row) {
+  if (rows.length === 0 && !status) {
     const empty = document.createElement("p");
     empty.style.margin = "0";
     empty.textContent = "No cleared adventure yet.";
     table.append(empty);
   } else {
-    for (const value of row) {
-      const cell = document.createElement("div");
-      cell.textContent = value;
-      table.append(cell);
+    for (const row of rows) {
+      for (const value of [String(row.rank), row.name, String(row.level)]) {
+        const cell = document.createElement("div");
+        cell.textContent = value;
+        if (row.you) cell.style.fontWeight = "700";
+        table.append(cell);
+      }
     }
   }
 

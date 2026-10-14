@@ -1,8 +1,8 @@
 import { RoomRenderer } from "./view.ts";
 import { loadSprites, type Sprites } from "./sprites.ts";
-import { abilityAim, arrowBeam, attack, blink, blinkCells, castHeroAbility, face, livingMonsters, nearestAim, reload, roomMonsters, step, wait, type Dir, type RoomState } from "./sim.ts";
-import { abilityTip } from "../data/hero-abilities.ts";
-import { bindTip } from "./tip.ts";
+import { abilityAim, arrowBeam, attack, blink, blinkCells, castHeroAbility, face, interactTarget, livingMonsters, nearestAim, reload, roomMonsters, step, useChest, wait, type Dir, type RoomState } from "./sim.ts";
+import { abilityView } from "../data/hero-abilities.ts";
+import { bindAbilityTip, bindTip } from "./tip.ts";
 import { EMPTY_GEAR, type GearBonus } from "../data/items.ts";
 import type { RunAbility } from "../data/hero-abilities.ts";
 import type { WeaponId } from "../data/weapons.ts";
@@ -909,15 +909,11 @@ export class RoomController {
       cd.className = "dungeon-ability-cd";
       button.append(icon, key, cd);
       button.addEventListener("click", () => this.pressAbility(slot));
-      bindTip(
-        button,
-        () => this.state.abilities[slot]?.name ?? `${slot + 1}`,
-        () => {
-          const ability = this.state.abilities[slot];
-          if (!ability) return "Empty slot.";
-          return abilityTip(ability.id, ability.damage, null, ability.splash).text;
-        },
-      );
+      bindAbilityTip(button, () => {
+        const ability = this.state.abilities[slot];
+        if (!ability) return null;
+        return abilityView(ability.id, ability.damage, null, ability.splash);
+      });
       this.abilityButtons.push(button);
       bar.append(button);
     }
@@ -1111,6 +1107,28 @@ export class RoomController {
       if (this.lesson && !lessonAllows(this.lessonStep, "wait")) return;
       this.wait();
       event.preventDefault();
+      return;
+    }
+    if (event.code === "Space") {
+      event.preventDefault();
+      this.interact();
+    }
+  }
+
+  private interact(): void {
+    if (this.pause || this.mapOpen || this.locked() || this.state.outcome === "lost") return;
+    if (this.choosingBlink || this.abilitySlot !== null) return;
+    const exit = this.run.exit?.room === this.run.current ? this.run.exit.cell : null;
+    const target = interactTarget(this.state, exit);
+    if (!target) return;
+    if (target.kind === "portal") {
+      if (this.lesson) return;
+      this.onHub?.();
+      return;
+    }
+    if (useChest(this.state, target.cell.x, target.cell.y)) {
+      this.commit();
+      this.refresh();
     }
   }
 

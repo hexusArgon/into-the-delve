@@ -1,13 +1,15 @@
 import { weaponById, WEAPONS, type WeaponId } from "../data/weapons.ts";
 import { itemById } from "../data/items.ts";
 import { addInstance, abilityAmount, abilitySplash, instanceById, saveLoadout, unworn, type Loadout } from "../data/instances.ts";
-import { abilityTip, heroAbilityById } from "../data/hero-abilities.ts";
-import { bindTip } from "./tip.ts";
+import { abilityView, heroAbilityById } from "../data/hero-abilities.ts";
+import { bindAbilityTip, hideTip } from "./tip.ts";
 import { freshShelf, shelfBar, shelfMatch, shelfOrder, type ShelfKind } from "./shelf-bar.ts";
+import { storageLayout, storageScroll } from "./storage.ts";
 import {
   buyout,
   buyStack,
   cancelLot,
+  listStack,
   listUnique,
   LOT_HOURS,
   placeBid,
@@ -29,7 +31,9 @@ export interface AuctionKit {
 
 type Tab = "browse" | "sell" | "bids" | "mine";
 
-type SellPick = { kind: "weapon" | "gear" | "ability"; instanceId: string; catalogId: string };
+type SellPick =
+  | { kind: "weapon" | "gear" | "ability"; instanceId: string; catalogId: string }
+  | { kind: "gold" };
 
 export function paintAuction(
   host: HTMLElement,
@@ -41,6 +45,7 @@ export function paintAuction(
     gold: HTMLCanvasElement;
     weapons: Readonly<Partial<Record<WeaponId, HTMLCanvasElement>>>;
     items: Readonly<Record<string, HTMLCanvasElement>>;
+    abilities?: Readonly<Record<string, HTMLCanvasElement>>;
   },
 ): void {
   let tab: Tab = "browse";
@@ -61,39 +66,35 @@ export function paintAuction(
   };
 
   const paint = (): void => {
+    hideTip();
     host.replaceChildren();
     host.className = "dungeon";
     host.style.display = "flex";
     host.style.flexDirection = "column";
     host.style.height = "100%";
-    host.style.overflow = "auto";
+    host.style.overflow = "hidden";
 
     const page = document.createElement("div");
-    page.style.maxWidth = "980px";
-    page.style.margin = "0 auto";
-    page.style.padding = "28px 20px 48px";
-    page.style.display = "flex";
-    page.style.flexDirection = "column";
-    page.style.gap = "14px";
+    page.className = "dungeon-auction";
 
+    const head = document.createElement("div");
+    head.className = "dungeon-auction-head";
     const title = document.createElement("h1");
     title.textContent = "Auction";
     title.className = "dungeon-title";
     title.style.margin = "0";
-
     const purse = document.createElement("div");
-    purse.textContent = `Gold ${kit.gold}`;
-
-    const lead = document.createElement("p");
-    lead.textContent =
-      "Players trade gear and abilities. The hub sells nothing. Buyers do not see when a lot ends.";
-    lead.style.margin = "0";
-    lead.style.opacity = "0.75";
-
+    purse.className = "dungeon-purse";
+    const coin = document.createElement("canvas");
+    coin.width = 28;
+    coin.height = 28;
+    coin.className = "dungeon-purse-coin";
+    drawArt(coin, art.gold);
+    const gold = document.createElement("b");
+    gold.textContent = String(kit.gold);
+    purse.append(coin, gold);
     const tabs = document.createElement("div");
-    tabs.style.display = "flex";
-    tabs.style.gap = "8px";
-    tabs.style.flexWrap = "wrap";
+    tabs.className = "dungeon-auction-tabs";
     for (const item of [
       ["browse", "Lots"],
       ["sell", "Sell"],
@@ -107,48 +108,72 @@ export function paintAuction(
         }, tab === item[0]),
       );
     }
+    head.append(title, purse, tabs);
 
     const status = document.createElement("div");
+    status.className = "dungeon-auction-note";
     status.textContent = note;
-    status.style.minHeight = "1.2em";
 
-    page.append(title, purse, lead, tabs, shelfBar(shelf, redraw), status);
-    if (tab === "browse") page.append(browse());
-    if (tab === "sell") page.append(sell());
-    if (tab === "bids") page.append(bids());
-    if (tab === "mine") page.append(mine());
+    const body = document.createElement("div");
+    body.className = "dungeon-auction-body";
+    if (tab === "browse") body.append(browse());
+    if (tab === "sell") body.append(sell());
+    if (tab === "bids") body.append(bids());
+    if (tab === "mine") body.append(mine());
+
+    page.append(head, shelfBar(shelf, redraw), status, body);
     const back = button("Back", onBack, false);
     back.classList.add("dungeon-back");
     host.append(back, page);
   };
 
   const browse = (): HTMLElement => {
-    const wrap = row();
-    const left = column();
+    const wrap = document.createElement("div");
+    wrap.className = "dungeon-auction-board";
+    const list = document.createElement("div");
+    list.className = "dungeon-lots";
     const lots = shownLots();
-    if (lots.length === 0) left.append(muted("No lots."));
-    for (const lot of lots) {
-      left.append(
-        button(lotLine(lot), () => {
-          selectedId = lot.id;
-          redraw();
-        }, lot.id === selectedId),
-      );
-    }
-    wrap.append(left, detail(house.lots.map(toPublic).find((lot) => lot.id === selectedId) ?? null));
+    if (lots.length === 0) list.append(muted("No lots."));
+    for (const lot of lots) list.append(lotCard(lot, lot.id === selectedId, () => {
+      selectedId = lot.id;
+      redraw();
+    }));
+    wrap.append(list, detail(house.lots.map(toPublic).find((lot) => lot.id === selectedId) ?? null));
     return wrap;
   };
 
   const detail = (lot: PublicLot | null): HTMLElement => {
     const box = column();
+    box.classList.add("dungeon-auction-detail");
     if (!lot) {
-      box.append(muted("Pick a lot."));
+      box.append(heading("Lot"), muted("Pick a lot."));
       return box;
     }
-    box.append(heading(lot.goods.name), muted(lot.goods.text));
-    if (lot.sellerId === ME) box.append(muted("This is your lot."));
+    const icon = document.createElement("canvas");
+    icon.width = 72;
+    icon.height = 72;
+    icon.className = "dungeon-lot-icon";
+    paintLot(icon, lot);
+    box.append(icon, heading(lot.goods.name), muted(sellerName(lot.sellerId)), muted(lot.goods.text));
+    const facts = document.createElement("div");
+    facts.className = "dungeon-ability-stats";
+    if (lot.goods.kind === "stack") facts.append(fact("Each", String(lot.price ?? "—"), "#d4bc82"), fact("Count", String(lot.goods.count), "#f4efe4"));
+    else {
+      if (!lot.buyoutOnly && lot.minBid !== null) facts.append(fact("Minimum", String(lot.minBid), "#f4efe4"));
+      facts.append(fact("Bid", lot.bid === null ? "None" : String(lot.bid), "#e7c98a"));
+      facts.append(fact("Buyout", lot.price === null ? "None" : String(lot.price), "#d4bc82"));
+    }
+    box.append(facts);
+    if (lot.sellerId === ME) {
+      box.append(muted("This is your lot."));
+      box.append(button("Cancel", () => {
+        const step = cancelLot(house, lot.id, ME);
+        note = apply(kit, loadout, step) ?? "Lot cancelled.";
+        selectedId = null;
+        redraw();
+      }, false));
+    }
     if (lot.goods.kind === "stack") {
-      box.append(muted(`${lot.goods.count} pcs at ${lot.price}`));
       if (lot.sellerId !== ME) {
         const count = document.createElement("input");
         count.type = "number";
@@ -167,7 +192,6 @@ export function paintAuction(
       return box;
     }
     if (!lot.buyoutOnly) {
-      box.append(muted(lot.bid === null ? "No bids." : `Bid ${lot.bid}`));
       if (lot.sellerId !== ME) {
         const amount = document.createElement("input");
         amount.type = "number";
@@ -185,7 +209,6 @@ export function paintAuction(
     } else {
       box.append(muted("Buyout only."));
     }
-    if (lot.price !== null) box.append(muted(`Buyout ${lot.price}`));
     if (lot.sellerId !== ME && lot.price !== null) {
       box.append(
         button("Buy out", () => {
@@ -200,32 +223,39 @@ export function paintAuction(
   };
 
   const sell = (): HTMLElement => {
+    const wrap = document.createElement("div");
+    wrap.className = "dungeon-auction-board";
     const box = column();
+    box.classList.add("dungeon-bank");
     box.append(heading("Storage"));
     const stored = shownStorage();
     const grid = document.createElement("div");
     grid.className = "dungeon-storage";
-    const cells = Math.max(30, Math.ceil(stored.length / 6) * 6);
+    const cells = storageLayout(stored.length).cells;
+    const frame = storageScroll(stored.length);
     for (let i = 0; i < cells; i += 1) {
       const item = stored[i];
       const picked = item ? samePick(sellPick, item) : false;
       const slot = document.createElement("button");
       slot.type = "button";
       slot.className = picked ? "dungeon-slot dungeon-slot-worn" : "dungeon-slot";
-      slot.style.width = "52px";
-      slot.style.height = "52px";
+      slot.style.boxSizing = "border-box";
       slot.style.padding = "4px";
       slot.style.cursor = "pointer";
       const canvas = document.createElement("canvas");
       canvas.width = 44;
       canvas.height = 44;
-      canvas.style.width = "44px";
-      canvas.style.height = "44px";
       slot.append(canvas);
       if (item?.kind === "gold") {
         drawArt(canvas, art.gold);
         if (item.count > 1) stampCount(canvas, item.count);
         slot.title = "Gold";
+        if (sellPick?.kind === "gold") slot.className = "dungeon-slot dungeon-slot-worn";
+        slot.addEventListener("click", () => {
+          readDraft();
+          sellPick = { kind: "gold" };
+          redraw();
+        });
       } else if (item?.kind === "weapon") {
         const weapon = weaponById(item.id);
         drawArt(canvas, art.weapons[item.id]);
@@ -249,8 +279,9 @@ export function paintAuction(
         });
       } else if (item?.kind === "ability") {
         const inst = instanceById(loadout, item.instanceId);
-        const tip = abilityTip(item.id, inst ? abilityAmount(inst) : 0, item.level, inst ? abilitySplash(inst) : 0);
-        bindTip(slot, tip.name, tip.text);
+        drawArt(canvas, art.abilities?.[item.id]);
+        stampLevel(canvas, item.level);
+        bindAbilityTip(slot, () => abilityView(item.id, inst ? abilityAmount(inst) : 0, item.level, inst ? abilitySplash(inst) : 0));
         slot.addEventListener("click", () => {
           readDraft();
           sellPick = { kind: "ability", instanceId: item.instanceId, catalogId: item.id };
@@ -259,12 +290,21 @@ export function paintAuction(
       }
       grid.append(slot);
     }
-    box.append(grid);
-    if (sellPick && stillStored(kit, loadout, sellPick)) box.append(sellForm(sellPick));
-    return box;
+    frame.style.maxHeight = "none";
+    frame.style.flex = "1";
+    frame.style.minHeight = "0";
+    frame.append(grid);
+    box.append(frame);
+    const form = sellPick && stillStored(kit, loadout, sellPick) ? sellForm(sellPick) : column();
+    if (!sellPick || !stillStored(kit, loadout, sellPick)) {
+      form.append(heading("List"), muted("Pick an item in storage."));
+    }
+    wrap.append(box, form);
+    return wrap;
   };
 
   const sellForm = (pick: SellPick): HTMLElement => {
+    if (pick.kind === "gold") return goldForm();
     const form = column();
     const toggle = button(buyoutOnly ? "Buyout only: yes" : "Buyout only: no", () => {
       readDraft();
@@ -311,7 +351,7 @@ export function paintAuction(
           redraw();
           return;
         }
-        const goods = pickGoods(pick);
+        const goods = pickGoods(loadout, pick);
         const step = listUnique(house, {
           sellerId: ME,
           goods,
@@ -339,26 +379,81 @@ export function paintAuction(
     return form;
   };
 
+  const goldForm = (): HTMLElement => {
+    const form = column();
+    const countInput = document.createElement("input");
+    countInput.type = "number";
+    countInput.min = "1";
+    countInput.value = "1";
+    countInput.placeholder = "Quantity";
+    fieldStyle(countInput);
+    const priceInput = document.createElement("input");
+    priceInput.placeholder = "Price each";
+    fieldStyle(priceInput);
+    form.append(
+      heading("Sell gold"),
+      countInput,
+      priceInput,
+      button("List", () => {
+        const count = Number(countInput.value);
+        const unitPrice = parseMoney(priceInput.value);
+        if (!Number.isInteger(count) || count < 1 || count > kit.gold) {
+          note = "That quantity is not available.";
+          redraw();
+          return;
+        }
+        if (unitPrice === null) {
+          note = "A price is required.";
+          redraw();
+          return;
+        }
+        const step = listStack(house, {
+          sellerId: ME,
+          goods: { kind: "stack", key: "gold", name: "Gold", text: "Coins." },
+          count,
+          unitPrice,
+        });
+        const error = apply(kit, loadout, step);
+        if (error) {
+          note = error;
+          redraw();
+          return;
+        }
+        kit.gold -= count;
+        sellPick = null;
+        note = "Lot listed.";
+        tab = "mine";
+        redraw();
+      }, true),
+    );
+    return form;
+  };
+
   const bids = (): HTMLElement => {
     const box = column();
+    box.classList.add("dungeon-auction-fill");
+    const grid = document.createElement("div");
+    grid.className = "dungeon-lots";
     const mine = house.watches.filter((watch) => watch.bidderId === ME && shownLots().some((lot) => lot.id === watch.lotId));
-    if (mine.length === 0) box.append(muted("No bids."));
+    if (mine.length === 0) grid.append(muted("No bids."));
     for (const watch of mine) {
       const lot = house.lots.find((item) => item.id === watch.lotId);
       if (!lot) continue;
-      const rowButton = button(`${lot.goods.name} · ${lot.bid ?? "—"}`, () => {
+      const card = lotCard(toPublic(lot), false, () => {
         selectedId = lot.id;
         tab = "browse";
         redraw();
-      }, false);
-      rowButton.style.color = watch.winning ? "#7ddea0" : "#ff8d8d";
-      box.append(rowButton);
+      });
+      card.classList.add(watch.winning ? "is-winning" : "is-losing");
+      grid.append(card);
     }
+    box.append(grid);
     return box;
   };
 
   const mine = (): HTMLElement => {
-    const wrap = row();
+    const wrap = document.createElement("div");
+    wrap.className = "dungeon-auction-board";
     const left = column();
     const right = column();
     left.append(heading("Matching lots"));
@@ -366,29 +461,77 @@ export function paintAuction(
     const own = house.lots.filter((lot) => lot.sellerId === ME && visible.has(lot.id));
     const keys = new Set(own.map((lot) => lot.goods.key));
     const peers = house.lots.filter((lot) => keys.has(lot.goods.key) && visible.has(lot.id));
-    if (peers.length === 0) left.append(muted("Nothing to compare."));
+    const peerGrid = document.createElement("div");
+    peerGrid.className = "dungeon-lots";
+    if (peers.length === 0) peerGrid.append(muted("Nothing to compare."));
     for (const lot of peers) {
-      left.append(button(lotLine(toPublic(lot)), () => {
+      peerGrid.append(lotCard(toPublic(lot), false, () => {
         selectedId = lot.id;
         tab = "browse";
         redraw();
-      }, false));
+      }));
     }
+    left.append(peerGrid);
     right.append(heading("Your lots"));
-    if (own.length === 0) right.append(muted("No lots."));
+    const ownGrid = document.createElement("div");
+    ownGrid.className = "dungeon-lots";
+    if (own.length === 0) ownGrid.append(muted("No lots."));
     for (const lot of own) {
-      const label = lot.durationHours === null ? lotLine(toPublic(lot)) : `${lotLine(toPublic(lot))} · ${lot.durationHours}h`;
-      right.append(
-        button(`Cancel · ${label}`, () => {
-          const step = cancelLot(house, lot.id, ME);
-          note = apply(kit, loadout, step) ?? "Lot cancelled.";
-          redraw();
-        }, false),
-      );
+      const card = lotCard(toPublic(lot), false, () => {
+        selectedId = lot.id;
+        tab = "browse";
+        redraw();
+      });
+      const cancel = button("Cancel", () => {
+        const step = cancelLot(house, lot.id, ME);
+        note = apply(kit, loadout, step) ?? "Lot cancelled.";
+        redraw();
+      }, false);
+      cancel.addEventListener("click", (event) => event.stopPropagation());
+      card.append(cancel);
+      if (lot.durationHours !== null) {
+        const time = document.createElement("div");
+        time.className = "dungeon-lot-price";
+        time.textContent = `${lot.durationHours}h`;
+        card.append(time);
+      }
+      ownGrid.append(card);
     }
+    right.append(ownGrid);
     wrap.append(left, right);
     return wrap;
   };
+
+  function lotCard(lot: PublicLot, picked: boolean, onClick: () => void): HTMLElement {
+    const card = document.createElement("div");
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.className = picked ? "dungeon-lot is-picked" : "dungeon-lot";
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    paintLot(canvas, lot);
+    const name = document.createElement("div");
+    name.className = "dungeon-lot-name";
+    name.textContent = lot.goods.name;
+    const price = document.createElement("div");
+    price.className = "dungeon-lot-price";
+    price.textContent = lotPrice(lot);
+    const who = document.createElement("div");
+    who.className = "dungeon-lot-price";
+    who.textContent = sellerName(lot.sellerId);
+    card.append(canvas, name, who, price);
+    card.addEventListener("click", onClick);
+    return card;
+  }
+
+  function paintLot(canvas: HTMLCanvasElement, lot: PublicLot): void {
+    const key = lot.goods.key;
+    if (WEAPONS.some((weapon) => weapon.id === key)) drawArt(canvas, art.weapons[key as WeaponId]);
+    else if (itemById(key)) drawArt(canvas, art.items[key]);
+    else drawArt(canvas, art.abilities?.[key]);
+    if (lot.goods.kind === "stack" && lot.goods.count > 1) stampCount(canvas, lot.goods.count);
+  }
 
   const readDraft = (): void => {
     const bid = document.querySelector<HTMLInputElement>("input[placeholder='Minimum bid']");
@@ -430,25 +573,24 @@ function storedName(item: StoredCell): string {
   return "Ability";
 }
 
+function sellerName(id: string): string {
+  if (id === ME) return "You";
+  if (id === "trader") return "Trader";
+  return id;
+}
+
 function apply(kit: AuctionKit, loadout: Loadout, step: AuctionStep): string | null {
   if (step.error) return step.error;
   for (const move of step.gold) {
     if (move.id === ME) kit.gold += move.delta;
   }
   for (const item of step.items) {
-    if (item.to !== ME || item.goods.kind !== "unique") continue;
-    const key = item.goods.key;
-    if (WEAPONS.some((weapon) => weapon.id === key)) {
-      const id = key as WeaponId;
-      addInstance(loadout, "weapon", id);
-      if (!kit.owned.includes(id)) kit.owned.push(id);
+    if (item.to !== ME) continue;
+    if (item.goods.kind === "stack") {
+      grantStack(kit, loadout, item.goods.key, item.goods.count);
       continue;
     }
-    if (itemById(key)) {
-      addInstance(loadout, "gear", key);
-      continue;
-    }
-    addInstance(loadout, "ability", key);
+    grantUnique(kit, loadout, item.goods.key, item.goods.level ?? 0);
   }
   if (!kit.owned.includes(kit.weapon)) kit.weapon = kit.owned[0] ?? kit.weapon;
   saveLoadout(loadout);
@@ -472,29 +614,57 @@ function storageCells(kit: AuctionKit, loadout: Loadout): StoredCell[] {
   return stored;
 }
 
+function grantUnique(kit: AuctionKit, loadout: Loadout, key: string, level: number): void {
+  if (key === "gold") {
+    kit.gold += 1;
+    return;
+  }
+  if (WEAPONS.some((weapon) => weapon.id === key)) {
+    const id = key as WeaponId;
+    addInstance(loadout, "weapon", id, level);
+    if (!kit.owned.includes(id)) kit.owned.push(id);
+    return;
+  }
+  if (itemById(key)) {
+    addInstance(loadout, "gear", key, level);
+    return;
+  }
+  addInstance(loadout, "ability", key, level);
+}
+
+function grantStack(kit: AuctionKit, loadout: Loadout, key: string, count: number): void {
+  if (key === "gold") {
+    kit.gold += count;
+    return;
+  }
+  for (let n = 0; n < count; n += 1) grantUnique(kit, loadout, key, 0);
+}
+
 function samePick(pick: SellPick | null, item: StoredCell): boolean {
-  if (!pick || item.kind === "gold" || pick.kind !== item.kind) return false;
+  if (!pick || pick.kind === "gold" || item.kind === "gold" || pick.kind !== item.kind) return false;
   return pick.instanceId === item.instanceId;
 }
 
 function stillStored(kit: AuctionKit, loadout: Loadout, pick: SellPick): boolean {
+  if (pick.kind === "gold") return kit.gold > 0;
   return storageCells(kit, loadout).some((item) => samePick(pick, item));
 }
 
-function pickGoods(pick: SellPick): { kind: "unique"; key: string; name: string; text: string } {
+function pickGoods(loadout: Loadout, pick: Exclude<SellPick, { kind: "gold" }>): { kind: "unique"; key: string; name: string; text: string; level: number } {
+  const level = instanceById(loadout, pick.instanceId)?.level ?? 0;
   if (pick.kind === "weapon") {
     const weapon = weaponById(pick.catalogId as WeaponId);
-    return { kind: "unique", key: pick.catalogId, name: weapon.name, text: weapon.figure };
+    return { kind: "unique", key: pick.catalogId, name: weapon.name, text: weapon.figure, level };
   }
   if (pick.kind === "gear") {
     const gear = itemById(pick.catalogId);
-    return { kind: "unique", key: pick.catalogId, name: gear?.name ?? "Item", text: gear?.name ?? "" };
+    return { kind: "unique", key: pick.catalogId, name: gear?.name ?? "Item", text: gear?.name ?? "", level };
   }
   const row = heroAbilityById(pick.catalogId);
-  return { kind: "unique", key: pick.catalogId, name: row?.name ?? "Ability", text: row?.text ?? "" };
+  return { kind: "unique", key: pick.catalogId, name: row?.name ?? "Ability", text: row?.text ?? "", level };
 }
 
-function takeStored(kit: AuctionKit, loadout: Loadout, pick: SellPick): void {
+function takeStored(kit: AuctionKit, loadout: Loadout, pick: Exclude<SellPick, { kind: "gold" }>): void {
   loadout.items = loadout.items.filter((item) => item.id !== pick.instanceId);
   if (loadout.weapon === pick.instanceId) loadout.weapon = null;
   loadout.worn = loadout.worn.map((worn) => (worn === pick.instanceId ? null : worn));
@@ -517,7 +687,7 @@ function drawArt(canvas: HTMLCanvasElement, art: HTMLCanvasElement | undefined):
   const ctx = canvas.getContext("2d");
   if (!ctx || !art) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const fit = 36 / Math.max(art.width, art.height);
+  const fit = (Math.min(canvas.width, canvas.height) - 8) / Math.max(art.width, art.height);
   const w = art.width * fit;
   const h = art.height * fit;
   ctx.drawImage(art, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
@@ -530,7 +700,7 @@ function stampCount(canvas: HTMLCanvasElement, count: number): void {
   ctx.font = "700 12px Palatino Linotype, Palatino, serif";
   ctx.textAlign = "right";
   ctx.textBaseline = "bottom";
-  ctx.fillText(String(count), 42, 42);
+  ctx.fillText(String(count), canvas.width - 2, canvas.height - 2);
 }
 
 function stampLevel(canvas: HTMLCanvasElement, level: number): void {
@@ -541,6 +711,26 @@ function stampLevel(canvas: HTMLCanvasElement, level: number): void {
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
   ctx.fillText(String(level), 2, 2);
+}
+
+function lotPrice(lot: PublicLot): string {
+  if (lot.goods.kind === "stack") return `${lot.goods.count} · ${lot.price}`;
+  if (lot.buyoutOnly) return `Buyout ${lot.price}`;
+  const bid = lot.bid === null ? "No bids" : `Bid ${lot.bid}`;
+  const price = lot.price === null ? "No buyout" : `Buyout ${lot.price}`;
+  return `${bid} · ${price}`;
+}
+
+function fact(label: string, value: string, color: string): HTMLElement {
+  const chip = document.createElement("div");
+  chip.className = "dungeon-ability-stat";
+  const name = document.createElement("span");
+  name.textContent = label;
+  const number = document.createElement("b");
+  number.textContent = value;
+  number.style.color = color;
+  chip.append(name, number);
+  return chip;
 }
 
 function lotLine(lot: PublicLot): string {

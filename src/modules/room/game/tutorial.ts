@@ -161,8 +161,10 @@ export function tutorialRun(step: LessonStep = "move"): Run {
     visited: [true],
     cleared: [false],
     current: 0,
+    hub: 0,
     exit: null,
     adventure: 0,
+    parcels: [],
     state,
   };
 }

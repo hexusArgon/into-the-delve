@@ -5,6 +5,13 @@ export const THREAT_STEP = 0.1;
 
 const BEST_KEY = "dungeon-best";
 
+let afterRecord: ((level: number) => void) | null = null;
+
+/** Сервер подписывается после входа. */
+export function onAdventureRecorded(listener: (level: number) => void): void {
+  afterRecord = listener;
+}
+
 export function threatFactor(level: number): number {
   return 1 + Math.max(0, Math.floor(level)) * THREAT_STEP;
 }
@@ -50,5 +57,6 @@ export function recordAdventure(level: number): number {
   } catch {
     /* приватный режим */
   }
+  afterRecord?.(next);
   return next;
 }
