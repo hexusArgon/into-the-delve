@@ -14,8 +14,9 @@ import {
   removeInstance,
   equippedWeaponHit,
   equippedWeaponId,
-  freshLoadout,
   grantHeroAbilities,
+  saveLoadout,
+  storedLoadout,
   instanceById,
   pointChance,
   scaled,
@@ -29,6 +30,8 @@ import { WEAPONS, weaponById, type WeaponDef, type WeaponId } from "../data/weap
 import { createHouse } from "./auction.ts";
 import { paintAuction, type AuctionKit } from "./auction-view.ts";
 import { paintGuild } from "./guild-view.ts";
+import { paintAdventure } from "./adventure-view.ts";
+import { bestAdventure, recordAdventure } from "./adventure.ts";
 import { RoomController } from "./controller.ts";
 import { installDungeonMusic } from "./music.ts";
 import { openSettings } from "./settings-view.ts";
@@ -69,11 +72,12 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
   let alive = true;
   const startWeapon = tutorialWeapon();
   const kit: AuctionKit = { weapon: startWeapon, gold: 0, owned: [startWeapon] };
-  let level = 0;
-  const loadout = freshLoadout(startWeapon);
+  const loadout = storedLoadout(startWeapon);
   grantHeroAbilities(loadout);
+  syncKit(kit, loadout);
+  saveLoadout(loadout);
   const shelf = freshShelf();
-  const hone = { target: null as string | null, copy: null as string | null, pick: null as "target" | "copy" | null, result: "" };
+  const hone = { target: null as string | null, copy: null as string | null, made: null as string | null, result: "" };
   const house = createHouse();
   let lesson: "hub" | LessonStep | null = tutorialPending() ? "hub" : null;
 
@@ -93,6 +97,7 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
     loadout.weapon = addInstance(loadout, "weapon", id).id;
     kit.weapon = id;
     kit.owned = [id];
+    saveLoadout(loadout);
     endLesson();
   };
 
@@ -115,7 +120,10 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
     if (!alive) return;
     if (room && !room.isLesson) {
       kit.gold += room.carriedGold;
-      level = Math.max(level, room.adventureLevel);
+      for (const drop of room.spoils) addInstance(loadout, drop.kind, drop.catalogId);
+      syncKit(kit, loadout);
+      if (room.floorCleared) recordAdventure(room.pickedLevel);
+      saveLoadout(loadout);
     }
     room?.destroy();
     room = null;
@@ -125,7 +133,7 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
       {
         onPlay: () => {
           if (lesson === "hub") openLesson("move");
-          else showRoom();
+          else paintAdventure(host, bestAdventure(), (picked) => showRoom(picked), showMenu);
         },
         onInventory: () => {
           void spritesReady.then((sprites) => {
@@ -137,13 +145,13 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
             if (alive) paintAuction(host, kit, loadout, house, showMenu, sprites);
           });
         },
-        onGuild: () => paintGuild(host, level, showMenu),
+        onGuild: () => paintGuild(host, bestAdventure(), showMenu),
       },
       lesson === "hub" ? endLesson : undefined,
     );
   };
 
-  const showRoom = (): void => {
+  const showRoom = (picked = 0): void => {
     if (!alive) return;
     room = new RoomController(
       host,
@@ -153,6 +161,7 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
       null,
       equippedWeaponHit(loadout),
       wornAbilities(loadout),
+      picked,
     );
     if (import.meta.env.DEV) {
       (globalThis as typeof globalThis & { roomController?: RoomController }).roomController = room;
@@ -323,100 +332,203 @@ function hotLabel(label: string, x: string, y: string): HTMLSpanElement {
 interface Hone {
   target: string | null;
   copy: string | null;
-  pick: "target" | "copy" | null;
+  /** Экземпляр, который остался после удачной заточки. */
+  made: string | null;
   result: string;
 }
 
-function claim(loadout: Loadout, hone: Hone, id: string): boolean {
-  if (!hone.pick) return false;
+type HoneSlot = "target" | "copy";
+
+let dragMoved = false;
+let honeDrop: ((slot: HoneSlot, id: string) => void) | null = null;
+let dragGhost: HTMLElement | null = null;
+
+function placeHone(loadout: Loadout, hone: Hone, slot: HoneSlot, id: string): void {
   const item = instanceById(loadout, id);
-  if (!item) return false;
-  if (hone.pick === "target") {
-    if (hone.copy === id) hone.copy = null;
-    hone.target = id;
-    hone.result = "";
-  } else if (id === hone.target) {
-    hone.result = "The same piece cannot be picked twice.";
-  } else {
-    const target = instanceById(loadout, hone.target);
-    if (!target || target.catalogId !== item.catalogId || target.kind !== item.kind) hone.result = "That is not a copy.";
-    else {
-      hone.copy = id;
-      hone.result = "";
+  if (!item) return;
+  hone.made = null;
+  if (slot === "target") {
+    if (hone.copy === id) {
+      hone.result = "The same piece cannot be picked twice.";
+      return;
     }
+    hone.target = id;
+    const copy = instanceById(loadout, hone.copy);
+    if (copy && (copy.catalogId !== item.catalogId || copy.kind !== item.kind)) hone.copy = null;
+    hone.result = "";
+    return;
   }
-  hone.pick = null;
-  return true;
+  if (id === hone.target) {
+    hone.result = "The same piece cannot be picked twice.";
+    return;
+  }
+  const target = instanceById(loadout, hone.target);
+  if (target && (target.catalogId !== item.catalogId || target.kind !== item.kind)) {
+    hone.result = "That is not a copy.";
+    return;
+  }
+  hone.copy = id;
+  hone.result = "";
 }
 
-function instanceName(item: ItemInstance): string {
-  if (item.kind === "weapon") return weaponById(item.catalogId as WeaponId).name;
-  if (item.kind === "gear") return itemById(item.catalogId)?.name ?? "Item";
-  return heroAbilityName(item.catalogId);
+function armDrag(el: HTMLElement, id: string): void {
+  el.style.cursor = "grab";
+  el.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    const sx = event.clientX;
+    const sy = event.clientY;
+    let moving = false;
+    const move = (ev: PointerEvent): void => {
+      if (!moving && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 8) return;
+      if (!moving) {
+        moving = true;
+        dragMoved = true;
+        const canvas = el.querySelector("canvas");
+        dragGhost = document.createElement("div");
+        dragGhost.className = "dungeon-drag-ghost";
+        if (canvas instanceof HTMLCanvasElement) dragGhost.append(cloneCanvas(canvas));
+        document.body.append(dragGhost);
+      }
+      if (dragGhost) {
+        dragGhost.style.left = `${ev.clientX}px`;
+        dragGhost.style.top = `${ev.clientY}px`;
+      }
+      const hit = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>("[data-hone]");
+      document.querySelectorAll(".dungeon-hone-slot.is-over").forEach((node) => node.classList.remove("is-over"));
+      if (hit && (hit.dataset.hone === "target" || hit.dataset.hone === "copy")) hit.classList.add("is-over");
+    };
+    const up = (ev: PointerEvent): void => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.querySelectorAll(".dungeon-hone-slot.is-over").forEach((node) => node.classList.remove("is-over"));
+      const hit = moving ? document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>("[data-hone]") : null;
+      const role = hit?.dataset.hone;
+      dragGhost?.remove();
+      dragGhost = null;
+      if (role === "target" || role === "copy") honeDrop?.(role, id);
+      window.setTimeout(() => {
+        dragMoved = false;
+      }, 0);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  });
+}
+
+function cloneCanvas(source: HTMLCanvasElement): HTMLCanvasElement {
+  const copy = document.createElement("canvas");
+  copy.width = source.width;
+  copy.height = source.height;
+  copy.style.width = source.style.width || `${source.width}px`;
+  copy.style.height = source.style.height || `${source.height}px`;
+  copy.getContext("2d")?.drawImage(source, 0, 0);
+  return copy;
 }
 
 function heroAbilityName(id: string): string {
   return heroAbilityById(id)?.name ?? "Ability";
 }
 
-function line(text: string): HTMLElement {
-  const el = document.createElement("p");
-  el.textContent = text;
-  el.style.margin = "0";
-  el.style.opacity = "0.8";
-  return el;
-}
-
-function honePanel(kit: AuctionKit, loadout: Loadout, hone: Hone, note: HTMLElement, redraw: () => void): HTMLElement {
+function honePanel(
+  kit: AuctionKit,
+  loadout: Loadout,
+  hone: Hone,
+  weapons: Readonly<Partial<Record<WeaponId, HTMLCanvasElement>>>,
+  items: Readonly<Record<string, HTMLCanvasElement>>,
+  abilities: Readonly<Record<string, HTMLCanvasElement>>,
+  redraw: () => void,
+): HTMLElement {
   const box = panel();
   box.append(heading("Sharpen"));
-  const target = instanceById(loadout, hone.target);
-  const copy = instanceById(loadout, hone.copy);
-  const lines = document.createElement("div");
-  lines.style.display = "flex";
-  lines.style.flexDirection = "column";
-  lines.style.gap = "6px";
-  lines.append(
-    line(`Target: ${target ? `${instanceName(target)}, level ${target.level}` : "none"}.`),
-    line(`Copy: ${copy ? `${instanceName(copy)}, level ${copy.level}` : "none"}. The copy's level is not transferred.`),
-    line("Failure destroys both the target and the copy."),
-  );
-  if (hone.result) lines.append(line(hone.result));
   const row = document.createElement("div");
-  row.style.display = "flex";
-  row.style.gap = "8px";
-  row.style.flexWrap = "wrap";
+  row.className = "dungeon-hone";
   row.append(
-    menuButton("Target", () => {
-      hone.pick = "target";
-      redraw();
-    }, hone.pick === "target"),
-    menuButton("Copy", () => {
-      hone.pick = "copy";
-      redraw();
-    }, hone.pick === "copy"),
-    menuButton("Sharpen", () => {
-      if (!hone.target || !hone.copy) {
-        hone.result = "Pick a target and a copy.";
-        redraw();
-        return;
-      }
-      const outcome = sharpen(loadout, hone.target, hone.copy, Math.random);
-      hone.target = null;
-      hone.copy = null;
-      hone.pick = null;
-      hone.result = outcome.ok
-        ? outcome.success
-          ? `Success. Level ${outcome.level}.`
-          : "Failed. Target and copy are gone."
-        : outcome.reason;
-      note.textContent = hone.result;
-      syncKit(kit, loadout);
-      redraw();
-    }, false),
+    honeCell("target", "Item", instanceById(loadout, hone.target), weapons, items, abilities),
+    honeCell("copy", "Copy", instanceById(loadout, hone.copy), weapons, items, abilities),
+    honeCell("made", "Result", instanceById(loadout, hone.made), weapons, items, abilities),
   );
-  box.append(lines, row);
+  const button = menuButton("Sharpen", () => {
+    if (!hone.target || !hone.copy) {
+      hone.result = "Drag an item and a copy into the slots.";
+      redraw();
+      return;
+    }
+    const kept = hone.target;
+    const outcome = sharpen(loadout, hone.target, hone.copy, Math.random);
+    if (!outcome.ok) {
+      hone.result = outcome.reason;
+      redraw();
+      return;
+    }
+    hone.target = null;
+    hone.copy = null;
+    if (outcome.success) {
+      hone.made = kept;
+      hone.result = `Success. Level ${outcome.level}.`;
+    } else {
+      hone.made = null;
+      hone.result = "Failed. Target and copy are gone.";
+    }
+    syncKit(kit, loadout);
+    redraw();
+  }, false);
+  button.classList.add("dungeon-hone-act");
+  box.append(row, button);
   return box;
+}
+
+function honeCell(
+  role: "target" | "copy" | "made",
+  label: string,
+  item: ItemInstance | null | undefined,
+  weapons: Readonly<Partial<Record<WeaponId, HTMLCanvasElement>>>,
+  items: Readonly<Record<string, HTMLCanvasElement>>,
+  abilities: Readonly<Record<string, HTMLCanvasElement>>,
+): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "dungeon-hone-cell";
+  const slot = document.createElement("div");
+  slot.dataset.hone = role;
+  slot.className = item ? "dungeon-slot dungeon-hone-slot" : "dungeon-slot dungeon-slot-empty dungeon-hone-slot";
+  if (item?.kind === "gear") {
+    const gear = itemById(item.catalogId);
+    if (gear) slot.className += rarityClass(gear.rarity);
+  }
+  if (item) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 72;
+    canvas.height = 72;
+    canvas.style.width = "72px";
+    canvas.style.height = "72px";
+    paintInstanceIcon(canvas, item, weapons, items, abilities);
+    stampLevel(canvas, item.level);
+    slot.append(canvas);
+    if (item.kind === "weapon") bindWeaponTip(slot, weaponById(item.catalogId as WeaponId));
+    else if (item.kind === "gear") {
+      const gear = itemById(item.catalogId);
+      bindTip(slot, gear?.name ?? "Item", gear ? gearLine(gear, item.level) : "", rarityNameColor(gear?.rarity));
+    } else {
+      const tip = abilityTip(item.catalogId, abilityAmount(item), item.level, abilitySplash(item));
+      bindTip(slot, tip.name, tip.text);
+    }
+  }
+  const caption = document.createElement("span");
+  caption.className = "dungeon-hone-label";
+  caption.textContent = label;
+  wrap.append(slot, caption);
+  return wrap;
+}
+
+function paintInstanceIcon(
+  canvas: HTMLCanvasElement,
+  item: ItemInstance,
+  weapons: Readonly<Partial<Record<WeaponId, HTMLCanvasElement>>>,
+  items: Readonly<Record<string, HTMLCanvasElement>>,
+  abilities: Readonly<Record<string, HTMLCanvasElement>>,
+): void {
+  if (item.kind === "weapon") paintWeaponIcon(canvas, weapons[item.catalogId as WeaponId]);
+  else if (item.kind === "gear") paintItemIcon(canvas, items[item.catalogId]);
+  else paintItemIcon(canvas, abilities[item.catalogId]);
 }
 
 function syncKit(kit: AuctionKit, loadout: Loadout): void {
@@ -448,7 +560,14 @@ function paintInventory(
   const note = document.createElement("div");
   note.style.minHeight = "1.2em";
   note.style.opacity = "0.85";
-  const redraw = (): void => paintInventory(host, kit, loadout, shelf, hone, onBack, gold, weapons, items, abilities);
+  const redraw = (): void => {
+    saveLoadout(loadout);
+    paintInventory(host, kit, loadout, shelf, hone, onBack, gold, weapons, items, abilities);
+  };
+  honeDrop = (slot, id) => {
+    placeHone(loadout, hone, slot, id);
+    redraw();
+  };
   const columns = document.createElement("div");
   columns.className = "dungeon-columns";
   const left = document.createElement("div");
@@ -456,10 +575,11 @@ function paintInventory(
   const right = document.createElement("div");
   right.className = "dungeon-stack";
   left.append(heroCard(wornGearBonus(loadout)), equipmentRow(kit, loadout, hone, weapons, items, note, redraw), slotRow(loadout, hone, abilities, note, redraw));
-  right.append(bankRow(kit, loadout, shelf, hone, gold, weapons, items, abilities, note, redraw), honePanel(kit, loadout, hone, note, redraw));
+  right.append(bankRow(kit, loadout, shelf, hone, gold, weapons, items, abilities, note, redraw), honePanel(kit, loadout, hone, weapons, items, abilities, redraw));
   columns.append(left, right);
   const back = menuButton("Back", onBack, false);
   back.classList.add("dungeon-back");
+  if (hone.result) note.textContent = hone.result;
   page.append(screenTitle("Inventory"), columns, note);
   host.append(back, page);
 }
@@ -523,9 +643,7 @@ function equipmentRow(
     paintWeaponIcon(icon, weapons[weaponInst.catalogId as WeaponId]);
     stampLevel(icon, weaponInst.level);
     bindWeaponTip(weaponSlot, worn);
-    weaponSlot.addEventListener("click", () => {
-      if (claim(loadout, hone, weaponInst.id)) redraw();
-    });
+    armDrag(weaponSlot, weaponInst.id);
   }
   row.append(weaponSlot);
   for (let i = 0; i < EQUIPMENT_SLOTS; i += 1) {
@@ -555,12 +673,9 @@ function equipmentRow(
       slot.style.fontSize = "13px";
     }
     slot.addEventListener("click", () => {
+      if (dragMoved) return;
       if (!wornId || !wornInst) {
         note.textContent = "Empty slot. Equip an item from storage.";
-        return;
-      }
-      if (claim(loadout, hone, wornInst.id)) {
-        redraw();
         return;
       }
       loadout.worn[i] = null;
@@ -568,6 +683,7 @@ function equipmentRow(
       redraw();
     });
     bindTip(slot, wornItem?.name ?? "Equipment", wornItem && wornInst ? gearLine(wornItem, wornInst.level) : "Empty slot.", rarityNameColor(wornItem?.rarity));
+    if (wornInst) armDrag(slot, wornInst.id);
     row.append(slot);
   }
   box.append(row);
@@ -612,11 +728,8 @@ function bankRow(
   for (let i = 0; i < cells; i += 1) {
     const item = visible[i];
     const slot = iconButton(() => {
+      if (dragMoved) return;
       if (!item || item.kind === "gold") return;
-      if (claim(loadout, hone, item.id)) {
-        redraw();
-        return;
-      }
       if (item.kind === "weapon") {
         loadout.weapon = item.id;
         syncKit(kit, loadout);
@@ -663,6 +776,7 @@ function bankRow(
       const tip = abilityTip(item.catalogId, worn ? abilityAmount(worn) : 0, item.level, worn ? abilitySplash(worn) : 0);
       bindTip(slot.button, tip.name, tip.text);
     }
+    if (item && item.kind !== "gold") armDrag(slot.button, item.id);
     row.append(slot.button);
   }
   box.append(lead, row);
@@ -896,18 +1010,16 @@ function slotRow(
       slot.append(canvas);
       const tip = abilityTip(wornInst.catalogId, abilityAmount(wornInst), wornInst.level, abilitySplash(wornInst));
       bindTip(slot, tip.name, tip.text);
+      armDrag(slot, wornInst.id);
     } else {
       slot.textContent = "Empty";
       slot.style.fontSize = "13px";
       bindTip(slot, "Ability", "Empty slot.");
     }
     slot.addEventListener("click", () => {
+      if (dragMoved) return;
       if (!wornInst) {
         note.textContent = "Empty slot. Take an ability from storage.";
-        return;
-      }
-      if (claim(loadout, hone, wornInst.id)) {
-        redraw();
         return;
       }
       loadout.wornAbilities[i] = null;

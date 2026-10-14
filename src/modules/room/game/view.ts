@@ -528,6 +528,46 @@ function drawCoin(ctx: CanvasRenderingContext2D, sprite: HTMLCanvasElement, cx: 
   ctx.drawImage(sprite, cx - w / 2, cy - h / 2, w, h);
 }
 
+function drawChest(
+  ctx: CanvasRenderingContext2D,
+  box: Box,
+  sprites: Sprites,
+  chest: RoomState["chests"][number],
+): void {
+  const art = sprites.props[chest.kind];
+  if (!art) return;
+  const { size, ox, oy } = box;
+  const fit = (size * (chest.open ? 0.62 : 0.84)) / Math.max(art.width, art.height);
+  const w = art.width * fit;
+  const h = art.height * fit;
+  ctx.save();
+  ctx.globalAlpha = chest.open ? 0.45 : 1;
+  ctx.drawImage(art, ox + chest.x * size + (size - w) / 2, oy + chest.y * size + (size - h) / 2, w, h);
+  ctx.restore();
+}
+
+function drawLoot(
+  ctx: CanvasRenderingContext2D,
+  box: Box,
+  sprites: Sprites,
+  loot: RoomState["loot"],
+): void {
+  for (const drop of loot) {
+    const art =
+      drop.kind === "weapon"
+        ? sprites.weapons[drop.catalogId as WeaponId]
+        : drop.kind === "ability"
+          ? sprites.abilities[drop.catalogId]
+          : sprites.items[drop.catalogId];
+    if (!art) continue;
+    const { size, ox, oy } = box;
+    const cx = ox + (drop.x + 0.5) * size;
+    const cy = oy + (drop.y + 0.55) * size;
+    const fit = (size * 0.72) / Math.max(art.width, art.height);
+    ctx.drawImage(art, cx - (art.width * fit) / 2, cy - (art.height * fit) / 2, art.width * fit, art.height * fit);
+  }
+}
+
 function drawGold(
   ctx: CanvasRenderingContext2D,
   box: Box,
@@ -1036,14 +1076,16 @@ export class RoomRenderer {
     const pattern = this.patternFor(ctx, sprites);
     if (pattern) alignWallPattern(pattern, box, sprites);
     const blinks = aimBlink ? blinkCells(state) : (state.aim ?? []);
-    const abilityAiming = !aimBlink && (state.aim?.length ?? 0) > 0;
+    const abilityAiming = !aimBlink && state.aim !== null;
     const attacks = state.outcome !== "lost" && !aimBlink && !abilityAiming ? attackCells(state) : [];
     const portal = map?.rooms[map.current]?.portal ?? null;
     const exit = map?.exit ?? null;
     drawGround(ctx, box, state, time);
     drawFloorEffects(ctx, box, attacks, blinks, portal, time, exit);
     for (const barrel of state.barrels) drawBarrel(ctx, box, sprites, barrel.x, barrel.y);
+    for (const chest of state.chests) drawChest(ctx, box, sprites, chest);
     drawGold(ctx, box, sprites.gold, state.piles, (pile) => this.coinInFlight(pile, time));
+    drawLoot(ctx, box, sprites, state.loot);
     for (const coin of this.coins) drawCoinToss(ctx, box, sprites.gold, coin, time);
 
     const heroRow = Math.round(poses.hero.y);
@@ -1088,8 +1130,10 @@ export class RoomRenderer {
       if (monster.hp <= 0 || !pose || monster.mode === "gone" || monster.mode === "under" || monster.mode === "air") return;
       const cx = box.ox + (pose.x + 0.5) * box.size;
       const my = box.oy + pose.y * box.size;
-      if (monster.maxShield > 0) drawArmorBadge(ctx, cx, my - box.size * 0.16, box.size, monster.shield);
-      drawHpBar(ctx, cx, my + box.size * 0.84, box.size, monster.hp, monster.maxHp);
+      if (monster.mode !== "passive") {
+        if (monster.maxShield > 0) drawArmorBadge(ctx, cx, my - box.size * 0.16, box.size, monster.shield);
+        drawHpBar(ctx, cx, my + box.size * 0.84, box.size, monster.hp, monster.maxHp);
+      }
       drawStatus(ctx, box, pose, monster, time);
     });
     if (state.hero.hp > 0) {

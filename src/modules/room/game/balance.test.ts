@@ -163,7 +163,7 @@ hoard.monster.maxShield = 0;
 attack(hoard, () => 0);
 assert.equal(hoard.piles.length, RARE_GOLD);
 
-// Новая лужа лежит 7 ходов. Ход появления уже списывает один.
+// Новая лужа лежит puddleTurns ходов. Ход появления уже списывает один.
 const fade = room("2");
 fade.monster.x = 6;
 wait(fade, () => 0);

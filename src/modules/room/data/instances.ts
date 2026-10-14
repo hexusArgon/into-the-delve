@@ -1,6 +1,6 @@
 import { itemById, EQUIPMENT_SLOTS, type GearBonus, EMPTY_GEAR } from "./items.ts";
 import { HERO_ABILITIES, heroAbilityById } from "./hero-abilities.ts";
-import { weaponById, type WeaponId } from "./weapons.ts";
+import { WEAPONS, weaponById, type WeaponId } from "./weapons.ts";
 import { armorFactor } from "../game/rules.ts";
 
 /** Успех одной попытки. Провал — остаток. Накопления нет. */
@@ -82,6 +82,72 @@ export function freshLoadout(weapon: WeaponId = "sword"): Loadout {
   addInstance(loadout, "gear", "belt");
   addInstance(loadout, "gear", "belt");
   return loadout;
+}
+
+const LOADOUT_KEY = "dungeon-loadout";
+
+function catalogOk(kind: InstanceKind, catalogId: string): boolean {
+  if (kind === "weapon") return WEAPONS.some((weapon) => weapon.id === catalogId);
+  if (kind === "gear") return itemById(catalogId) !== undefined;
+  return heroAbilityById(catalogId) !== undefined;
+}
+
+/** Надетое и мешок. Без хранилища остаётся стартовый набор. */
+export function saveLoadout(loadout: Loadout): void {
+  try {
+    localStorage.setItem(LOADOUT_KEY, JSON.stringify(loadout));
+  } catch {
+    /* приватный режим или тест без браузера */
+  }
+}
+
+export function storedLoadout(weapon: WeaponId = "sword"): Loadout {
+  try {
+    const raw = localStorage.getItem(LOADOUT_KEY);
+    if (!raw) return freshLoadout(weapon);
+    return parseLoadout(JSON.parse(raw), weapon);
+  } catch {
+    return freshLoadout(weapon);
+  }
+}
+
+function parseLoadout(data: unknown, weapon: WeaponId): Loadout {
+  if (!data || typeof data !== "object") return freshLoadout(weapon);
+  const row = data as Partial<Loadout>;
+  if (!Array.isArray(row.items)) return freshLoadout(weapon);
+  const items: ItemInstance[] = [];
+  for (const item of row.items) {
+    if (!item || typeof item !== "object") continue;
+    const piece = item as Partial<ItemInstance>;
+    if (typeof piece.id !== "string" || typeof piece.catalogId !== "string") continue;
+    if (piece.kind !== "gear" && piece.kind !== "weapon" && piece.kind !== "ability") continue;
+    if (!catalogOk(piece.kind, piece.catalogId)) continue;
+    const level = typeof piece.level === "number" && piece.level >= 0 ? Math.min(SHARPEN_CAP, Math.floor(piece.level)) : 0;
+    if (items.some((have) => have.id === piece.id)) continue;
+    items.push({ id: piece.id, catalogId: piece.catalogId, kind: piece.kind, level });
+  }
+  if (items.length === 0) return freshLoadout(weapon);
+  const known = new Set(items.map((item) => item.id));
+  const slot = (id: unknown): string | null => (typeof id === "string" && known.has(id) ? id : null);
+  const worn = Array.from({ length: EQUIPMENT_SLOTS }, (_, index) => slot(Array.isArray(row.worn) ? row.worn[index] : null));
+  const wornAbilities = Array.from({ length: 4 }, (_, index) => slot(Array.isArray(row.wornAbilities) ? row.wornAbilities[index] : null));
+  for (let index = 0; index < worn.length; index += 1) {
+    const inst = items.find((item) => item.id === worn[index]);
+    if (inst && inst.kind !== "gear") worn[index] = null;
+  }
+  for (let index = 0; index < wornAbilities.length; index += 1) {
+    const inst = items.find((item) => item.id === wornAbilities[index]);
+    if (inst && inst.kind !== "ability") wornAbilities[index] = null;
+  }
+  let held = slot(row.weapon);
+  const heldInst = items.find((item) => item.id === held);
+  if (!heldInst || heldInst.kind !== "weapon") held = null;
+  let nextId = typeof row.nextId === "number" && row.nextId > 0 ? Math.floor(row.nextId) : 1;
+  for (const item of items) {
+    const n = Number(item.id.slice(1));
+    if (Number.isFinite(n) && n >= nextId) nextId = n + 1;
+  }
+  return { nextId, items, weapon: held, worn, wornAbilities };
 }
 
 export function wornGearBonus(loadout: Loadout): GearBonus {

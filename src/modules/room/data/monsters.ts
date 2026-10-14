@@ -22,8 +22,8 @@ export const ELEMENTS = {
   wetFactor: 1.5,
   iceStun: 1,
   iceStunCooldown: 3,
-  /** Новая лужа живёт столько ходов, потом клетка снова обычная. */
-  puddleTurns: 7,
+  /** Новая лужа живёт столько ходов, потом клетка снова обычная. Было 7, дизайнер прибавил 2 всем типам, включая яд. */
+  puddleTurns: 9,
 } as const;
 
 export type MonsterRole =
@@ -78,14 +78,14 @@ export const KIT = {
   slime: { steps: 2, stacks: 1 },
   skeleton: { reach: 2, depth: 2, width: 3, delay: 1, damage: 35, cooldown: 4 },
   spirit: { damage: 20, cooldown: 3, delay: 1 },
-  goblin: { dash: 2, damage: 20, cooldown: 2 },
+  goblin: { dash: 2, damage: 20, cooldown: 2, delay: 1 },
   mushroom: { keep: 4, cooldown: 3 },
   spore: { fuse: 1, radius: 1, stacks: 1 },
   ember: { pause: 1, delay: 1, radius: 1, damage: 40, cooldown: 7 },
   worm: { delay: 2, radius: 1, damage: 70, push: 2, cooldown: 6 },
   /** Аура — квадрат 15×15 вокруг послушника: так решил дизайнер, лист пишет 8×8. */
   acolyte: { delay: 2, radius: 1, root: 2, cooldown: 7, aura: 7, vampirism: 1 },
-  hound: { dash: 4, damage: 30, cooldown: 4 },
+  hound: { dash: 4, damage: 30, cooldown: 4, delay: 1 },
   chest: { reach: 4, delay: 1, radius: 1, stun: 3 },
   gargoyle: { stones: 4, delay: 1, stone: 35, stonePush: 1, landDelay: 1, radius: 1, land: 90, landPush: 1, rest: 5 },
   drowned: { rings: 4, geyser: 40, geyserCooldown: 8, throwDelay: 1, radius: 1, throwDamage: 30, throwStun: 1, throwCooldown: 2 },
@@ -98,6 +98,8 @@ const BITE = 10;
 const RARE_BITE = 20;
 export const MONSTER_GOLD = 5;
 export const RARE_GOLD = 10;
+/** Сундук комнаты. Число временное, его поменяют отдельно. */
+export const CHEST_GOLD = 5;
 
 function row(
   id: string,

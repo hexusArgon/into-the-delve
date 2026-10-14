@@ -238,6 +238,7 @@ const arrow = open("arrow", [
 assert.equal(cast(arrow, { x: 3, y: 6 }), true);
 assert.equal(arrow.monsters[0]!.hp, arrow.monsters[0]!.maxHp - 100 - 1);
 assert.equal(arrow.monsters[0]!.poison, 1);
+assert.equal(arrow.monsters[0]!.shield, arrow.monsters[0]!.maxShield - 1);
 assert.equal(arrow.monsters[1]!.hp, arrow.monsters[1]!.maxHp);
 assert.equal(arrow.monsters[1]!.poison, 0);
 assert.equal(groundAt(arrow, 6, 6), null);

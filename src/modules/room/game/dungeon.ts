@@ -528,7 +528,7 @@ function drawPropSprite(
 
 function drawDecor(ctx: CanvasRenderingContext2D, box: Box, room: RoomLayout, sprites: Sprites, doors: readonly { x: number; y: number }[]): void {
   for (const decor of room.decor) drawPropSprite(ctx, box, sprites.bones, decor.x, decor.y, 0.62, false);
-  const props = scatterInterior(room, doors).filter((prop) => prop.kind !== "barrel");
+  const props = scatterInterior(room, doors).filter((prop) => prop.kind !== "barrel" && prop.kind !== "chest" && prop.kind !== "cellchest");
   const flat = props.filter((prop) => prop.kind === "blood" || prop.kind === "web");
   const rest = props.filter((prop) => prop.kind !== "blood" && prop.kind !== "web");
   for (const prop of [...flat, ...rest]) {

@@ -1,6 +1,6 @@
 import { RoomRenderer } from "./view.ts";
 import { loadSprites, type Sprites } from "./sprites.ts";
-import { abilityAim, attack, blink, blinkCells, castHeroAbility, face, livingMonsters, reload, roomMonsters, step, wait, type Dir, type RoomState } from "./sim.ts";
+import { abilityAim, arrowBeam, attack, blink, blinkCells, castHeroAbility, face, livingMonsters, nearestAim, reload, roomMonsters, step, wait, type Dir, type RoomState } from "./sim.ts";
 import { abilityTip } from "../data/hero-abilities.ts";
 import { bindTip } from "./tip.ts";
 import { EMPTY_GEAR, type GearBonus } from "../data/items.ts";
@@ -64,6 +64,37 @@ function newSeed(): number {
   return Math.floor(Math.random() * 2 ** 31);
 }
 
+function prompt(key: string, label: string): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "dungeon-prompt";
+  const kbd = document.createElement("kbd");
+  kbd.textContent = key;
+  const text = document.createElement("span");
+  text.textContent = label;
+  row.append(kbd, text);
+  return row;
+}
+
+function paintBlinkIcon(canvas: HTMLCanvasElement): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2 - 2;
+  const r = canvas.width * 0.26;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r);
+  ctx.lineTo(cx + r, cy);
+  ctx.lineTo(cx, cy + r);
+  ctx.lineTo(cx - r, cy);
+  ctx.closePath();
+  ctx.fillStyle = "#1f6f72";
+  ctx.strokeStyle = "#d4bc82";
+  ctx.lineWidth = 2;
+  ctx.fill();
+  ctx.stroke();
+}
+
 export class RoomController {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -96,6 +127,10 @@ export class RoomController {
   private readonly mpText: HTMLElement;
   private readonly listeners = new Set<() => void>();
   private readonly abilityButtons: HTMLButtonElement[] = [];
+  private readonly weaponIcon: HTMLCanvasElement;
+  private readonly ammoBadge: HTMLElement;
+  private readonly blinkButton: HTMLButtonElement;
+  private readonly blinkBadge: HTMLElement;
   private readonly onKey: (event: KeyboardEvent) => void;
   private readonly onKeyUp: (event: KeyboardEvent) => void;
   private readonly onBlur: () => void;
@@ -119,6 +154,7 @@ export class RoomController {
     lesson: LessonHooks | null = null,
     weaponHit: number | null = null,
     abilities: (RunAbility | null)[] = [],
+    private readonly adventure = 0,
   ) {
     this.onHub = onHub;
     this.host = host;
@@ -128,7 +164,7 @@ export class RoomController {
     this.gear = lesson ? EMPTY_GEAR : gear;
     this.weaponHit = lesson ? null : weaponHit;
     this.abilities = lesson ? [] : abilities;
-    this.run = lesson ? tutorialRun(this.lessonStep) : createRun(this.seed, weapon, gear, this.weaponHit, this.abilities);
+    this.run = lesson ? tutorialRun(this.lessonStep) : createRun(this.seed, weapon, gear, this.weaponHit, this.abilities, this.adventure);
     host.replaceChildren();
     host.className = "dungeon";
     host.style.display = "flex";
@@ -148,87 +184,61 @@ export class RoomController {
 
     const bar = document.createElement("div");
     bar.className = "dungeon-hud";
-    bar.style.display = "flex";
-    bar.style.flexWrap = "wrap";
-    bar.style.gap = "8px";
-    bar.style.alignItems = "center";
-    bar.style.padding = "10px";
-    bar.style.paddingLeft = "340px";
 
-    this.stats = document.createElement("div");
-    this.stats.style.flex = "1 1 180px";
-    this.note = document.createElement("div");
-    this.note.style.flexBasis = "100%";
-
-    const portrait = document.createElement("div");
-    portrait.className = "dungeon-portrait";
-    portrait.style.position = "absolute";
-    portrait.style.left = "16px";
-    portrait.style.bottom = "16px";
-    portrait.style.zIndex = "2";
-    portrait.style.display = "flex";
-    portrait.style.alignItems = "center";
-    portrait.style.gap = "10px";
-    portrait.style.padding = "12px 16px";
-
+    const left = document.createElement("div");
+    left.className = "dungeon-hud-left";
     this.portrait = document.createElement("canvas");
-    this.portrait.width = 144;
-    this.portrait.height = 144;
-    this.portrait.className = "dungeon-icon";
-    this.portrait.style.width = "144px";
-    this.portrait.style.height = "144px";
+    this.portrait.width = 192;
+    this.portrait.height = 192;
+    this.portrait.className = "dungeon-portrait-face";
 
-    const meters = document.createElement("div");
-    meters.style.display = "flex";
-    meters.style.flexDirection = "column";
-    meters.style.gap = "6px";
-    meters.style.minWidth = "120px";
-
-    const meterRow = (label: string, color: string): { row: HTMLElement; fill: HTMLElement; text: HTMLElement; title: HTMLElement } => {
+    const bars = document.createElement("div");
+    bars.className = "dungeon-bars";
+    const barRow = (color: string): { row: HTMLElement; fill: HTMLElement; text: HTMLElement } => {
       const row = document.createElement("div");
-      const title = document.createElement("div");
-      title.textContent = label;
-      title.style.fontSize = "11px";
-      title.style.letterSpacing = "0.12em";
-      title.style.textTransform = "uppercase";
-      title.style.color = "#9a8d78";
-      const track = document.createElement("div");
-      track.className = "dungeon-meter";
+      row.className = "dungeon-bar";
       const fill = document.createElement("div");
       fill.className = color;
-      fill.style.width = "100%";
-      track.append(fill);
-      const text = document.createElement("div");
-      text.style.fontSize = "12px";
-      row.append(title, track, text);
-      return { row, fill, text, title };
+      const text = document.createElement("span");
+      text.className = "dungeon-bar-num";
+      row.append(fill, text);
+      return { row, fill, text };
     };
-
-    const hp = meterRow("HP", "dungeon-hp");
-    const mp = meterRow("", "dungeon-mp");
+    const hp = barRow("dungeon-hp");
+    const mp = barRow("dungeon-mp");
     this.hpFill = hp.fill;
     this.hpText = hp.text;
     this.mpFill = mp.fill;
-    this.mpText = mp.title;
-    mp.text.style.display = "none";
-    meters.append(hp.row, mp.row);
-    portrait.append(this.portrait, meters);
+    this.mpText = mp.text;
+    this.stats = document.createElement("div");
+    this.stats.className = "dungeon-hud-meta";
+    bars.append(hp.row, mp.row, this.stats);
 
-    const hint = document.createElement("div");
-    hint.style.flexBasis = "100%";
-    hint.style.opacity = "0.75";
-    hint.textContent = "Hold WASD or arrows to walk · Shift+WASD or arrows to turn · LMB attack · RMB Blink, again to cancel · 1–4 ability · R reload · X wait · Tab map · Esc menu";
+    const center = document.createElement("div");
+    center.className = "dungeon-hud-center";
+    this.note = document.createElement("div");
+    this.note.className = "dungeon-hud-note";
+    const prompts = document.createElement("div");
+    prompts.className = "dungeon-prompts";
+    prompts.append(prompt("Shift", "Turn"), prompt("X", "Wait"));
+    center.append(this.note, prompts);
 
-    const abilityBar = this.mountAbilityBar();
-    if (lesson) bar.append(this.stats, hint, this.note);
-    else bar.append(abilityBar, this.stats, hint, this.note);
-    host.append(this.canvas, bar, portrait);
+    const hands = this.mountGear();
+    this.weaponIcon = hands.weaponIcon;
+    this.ammoBadge = hands.ammoBadge;
+    this.blinkButton = hands.blinkButton;
+    this.blinkBadge = hands.blinkBadge;
+
+    left.append(this.portrait, bars, this.mountAbilityBar());
+    bar.append(left, center, hands.row);
+    host.append(this.canvas, bar);
     const leave = lesson ? () => this.lesson?.dead(this.lessonStep) : onHub;
     if (leave) this.lostPanel = this.lostBanner(leave);
     if (this.lostPanel) host.append(this.lostPanel);
     if (lesson) this.mountLesson();
 
     this.canvas.addEventListener("pointerdown", (event) => this.onPointer(event));
+    this.canvas.addEventListener("pointermove", (event) => this.onHover(event));
     this.onKey = (event) => this.handleKey(event);
     this.onKeyUp = (event) => this.handleKeyUp(event);
     this.onBlur = () => this.releaseMoves();
@@ -241,8 +251,13 @@ export class RoomController {
     void loadSprites().then((sprites) => {
       this.sprites = sprites;
       const portrait = this.portrait.getContext("2d");
-      portrait?.clearRect(0, 0, this.portrait.width, this.portrait.height);
-      portrait?.drawImage(sprites.hero, 16, 8, 112, 128);
+      if (portrait) {
+        portrait.clearRect(0, 0, this.portrait.width, this.portrait.height);
+        const art = sprites.hero;
+        const crop = Math.min(art.width, art.height * 0.62);
+        portrait.drawImage(art, (art.width - crop) / 2, 0, crop, crop, 0, 0, this.portrait.width, this.portrait.height);
+      }
+      this.paintLoadout();
       this.paintAbilityBar();
       this.paintLessonWeapons();
       this.draw();
@@ -270,8 +285,27 @@ export class RoomController {
     return this.floorsCleared + (this.run.exit ? 1 : 0);
   }
 
+  /** Уровень, который выбрали в меню перед забегом. */
+  get pickedLevel(): number {
+    return this.adventure;
+  }
+
+  /** Портал в хаб уже открыт: этаж зачищен. */
+  get floorCleared(): boolean {
+    return this.run.exit !== null;
+  }
+
   get carriedGold(): number {
     return this.state.carried;
+  }
+
+  /** Поднятые шмотки. С зачищенного этажа забирается и та, что ещё лежит на полу. */
+  get spoils(): { kind: RoomState["found"][number]["kind"]; catalogId: string }[] {
+    const list = this.state.found.map((item) => ({ kind: item.kind, catalogId: item.catalogId }));
+    if (this.state.outcome === "won") {
+      for (const loot of this.state.loot) list.push({ kind: loot.kind, catalogId: loot.catalogId });
+    }
+    return list;
   }
 
   private commit(): void {
@@ -613,6 +647,22 @@ export class RoomController {
     });
   }
 
+  private syncArrowAim(): void {
+    const ability = this.abilitySlot === null ? null : this.state.abilities[this.abilitySlot];
+    if (!ability || ability.cast !== "arrow") return;
+    this.state.aim = this.state.look ? arrowBeam(this.state, this.state.look) : [];
+  }
+
+  private onHover(event: PointerEvent): void {
+    if (this.pause || this.mapOpen || this.state.outcome === "lost") return;
+    const cell = this.cellFromEvent(event);
+    const look = cell ? nearestAim(this.state.hero, cell) : null;
+    const prev = this.state.look;
+    if (look?.x === prev?.x && look?.y === prev?.y) return;
+    this.state.look = look;
+    this.syncArrowAim();
+  }
+
   private onPointer(event: PointerEvent): void {
     if (this.pause) return;
     if (this.mapOpen) {
@@ -631,6 +681,21 @@ export class RoomController {
         return;
       }
       if (event.button !== 0) return;
+      const armed = this.state.abilities[this.abilitySlot];
+      if (armed?.cast === "arrow") {
+        if (!cell || !nearestAim(this.state.hero, cell)) return;
+        this.state.look = nearestAim(this.state.hero, cell);
+        const places = this.places();
+        const cast = castHeroAbility(this.state, this.abilitySlot, cell);
+        this.abilitySlot = null;
+        this.state.aim = null;
+        if (cast) {
+          this.playMoves(places);
+          this.commit();
+        }
+        this.refresh();
+        return;
+      }
       const aim = this.state.aim ?? [];
       if (cell && aim.some((spot) => spot.x === cell.x && spot.y === cell.y)) {
         const places = this.places();
@@ -647,22 +712,7 @@ export class RoomController {
     }
     if (event.button === 2) {
       event.preventDefault();
-      if (this.lesson && !lessonAllows(this.lessonStep, "blink")) return;
-      if (this.choosingBlink) {
-        this.choosingBlink = false;
-        this.state.note = "Blink cancelled.";
-        this.refresh();
-        return;
-      }
-      if (this.state.blink <= 0) {
-        this.choosingBlink = false;
-        this.state.note = "Blink is spent.";
-        this.refresh();
-        return;
-      }
-      this.choosingBlink = true;
-      this.state.note = "Pick a Blink cell with the left button.";
-      this.refresh();
+      this.toggleBlink();
       return;
     }
     if (event.button !== 0) return;
@@ -697,6 +747,7 @@ export class RoomController {
       return;
     }
     this.choosingBlink = false;
+    if (cell) this.state.look = nearestAim(this.state.hero, cell);
     const dir = cell ? this.dirToward(cell.x, cell.y) : null;
     if (dir) face(this.state, dir);
     this.attack();
@@ -783,6 +834,63 @@ export class RoomController {
     return button;
   }
 
+  private mountGear(): {
+    row: HTMLElement;
+    weaponIcon: HTMLCanvasElement;
+    ammoBadge: HTMLElement;
+    blinkButton: HTMLButtonElement;
+    blinkBadge: HTMLElement;
+  } {
+    const row = document.createElement("div");
+    row.className = "dungeon-hud-right";
+
+    const weapon = document.createElement("div");
+    weapon.className = "dungeon-slot dungeon-gear-slot";
+    const weaponIcon = document.createElement("canvas");
+    weaponIcon.width = 96;
+    weaponIcon.height = 96;
+    weaponIcon.className = "dungeon-ability-icon";
+    const weaponKey = document.createElement("span");
+    weaponKey.className = "dungeon-ability-key";
+    weaponKey.textContent = "LMB";
+    const ammoBadge = document.createElement("span");
+    ammoBadge.className = "dungeon-slot-count";
+    weapon.append(weaponIcon, weaponKey, ammoBadge);
+    bindTip(
+      weapon,
+      () => weaponById(this.state.weapon).name,
+      () => {
+        const worn = weaponById(this.state.weapon);
+        const ammo = worn.magazine === null ? "" : `\n${this.state.ammo ?? worn.magazine}/${worn.magazine}. R reloads.`;
+        return `${worn.figure} Left-click a tile to attack.${ammo}`;
+      },
+    );
+
+    const blinkButton = document.createElement("button");
+    blinkButton.type = "button";
+    blinkButton.className = "dungeon-slot dungeon-gear-slot";
+    const blinkIcon = document.createElement("canvas");
+    blinkIcon.width = 96;
+    blinkIcon.height = 96;
+    blinkIcon.className = "dungeon-ability-icon";
+    paintBlinkIcon(blinkIcon);
+    const blinkKey = document.createElement("span");
+    blinkKey.className = "dungeon-ability-key";
+    blinkKey.textContent = "RMB";
+    const blinkBadge = document.createElement("span");
+    blinkBadge.className = "dungeon-slot-count";
+    blinkButton.append(blinkIcon, blinkKey, blinkBadge);
+    blinkButton.addEventListener("click", () => this.toggleBlink());
+    bindTip(
+      blinkButton,
+      "Blink",
+      () => `${this.state.blink} charges. Right-click, then left-click a lit cell. Right-click again cancels.`,
+    );
+
+    row.append(weapon, blinkButton);
+    return { row, weaponIcon, ammoBadge, blinkButton, blinkBadge };
+  }
+
   private mountAbilityBar(): HTMLElement {
     const bar = document.createElement("div");
     bar.className = "dungeon-ability-bar";
@@ -791,8 +899,8 @@ export class RoomController {
       button.type = "button";
       button.className = "dungeon-slot dungeon-ability";
       const icon = document.createElement("canvas");
-      icon.width = 48;
-      icon.height = 48;
+      icon.width = 96;
+      icon.height = 96;
       icon.className = "dungeon-ability-icon";
       const key = document.createElement("span");
       key.className = "dungeon-ability-key";
@@ -835,6 +943,41 @@ export class RoomController {
       }
       button.setAttribute("aria-label", ability ? ability.name : `${slot + 1}: empty`);
     }
+    this.paintLoadout();
+  }
+
+  private paintLoadout(): void {
+    paintWeaponIcon(this.weaponIcon, this.sprites?.weapons[this.state.weapon]);
+    const worn = weaponById(this.state.weapon);
+    const shots = worn.magazine === null ? null : (this.state.ammo ?? worn.magazine);
+    this.ammoBadge.hidden = shots === null;
+    this.ammoBadge.textContent = shots === null ? "" : String(shots);
+    this.blinkBadge.textContent = String(this.state.blink);
+    this.blinkButton.classList.toggle("is-armed", this.choosingBlink);
+    this.blinkButton.setAttribute("aria-label", `Blink ${this.state.blink}`);
+  }
+
+  private toggleBlink(): void {
+    if (this.pause || this.mapOpen || this.host.querySelector(".dungeon-settings")) return;
+    if (this.locked() || this.state.outcome === "lost") return;
+    if (this.lesson && !lessonAllows(this.lessonStep, "blink")) return;
+    if (this.choosingBlink) {
+      this.choosingBlink = false;
+      this.state.note = "Blink cancelled.";
+      this.refresh();
+      return;
+    }
+    if (this.state.blink <= 0) {
+      this.choosingBlink = false;
+      this.state.note = "Blink is spent.";
+      this.refresh();
+      return;
+    }
+    this.abilitySlot = null;
+    this.state.aim = null;
+    this.choosingBlink = true;
+    this.state.note = "Pick a Blink cell with the left button.";
+    this.refresh();
   }
 
   private pressAbility(slot: number): void {
@@ -856,7 +999,21 @@ export class RoomController {
       this.refresh();
       return;
     }
-    const aimed = ability.cast === "bolt" || ability.cast === "quake" || ability.cast === "shard" || ability.cast === "arrow";
+    if (ability.cast === "arrow") {
+      if (this.abilitySlot === slot) {
+        this.abilitySlot = null;
+        this.state.aim = null;
+        this.refresh();
+        return;
+      }
+      this.choosingBlink = false;
+      this.abilitySlot = slot;
+      this.syncArrowAim();
+      this.state.note = `${ability.name}: aim with the cursor.`;
+      this.refresh();
+      return;
+    }
+    const aimed = ability.cast === "bolt" || ability.cast === "quake" || ability.cast === "shard";
     if (aimed) {
       if (this.abilitySlot === slot) {
         this.abilitySlot = null;
@@ -875,7 +1032,7 @@ export class RoomController {
       }
       this.abilitySlot = slot;
       this.state.aim = cells;
-      this.state.note = ability.cast === "arrow" ? `${ability.name}: pick a direction.` : `${ability.name}: pick a cell.`;
+      this.state.note = `${ability.name}: pick a cell.`;
       this.refresh();
       return;
     }
@@ -969,10 +1126,7 @@ export class RoomController {
   }
 
   private refresh(): void {
-    const meter =
-      this.state.meterTurns > 0
-        ? `Meter ${this.state.meterTurns}/${METER_TURNS}`
-        : "Meter idle";
+    const meter = this.state.meterTurns > 0 ? ` · Meter ${this.state.meterTurns}/${METER_TURNS}` : "";
     this.hpText.textContent = `${shownHp(this.state.hero.hp)}/${shownHp(this.state.hero.maxHp)}`;
     this.hpFill.style.width = `${Math.max(0, this.state.hero.hp / this.state.hero.maxHp) * 100}%`;
     this.mpText.textContent = `${this.state.mp}/${this.state.maxMp}`;
@@ -981,9 +1135,7 @@ export class RoomController {
     const visited = this.run.visited.filter(Boolean).length;
     const living = livingMonsters(this.state);
     const foe = living.length === 0 ? "" : living.length === 1 ? `${living[0]!.name} · ` : `${living.length} foes · `;
-    const worn = weaponById(this.state.weapon);
-    const rounds = worn.magazine === null ? "" : ` ${this.state.ammo ?? worn.magazine}/${worn.magazine}`;
-    this.stats.textContent = `${foe}${worn.name}${rounds} · ${room.name} · rooms ${visited}/${this.run.rooms.length} · Blink ${this.state.blink} · gold ${this.state.carried} · ${meter}`;
+    this.stats.textContent = `${foe}${room.name} · ${visited}/${this.run.rooms.length} · gold ${this.state.carried}${meter}`;
     this.note.textContent = this.state.note;
     this.paintAbilityBar();
     if (this.state.strike) {

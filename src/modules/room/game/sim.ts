@@ -1,8 +1,10 @@
 import { heroAttributes, monsterAttributes, type Attributes } from "../data/attributes.ts";
-import { ELEMENTS, KIT, MONSTER_GOLD, RARE_GOLD, SPORE, monsterById, type DamageType, type MonsterDef, type MonsterRole } from "../data/monsters.ts";
+import { CHEST_GOLD, ELEMENTS, KIT, MONSTER_GOLD, RARE_GOLD, SPORE, monsterById, type DamageType, type MonsterDef, type MonsterRole } from "../data/monsters.ts";
+import { threatFactor } from "./adventure.ts";
 import type { BodyKind, Decor, Door, Facing, RoomPattern, RoomTheme, Side, Spawn, Stamp } from "../data/rooms.ts";
-import { EMPTY_GEAR, critFactor, type GearBonus } from "../data/items.ts";
+import { EMPTY_GEAR, critFactor, itemById, type GearBonus } from "../data/items.ts";
 import { heroAbilityById, type RunAbility } from "../data/hero-abilities.ts";
+import type { InstanceKind } from "../data/instances.ts";
 import { pointChance } from "../data/instances.ts";
 import { weaponById, type WeaponId } from "../data/weapons.ts";
 import {
@@ -18,6 +20,12 @@ import {
 } from "./rules.ts";
 
 export type Dir = Facing;
+
+/** Восемь направлений прицела. Ноль по оси — прямая, оба не нули — диагональ. */
+export interface AimStep {
+  x: -1 | 0 | 1;
+  y: -1 | 0 | 1;
+}
 
 export interface Cell {
   x: number;
@@ -61,6 +69,8 @@ export type WindupKind =
   | "emerge"
   | "land"
   | "charge"
+  | "pounce"
+  | "rush"
   | "wisp"
   | "spit";
 
@@ -154,6 +164,12 @@ export interface RoomLayout {
 
 export type Outcome = "play" | "won" | "lost";
 
+/** Вещь с пола последней комнаты. Уровень при выдаче — 0. */
+export interface CarryLoot {
+  kind: InstanceKind;
+  catalogId: string;
+}
+
 export type FxTone = DamageType | "control";
 
 /** Какая способность рисуется. Без метки остаётся общий рисунок стихии. */
@@ -212,7 +228,7 @@ export interface RoomState {
   /** Монстры в порядке появления. Ходят в этом порядке, споры дописываются в конец. */
   monsters: Fighter[];
   hazards: Hazard[];
-  /** Стихия клетки, индекс y·w+x. На клетке одна стихия. Новая лужа живёт 7 ходов. */
+  /** Стихия клетки, индекс y·w+x. На клетке одна стихия. Новая лужа живёт 9 ходов. */
   ground: (GroundCell | null)[];
   /** Клетки, где в этот ход монстра уже убили. Пока герой не походил снова, сюда не встают. */
   bodies: Cell[];
@@ -234,10 +250,18 @@ export interface RoomState {
   furniture: { kind: "table" | "shelf"; x: number; y: number; w: number; h: number }[];
   /** Стулья. Как бочки: шаг или удар по клетке ломает стул. */
   chairs: Cell[];
+  /** Сундуки комнаты. Открытый уже отдал золото. */
+  chests: { kind: "chest" | "cellchest"; x: number; y: number; open: boolean }[];
   /** Ключи уже разбитых бочек, чтобы комната помнила их после ухода. */
   broken: string[];
   /** Gold на полу. Каждая запись — одна монета. */
   piles: Cell[];
+  /** Шмотки с последней комнаты этажа. Пусто, пока этаж не зачищен. */
+  loot: (Cell & CarryLoot)[];
+  /** Выбранный уровень приключения. 0 — числа гайда. */
+  adventure: number;
+  /** Уже поднятые шмотки. Живут до хаба. */
+  found: CarryLoot[];
   /** Монеты, которые только что вылетели из бочки. Вид забирает их в кадр полёта. */
   drops: { from: Cell; to: Cell }[];
   /** Укус монстра вплотную. Вид проигрывает выпад и отшат. */
@@ -257,8 +281,10 @@ export interface RoomState {
   critShare: number;
   /** Надетые способности героя. Damage уже с уровнем экземпляра. */
   abilities: (RunAbility | null)[];
-  /** Клетки выбора способности. Empty, когда игрок не целится. */
+  /** Клетки выбора способности. Empty, когда игрок не целится. Пустой список — способность выбрана, луча ещё нет. */
   aim: Cell[] | null;
+  /** Куда смотрит курсор от героя. Пусто — удар туда, куда повёрнут герой. */
+  look: AimStep | null;
   /** Огненный щит. Прочность 100 не растёт от заточки. Урон тика — уже с уровнем. */
   ward: { hp: number; left: number; damage: number } | null;
   /** Буран. Пусто — выключен. Мана тика не растёт от заточки. */
@@ -395,7 +421,27 @@ export function distancesTo(room: RoomLayout, target: Cell): Int16Array {
 }
 
 export function swordCells(state: RoomState): Cell[] {
-  return fanCells(state, 1);
+  return fanCells(state, 1, DIRS[state.hero.facing]);
+}
+
+/** Ближайшее из восьми направлений от героя к клетке. На герое — пусто. */
+export function nearestAim(from: Cell, to: Cell): AimStep | null {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (dx === 0 && dy === 0) return null;
+  const sector = Math.round(Math.atan2(dy, dx) / (Math.PI / 4));
+  const oct = ((sector % 8) + 8) % 8;
+  const steps: readonly AimStep[] = [
+    { x: 1, y: 0 },
+    { x: 1, y: 1 },
+    { x: 0, y: 1 },
+    { x: -1, y: 1 },
+    { x: -1, y: 0 },
+    { x: -1, y: -1 },
+    { x: 0, y: -1 },
+    { x: 1, y: -1 },
+  ];
+  return steps[oct] ?? null;
 }
 
 /** Сколько выстрелов осталось. Empty — это не огнестрел. */
@@ -405,20 +451,38 @@ export function shotsLeft(state: RoomState): number | null {
   return state.ammo ?? magazine;
 }
 
-/** Клетки удара надетого оружия. Пустой магазин не стреляет, пока его не перезарядят. */
+/** Клетки удара надетого оружия. Курсор, если он есть, важнее поворота. */
 export function attackCells(state: RoomState): Cell[] {
   if (shotsLeft(state) === 0) return [];
   const weapon = weaponById(state.weapon);
-  if (weapon.shape === "fan") return fanCells(state, weapon.range);
+  const step = state.look ?? DIRS[state.hero.facing];
+  if (weapon.shape === "fan") return fanCells(state, weapon.range, step);
   if (weapon.shape === "around") return aroundCells(state);
-  return lineCells(state, weapon.range);
+  return lineCells(state, weapon.range, step);
 }
 
-/** Веер шириной 3 на `depth` клеток вперёд. Стена обрывает свой луч. */
-function fanCells(state: RoomState, depth: number): Cell[] {
+/** Веер шириной 3. Прямое направление — три параллельных луча. Диагональ — клин из трёх. */
+function fanCells(state: RoomState, depth: number, step: Cell): Cell[] {
   const hero = state.hero;
-  const step = DIRS[hero.facing];
-  const side = hero.facing === "up" || hero.facing === "down" ? { x: 1, y: 0 } : { x: 0, y: 1 };
+  if (step.x !== 0 && step.y !== 0) {
+    const cells: Cell[] = [];
+    const rays = [
+      (i: number) => ({ x: step.x * i, y: step.y * i }),
+      (i: number) => ({ x: step.x * i, y: step.y * (i - 1) }),
+      (i: number) => ({ x: step.x * (i - 1), y: step.y * i }),
+    ];
+    for (const ray of rays) {
+      for (let i = 1; i <= depth; i += 1) {
+        const at = ray(i);
+        const x = hero.x + at.x;
+        const y = hero.y + at.y;
+        if (isBlocked(state.room, x, y)) break;
+        cells.push({ x, y });
+      }
+    }
+    return cells;
+  }
+  const side = step.y === 0 ? { x: 0, y: 1 } : { x: 1, y: 0 };
   const cells: Cell[] = [];
   for (const offset of [-1, 0, 1]) {
     for (let i = 1; i <= depth; i += 1) {
@@ -442,8 +506,7 @@ function aroundCells(state: RoomState): Cell[] {
   return cells;
 }
 
-function lineCells(state: RoomState, reach: number): Cell[] {
-  const step = DIRS[state.hero.facing];
+function lineCells(state: RoomState, reach: number, step: Cell): Cell[] {
   const cells: Cell[] = [];
   for (let i = 1; i <= reach; i += 1) {
     const x = state.hero.x + step.x * i;
@@ -482,15 +545,17 @@ function fighter(base: FighterBase, mode: Mode): Fighter {
   };
 }
 
-export function monsterFighter(spec: MonsterDef | undefined, at: Spawn, alive: boolean): Fighter {
+export function monsterFighter(spec: MonsterDef | undefined, at: Spawn, alive: boolean, adventure = 0): Fighter {
   const live = Boolean(spec) && alive;
+  const factor = threatFactor(adventure);
+  const maxHp = spec ? Math.round(spec.maxHp * factor) : 0;
   return fighter(
     {
       x: at.x,
       y: at.y,
       facing: at.facing,
-      hp: spec && live ? spec.maxHp : 0,
-      maxHp: spec?.maxHp ?? 0,
+      hp: spec && live ? maxHp : 0,
+      maxHp,
       shield: spec && live ? spec.shield : 0,
       maxShield: spec?.shield ?? 0,
       body: spec?.body ?? "flesh",
@@ -565,6 +630,8 @@ export interface RoomEntry {
   weaponHit?: number | null;
   abilities?: readonly (RunAbility | null)[];
   abilityCd?: Readonly<Record<string, number>>;
+  /** Уровень приключения. Множит HP и урон монстров. */
+  adventure?: number;
 }
 
 export function createRoom(pattern: RoomPattern, entry: RoomEntry = {}): RoomState {
@@ -574,7 +641,8 @@ export function createRoom(pattern: RoomPattern, entry: RoomEntry = {}): RoomSta
   const maxHp = HERO_HP + gear.maxHp;
   const hp = entry.heroHp ?? maxHp;
   const spec = (entry.monsterKind ? monsterById(entry.monsterKind) : undefined) ?? monsterById("7");
-  const monster = monsterFighter(spec, pattern.monster, alive);
+  const adventure = entry.adventure ?? 0;
+  const monster = monsterFighter(spec, pattern.monster, alive, adventure);
   const room = buildLayout(pattern);
   const attrs = heroAttributes();
   attrs.MaxHp = maxHp;
@@ -623,8 +691,12 @@ export function createRoom(pattern: RoomPattern, entry: RoomEntry = {}): RoomSta
     barrels: [],
     furniture: [],
     chairs: [],
+    chests: [],
     broken: [],
     piles: [],
+    loot: [],
+    adventure,
+    found: [],
     drops: [],
     strike: null,
     carried: 0,
@@ -637,6 +709,7 @@ export function createRoom(pattern: RoomPattern, entry: RoomEntry = {}): RoomSta
     weaponHit: entry.weaponHit === undefined ? null : entry.weaponHit,
     abilities: [...(entry.abilities ?? [])],
     aim: null,
+    look: null,
     ward: null,
     blizzard: null,
     quakes: [],
@@ -740,7 +813,7 @@ const SPILL: Partial<Record<DamageType, GroundKind>> = {
   ice: "ice",
 };
 
-/** Новая лужа. Повторная запись на ту же клетку начинает пять ходов заново. */
+/** Новая лужа. Повторная запись на ту же клетку начинает срок заново. */
 function puddle(kind: GroundKind, stacks: number): GroundCell {
   return { kind, stacks: kind === "poison" ? stacks : 0, turns: ELEMENTS.puddleTurns };
 }
@@ -836,14 +909,23 @@ function damageFactor(unit: Fighter, type: DamageType): number {
 }
 
 /** Удар способностью, укусом или оружием. Возвращает урон после брони, стихий и иммунитета. */
-function hurt(state: RoomState, target: Fighter, amount: number, type: DamageType, source: Fighter | null, rng: () => number): number {
+function hurt(
+  state: RoomState,
+  target: Fighter,
+  amount: number,
+  type: DamageType,
+  source: Fighter | null,
+  rng: () => number,
+  ability = false,
+): number {
   if (target.hp <= 0) return 0;
   if (target !== state.hero && !onBoard(target)) return 0;
   if (target === state.hero && state.dodge > 0 && rng() < Math.min(1, state.dodge)) return 0;
   if (type === "poison") {
-    dose(state, target, amount, source, rng);
+    dose(state, target, amount, source, rng, ability);
     return 0;
   }
+  if (source && source !== state.hero) amount *= threatFactor(state.adventure);
   if (immuneTo(target, type)) return 0;
   if (type === "ice" && groundAt(state, target.x, target.y)?.kind === "ice" && target.iceGuard === 0) {
     stunUnit(state, target, ELEMENTS.iceStun);
@@ -857,7 +939,7 @@ function hurt(state: RoomState, target: Fighter, amount: number, type: DamageTyp
     if (type === "earth") target.oil = ELEMENTS.oilTurns;
     if (type === "water") target.wet = ELEMENTS.wetTurns;
   }
-  landed(state, target, dealt, source, rng);
+  landed(state, target, dealt, source, rng, ability);
   return dealt;
 }
 
@@ -883,18 +965,18 @@ function wardAbsorb(state: RoomState, dealt: number, type: DamageType): number {
 }
 
 /** Порция яда: стаки прибавляются, окно снова полное. */
-function dose(state: RoomState, target: Fighter, stacks: number, source: Fighter | null, rng: () => number): void {
+function dose(state: RoomState, target: Fighter, stacks: number, source: Fighter | null, rng: () => number, ability = false): void {
   if (target.hp <= 0 || immuneTo(target, "poison")) return;
   target.poison += stacks;
   target.poisonWindow = ELEMENTS.poisonWindow;
-  landed(state, target, 0, source, rng);
+  landed(state, target, 0, source, rng, ability);
 }
 
-function landed(state: RoomState, target: Fighter, dealt: number, source: Fighter | null, rng: () => number): void {
+function landed(state: RoomState, target: Fighter, dealt: number, source: Fighter | null, rng: () => number, ability = false): void {
   if (target !== state.hero && source) {
     if (source === state.hero) {
       if (target.mode === "passive") target.mode = "ground";
-      chip(state, target, heroShieldPoints(state, target), true);
+      chip(state, target, ability ? 1 : heroShieldPoints(state, target), true);
     } else {
       chip(state, target, 1, false);
     }
@@ -906,7 +988,7 @@ function landed(state: RoomState, target: Fighter, dealt: number, source: Fighte
   if (target.hp <= 0) kill(state, target, rng);
 }
 
-/** Sword, топор, клинки, копьё и перчатки снимают 2. Staff и огнестрел — 1, и 2, если цель в клетке прямо перед героем. */
+/** Оружие. Способность всегда снимает 1, это решается в landed. Sword, топор, клинки, копьё и перчатки снимают 2. Staff и огнестрел — 1, и 2, если цель в клетке прямо перед героем. */
 function heroShieldPoints(state: RoomState, target: Fighter): number {
   const id = state.weapon;
   if (id === "sword" || id === "axe" || id === "dual" || id === "spear" || id === "gloves") return 2;
@@ -1102,21 +1184,39 @@ function biteOrStep(state: RoomState, monster: Fighter, rng: () => number): stri
   return stepToward(state, monster, rng);
 }
 
-/** Прямой рывок по одной оси, не дальше `max` и не на клетку героя. */
-function axisDash(state: RoomState, monster: Fighter, max: number): Cell[] {
+/** Прямая до клетки игрока включительно. Стена или яма — рывка нет. */
+function rushLine(state: RoomState, monster: Fighter): Cell[] {
   const hero = state.hero;
-  if (hero.x !== monster.x && hero.y !== monster.y) return [];
-  const step = { x: Math.sign(hero.x - monster.x), y: Math.sign(hero.y - monster.y) };
-  const path: Cell[] = [];
-  let at = spot(monster);
-  for (let moved = 0; moved < max && manhattan(hero, at) > 1; moved += 1) {
-    const next = { x: at.x + step.x, y: at.y + step.y };
-    if (isBlocked(state.room, next.x, next.y) || taken(state, next.x, next.y)) break;
-    path.push(next);
-    at = next;
+  if (hero.hp <= 0 || (hero.x !== monster.x && hero.y !== monster.y)) return [];
+  const stepX = Math.sign(hero.x - monster.x);
+  const stepY = Math.sign(hero.y - monster.y);
+  const cells: Cell[] = [];
+  let x = monster.x;
+  let y = monster.y;
+  while (x !== hero.x || y !== hero.y) {
+    x += stepX;
+    y += stepY;
+    if (isBlocked(state.room, x, y) || isPit(state.room, x, y)) return [];
+    cells.push({ x, y });
   }
-  return path;
+  return cells;
 }
+
+/** Тело проходит не дальше dash. Чужая клетка останавливает. Клетка игрока — место прибытия. */
+function houndStop(state: RoomState, monster: Fighter, line: readonly Cell[]): Cell | null {
+  let land: Cell | null = null;
+  let steps = 0;
+  for (const cell of line) {
+    if (steps >= KIT.hound.dash) break;
+    const other = state.monsters.some((unit) => unit !== monster && onBoard(unit) && sameCell(unit, cell));
+    if (other) break;
+    land = cell;
+    steps += 1;
+    if (state.hero.hp > 0 && sameCell(state.hero, cell)) break;
+  }
+  return land;
+}
+
 function planDash(state: RoomState, monster: Fighter, max: number, rng: () => number): Cell[] {
   const hero = state.hero;
   const room = state.room;
@@ -1175,35 +1275,31 @@ function dogTurn(state: RoomState, monster: Fighter, rng: () => number): string 
   return biteOrStep(state, monster, rng);
 }
 
-function dashTurn(
-  state: RoomState,
-  monster: Fighter,
-  kit: { dash: number; damage: number; cooldown: number },
-  type: DamageType,
-  rng: () => number,
-  straight = false,
-): string {
+/** Прыжок с задержкой в ход. Клетка посадки подсвечена, сам гоблин стоит на месте. */
+function goblinTurn(state: RoomState, monster: Fighter, rng: () => number): string {
   const hero = state.hero;
   if (manhattan(monster, hero) > 1 && ready(monster, "dash") && monster.root === 0) {
-    const path = straight ? axisDash(state, monster, kit.dash) : planDash(state, monster, kit.dash, rng);
-    if (path.length > 0) {
-      const from = spot(monster);
-      for (const cell of path) {
-        faceToward(monster, cell);
-        monster.x = cell.x;
-        monster.y = cell.y;
-        breakObject(state, cell, rng);
-        if (type === "fire") writeGround(state, cell, "fire", 0, rng);
-      }
-      monster.cooldowns.dash = kit.cooldown;
-      state.fx.push({ kind: "dash", from, to: spot(monster), tone: type, act: "dash" });
-      if (manhattan(monster, hero) === 1) {
-        faceToward(monster, hero);
-        hurt(state, hero, kit.damage, type, monster, rng);
-        return "The dash connected.";
-      }
-      return "Dash.";
+    const path = planDash(state, monster, KIT.goblin.dash, rng);
+    const land = path[path.length - 1];
+    if (land) {
+      monster.windup = windup("pounce", KIT.goblin.delay, [land], land);
+      monster.cooldowns.dash = KIT.goblin.cooldown;
+      faceToward(monster, land);
+      return "The goblin marks a leap.";
     }
+  }
+  return biteOrStep(state, monster, rng);
+}
+
+/** Линия до игрока включительно. Через ход урон и огонь на ней, не на клетке перед гончей. */
+function houndTurn(state: RoomState, monster: Fighter, rng: () => number): string {
+  const hero = state.hero;
+  const line = rushLine(state, monster);
+  if (line.length > 1 && ready(monster, "dash") && monster.root === 0) {
+    monster.windup = windup("rush", KIT.hound.delay, line, hero);
+    monster.cooldowns.dash = KIT.hound.cooldown;
+    faceToward(monster, hero);
+    return "The ash hound marks a rush.";
   }
   return biteOrStep(state, monster, rng);
 }
@@ -1366,7 +1462,7 @@ function mushroomTurn(state: RoomState, monster: Fighter, rng: () => number): st
     }
     const cell = pick(open, rng);
     if (cell) {
-      state.monsters.push(monsterFighter(SPORE, { x: cell.x, y: cell.y, facing: monster.facing }, true));
+      state.monsters.push(monsterFighter(SPORE, { x: cell.x, y: cell.y, facing: monster.facing }, true, state.adventure));
       monster.cooldowns.spore = KIT.mushroom.cooldown;
       state.fx.push({ kind: "shot", from: spot(monster), to: cell, tone: "poison", act: "spore" });
       return "The mushroom released a spore.";
@@ -1585,9 +1681,9 @@ function roleTurn(state: RoomState, monster: Fighter, rng: () => number): string
     case "dog":
       return dogTurn(state, monster, rng);
     case "hound":
-      return dashTurn(state, monster, KIT.hound, "fire", rng, true);
+      return houndTurn(state, monster, rng);
     case "goblin":
-      return dashTurn(state, monster, KIT.goblin, "physical", rng);
+      return goblinTurn(state, monster, rng);
     case "spider":
       return spiderTurn(state, monster, rng);
     case "corpse":
@@ -1743,6 +1839,35 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
       faceToward(monster, cell);
       state.fx.push({ kind: "dash", from, to: spot(monster), tone: "physical", act: "dash" });
       return "The hound crashed in.";
+    }
+    case "rush": {
+      const from = spot(monster);
+      for (const cell of cast.cells) {
+        for (const unit of unitsIn(state, [cell], monster)) hurt(state, unit, KIT.hound.damage, "fire", monster, rng);
+      }
+      pour(state, cast.cells, "fire", 0, rng);
+      const land = houndStop(state, monster, cast.cells);
+      if (land) {
+        for (const cell of cast.cells) {
+          breakObject(state, cell, rng);
+          if (sameCell(cell, land)) break;
+        }
+        arrive(state, monster, land, rng);
+      }
+      state.fx.push({ kind: "dash", from, to: spot(monster), tone: "fire", act: "dash" });
+      state.fx.push({ kind: "area", cells: [...cast.cells], tone: "fire", act: "flare" });
+      return "The ash hound rushed.";
+    }
+    case "pounce": {
+      const from = spot(monster);
+      arrive(state, monster, cast.center, rng);
+      const hero = state.hero;
+      if (hero.hp > 0 && manhattan(monster, hero) === 1) {
+        faceToward(monster, hero);
+        hurt(state, hero, KIT.goblin.damage, "physical", monster, rng);
+      }
+      state.fx.push({ kind: "dash", from, to: spot(monster), tone: "physical", act: "dash" });
+      return "The goblin leaped.";
     }
     case "wisp": {
       const from = spot(monster);
@@ -2020,6 +2145,20 @@ function breakObject(state: RoomState, cell: Cell, rng: () => number): boolean {
   return breakBarrel(state, cell, rng) || breakChair(state, cell, rng);
 }
 
+function openChest(state: RoomState, cell: Cell, rng: () => number): boolean {
+  const chest = state.chests.find((item) => !item.open && item.x === cell.x && item.y === cell.y);
+  if (!chest) return false;
+  chest.open = true;
+  spillGold(state, cell, rng, CHEST_GOLD);
+  return true;
+}
+
+function openChests(state: RoomState, cells: readonly Cell[], rng: () => number): number {
+  let count = 0;
+  for (const cell of cells) if (openChest(state, cell, rng)) count += 1;
+  return count;
+}
+
 function breakChairs(state: RoomState, cells: readonly Cell[], rng: () => number): number {
   let count = 0;
   for (const cell of cells) if (breakChair(state, cell, rng)) count += 1;
@@ -2052,6 +2191,22 @@ function takeGold(state: RoomState): number {
   const got = before - state.piles.length;
   state.carried += got;
   return got;
+}
+
+export function lootName(loot: CarryLoot): string {
+  if (loot.kind === "weapon") return weaponById(loot.catalogId as WeaponId).name;
+  if (loot.kind === "ability") return heroAbilityById(loot.catalogId)?.name ?? "Ability";
+  return itemById(loot.catalogId)?.name ?? "Item";
+}
+
+/** Шаг на клетку шмотки забирает её. Пустая строка — на клетке ничего не лежало. */
+export function claimFloorLoot(state: RoomState): string {
+  const index = state.loot.findIndex((loot) => loot.x === state.hero.x && loot.y === state.hero.y);
+  if (index < 0) return "";
+  const [loot] = state.loot.splice(index, 1);
+  if (!loot) return "";
+  state.found.push({ kind: loot.kind, catalogId: loot.catalogId });
+  return lootName(loot);
 }
 
 function canControl(state: RoomState): boolean {
@@ -2149,9 +2304,13 @@ export function step(state: RoomState, dir: Dir, rng: () => number = Math.random
   state.hero.x = x;
   state.hero.y = y;
   const broke = breakObject(state, { x, y }, rng);
+  const opened = openChest(state, { x, y }, rng);
   const got = takeGold(state);
+  const prize = claimFloorLoot(state);
   state.note = broke ? "Object broken." : "Step.";
+  if (opened) state.note = `${state.note} The chest opens.`;
   if (got > 0) state.note = `${state.note} Gold.`;
+  if (prize) state.note = `${state.note} ${prize}.`;
   afterAction(state, false, rng);
   return true;
 }
@@ -2177,8 +2336,10 @@ export function attack(state: RoomState, rng: () => number = Math.random): boole
     state.note = "Magazine empty.";
     return false;
   }
-  const smashed = breakBarrels(state, attackCells(state), rng) + breakChairs(state, attackCells(state), rng);
-  const smashedNote = smashed > 0 ? " Object broken." : "";
+  const swingCells = attackCells(state);
+  const smashed = breakBarrels(state, swingCells, rng) + breakChairs(state, swingCells, rng);
+  const opened = openChests(state, swingCells, rng);
+  const smashedNote = `${smashed > 0 ? " Object broken." : ""}${opened > 0 ? " The chest opens." : ""}`;
   const targets = struck(state);
   const times = targets.length === 0 ? 0 : weapon.twice ? 2 : 1;
   if (weapon.magazine !== null) state.ammo = (shotsLeft(state) ?? weapon.magazine) - 1;
@@ -2233,9 +2394,11 @@ export function blink(state: RoomState, x: number, y: number, rng: () => number 
   state.blink -= 1;
   const broke = breakObject(state, { x, y }, rng);
   const got = takeGold(state);
+  const prize = claimFloorLoot(state);
   const bits = ["Blink."];
   if (broke) bits.push("Object broken.");
   if (got > 0) bits.push("Gold.");
+  if (prize) bits.push(`${prize}.`);
   bits.push("The world did not move.");
   state.note = bits.join(" ");
   return true;
@@ -2287,13 +2450,17 @@ function diamondCells(state: RoomState): Cell[] {
   return cells;
 }
 
-/** Четыре направления стрелы: соседние клетки, не цель. */
-function arrowAims(state: RoomState): Cell[] {
+/** Луч стрелы в одну сторону: до первого монстра или стены, включая клетку попадания. */
+export function arrowBeam(state: RoomState, step: AimStep): Cell[] {
   const cells: Cell[] = [];
-  for (const step of ORTHO) {
-    const x = state.hero.x + step.x;
-    const y = state.hero.y + step.y;
-    if (inRoom(state.room, x, y)) cells.push({ x, y });
+  let x = state.hero.x + step.x;
+  let y = state.hero.y + step.y;
+  while (isFloor(state.room, x, y) && !isBlocked(state.room, x, y)) {
+    const spotCell = { x, y };
+    cells.push(spotCell);
+    if (monsterAt(state, spotCell)) break;
+    x += step.x;
+    y += step.y;
   }
   return cells;
 }
@@ -2307,7 +2474,7 @@ export function abilityAim(state: RoomState, id: string): Cell[] {
       .map((monster) => spot(monster));
   }
   if (row.cast === "quake" || row.cast === "shard") return diamondCells(state);
-  if (row.cast === "arrow") return arrowAims(state);
+  if (row.cast === "arrow") return state.look ? arrowBeam(state, state.look) : [];
   return [];
 }
 
@@ -2318,7 +2485,7 @@ function castReady(state: RoomState, ability: RunAbility, cell: Cell | null): bo
     const monster = monsterAt(state, cell);
     return Boolean(monster) && manhattan(monster!, state.hero) <= BLINK_RANGE;
   }
-  if (ability.cast === "arrow") return arrowAims(state).some((spotCell) => sameSpot(spotCell, cell));
+  if (ability.cast === "arrow") return nearestAim(state.hero, cell) !== null;
   if (ability.cast === "quake" || ability.cast === "shard") return diamondCells(state).some((spotCell) => sameSpot(spotCell, cell));
   return false;
 }
@@ -2333,7 +2500,7 @@ function poisonHp(state: RoomState, target: Fighter, amount: number, rng: () => 
     kill(state, target, rng);
     return;
   }
-  dose(state, target, ARROW_STACKS, state.hero, rng);
+  dose(state, target, ARROW_STACKS, state.hero, rng, true);
 }
 
 function castBolt(state: RoomState, ability: RunAbility, cell: Cell, rng: () => number): void {
@@ -2341,12 +2508,12 @@ function castBolt(state: RoomState, ability: RunAbility, cell: Cell, rng: () => 
   if (!main) return;
   const near = state.monsters.filter((monster) => onBoard(monster) && monster !== main && chebyshev(monster, main) <= NEAR);
   const hit: Fighter[] = [main];
-  if (near.length === 0) hurt(state, main, ability.damage, "fire", state.hero, rng);
+  if (near.length === 0) hurt(state, main, ability.damage, "fire", state.hero, rng, true);
   else {
-    hurt(state, main, ability.splash, "fire", state.hero, rng);
+    hurt(state, main, ability.splash, "fire", state.hero, rng, true);
     near.sort((a, b) => a.y - b.y || a.x - b.x);
     for (const unit of near.slice(0, BOLT_CAP - 1)) {
-      hurt(state, unit, ability.splash, "fire", state.hero, rng);
+      hurt(state, unit, ability.splash, "fire", state.hero, rng, true);
       hit.push(unit);
     }
   }
@@ -2361,22 +2528,12 @@ function castWard(state: RoomState, ability: RunAbility): void {
 }
 
 function castArrow(state: RoomState, ability: RunAbility, cell: Cell, rng: () => number): void {
-  const dx = Math.sign(cell.x - state.hero.x);
-  const dy = Math.sign(cell.y - state.hero.y);
-  let x = state.hero.x + dx;
-  let y = state.hero.y + dy;
-  const line: Cell[] = [];
-  while (isFloor(state.room, x, y) && !isBlocked(state.room, x, y)) {
-    const spotCell = { x, y };
-    line.push(spotCell);
-    const unit = monsterAt(state, spotCell);
-    if (unit) {
-      poisonHp(state, unit, ability.damage, rng);
-      break;
-    }
-    x += dx;
-    y += dy;
-  }
+  const aim = nearestAim(state.hero, cell);
+  if (!aim) return;
+  const line = arrowBeam(state, aim);
+  const hit = line.find((spotCell) => monsterAt(state, spotCell));
+  const unit = hit ? monsterAt(state, hit) : undefined;
+  if (unit) poisonHp(state, unit, ability.damage, rng);
   const end = line[line.length - 1];
   if (end) state.fx.push({ kind: "line", from: spot(state.hero), to: end, tone: "poison", act: "arrow" });
   state.note = "Poison Arrow.";
@@ -2397,7 +2554,7 @@ function castShard(state: RoomState, ability: RunAbility, cell: Cell, rng: () =>
     removed += 1;
   }
   const unit = monsterAt(state, cell);
-  if (unit && removed > 0) hurt(state, unit, ability.damage * removed, "ice", state.hero, rng);
+  if (unit && removed > 0) hurt(state, unit, ability.damage * removed, "ice", state.hero, rng, true);
   if (zone.length > 0) state.fx.push({ kind: "area", cells: zone, tone: "ice", act: "shard" });
   state.note = "Ice Shard.";
 }
@@ -2406,7 +2563,7 @@ function tickWard(state: RoomState, rng: () => number): void {
   const ward = state.ward;
   if (!ward) return;
   const cells = square(state, state.hero, NEAR);
-  for (const unit of unitsIn(state, cells, state.hero)) hurt(state, unit, ward.damage, "fire", state.hero, rng);
+  for (const unit of unitsIn(state, cells, state.hero)) hurt(state, unit, ward.damage, "fire", state.hero, rng, true);
   ward.left -= 1;
   if (ward.left <= 0) state.ward = null;
   if (cells.length > 0) state.fx.push({ kind: "area", cells, tone: "fire", act: "ward" });
@@ -2421,7 +2578,7 @@ function tickBlizzard(state: RoomState, rng: () => number): void {
   }
   state.mp -= storm.mp;
   const cells = square(state, state.hero, BLIZZARD_REACH);
-  for (const unit of unitsIn(state, cells, state.hero)) hurt(state, unit, storm.damage, "water", state.hero, rng);
+  for (const unit of unitsIn(state, cells, state.hero)) hurt(state, unit, storm.damage, "water", state.hero, rng, true);
   for (const cell of cells) writeGround(state, cell, "water", 0, rng);
   if (cells.length > 0) state.fx.push({ kind: "area", cells, tone: "water", act: "blizzard" });
 }
@@ -2431,7 +2588,7 @@ function tickQuakes(state: RoomState, rng: () => number): void {
   for (const zone of state.quakes) {
     const center = { x: zone.x, y: zone.y };
     const cells = square(state, center, NEAR);
-    for (const unit of unitsIn(state, cells, state.hero)) hurt(state, unit, zone.damage, "earth", state.hero, rng);
+    for (const unit of unitsIn(state, cells, state.hero)) hurt(state, unit, zone.damage, "earth", state.hero, rng, true);
     for (const cell of cells) writeGround(state, cell, "oil", 0, rng);
     zone.left -= 1;
     if (zone.left > 0) next.push(zone);

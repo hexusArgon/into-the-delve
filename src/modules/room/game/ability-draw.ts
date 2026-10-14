@@ -532,7 +532,14 @@ export function drawWindupHint(ctx: CanvasRenderingContext2D, box: Box, monster:
   else if (cast.kind === "emerge") drawRings(ctx, box, cast.cells, a * 0.3, "#8a7348", 0.2);
   else if (cast.kind === "throw") drawRings(ctx, box, cast.cells, a * 0.3, "#7eb6ee", 0.25);
   else if (cast.kind === "land") drawRings(ctx, box, cast.cells, a * 0.35, "#f0e2c4", 0.3);
-  else if (cast.kind === "charge") {
+  else if (cast.kind === "pounce") {
+    drawLineGrow(ctx, box, monster, cast.center, 0.4 + a * 0.2, "#d7c48a", 0.06, 1);
+    drawRings(ctx, box, cast.cells, 0.25 + a * 0.2, "#e0a050", 0.4);
+  } else if (cast.kind === "rush") {
+    const end = cast.cells[cast.cells.length - 1] ?? cast.center;
+    drawLineGrow(ctx, box, monster, end, 0.45 + a * 0.2, "#e25822", 0.07, 1);
+    drawRings(ctx, box, cast.cells, 0.3 + a * 0.25, "#e07030", 0.4);
+  } else if (cast.kind === "charge") {
     drawLineGrow(ctx, box, monster, cast.center, 0.4 + a * 0.2, "#e8dcc8", 0.07, 1);
     drawRings(ctx, box, cast.cells, 0.25 + a * 0.2, "#e07060", 0.35);
   } else if (cast.kind === "wisp") drawRings(ctx, box, cast.cells, 0.25 + a * 0.25, "#d7e4ff", 0.45);

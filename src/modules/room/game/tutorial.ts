@@ -151,7 +151,7 @@ export function tutorialRun(step: LessonStep = "move"): Run {
   return {
     seed: 0,
     rooms: [room],
-    goods: [{ broken: [], piles: [] }],
+    goods: [{ broken: [], piles: [], loot: [], opened: [] }],
     weapon,
     gear: EMPTY_GEAR,
     weaponHit: null,
@@ -162,6 +162,7 @@ export function tutorialRun(step: LessonStep = "move"): Run {
     cleared: [false],
     current: 0,
     exit: null,
+    adventure: 0,
     state,
   };
 }

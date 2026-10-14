@@ -1,5 +1,5 @@
 /** Доска гильдии. Чужих имён в этой сборке нет: тайтл не подключён, места не выдумываются. */
-export function paintGuild(host: HTMLElement, level: number, onBack: () => void): void {
+export function paintGuild(host: HTMLElement, best: number | null, onBack: () => void): void {
   host.replaceChildren();
   host.className = "dungeon";
   host.style.display = "flex";
@@ -22,7 +22,7 @@ export function paintGuild(host: HTMLElement, level: number, onBack: () => void)
   const lead = document.createElement("p");
   lead.style.margin = "0";
   lead.style.opacity = "0.75";
-  lead.textContent = "Board of cleared adventure levels. No one else's runs are listed.";
+  lead.textContent = "Highest adventure level cleared. No one else's runs are listed.";
 
   const table = document.createElement("div");
   table.style.display = "grid";
@@ -37,10 +37,18 @@ export function paintGuild(host: HTMLElement, level: number, onBack: () => void)
     cell.style.textTransform = "uppercase";
     table.append(cell);
   }
-  for (const value of ["1", "You", String(level)]) {
-    const cell = document.createElement("div");
-    cell.textContent = value;
-    table.append(cell);
+  const row = best === null ? null : ["1", "You", String(best)];
+  if (!row) {
+    const empty = document.createElement("p");
+    empty.style.margin = "0";
+    empty.textContent = "No cleared adventure yet.";
+    table.append(empty);
+  } else {
+    for (const value of row) {
+      const cell = document.createElement("div");
+      cell.textContent = value;
+      table.append(cell);
+    }
   }
 
   const back = document.createElement("button");

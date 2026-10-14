@@ -1,6 +1,6 @@
 import { weaponById, WEAPONS, type WeaponId } from "../data/weapons.ts";
 import { itemById } from "../data/items.ts";
-import { addInstance, abilityAmount, abilitySplash, instanceById, unworn, type Loadout } from "../data/instances.ts";
+import { addInstance, abilityAmount, abilitySplash, instanceById, saveLoadout, unworn, type Loadout } from "../data/instances.ts";
 import { abilityTip, heroAbilityById } from "../data/hero-abilities.ts";
 import { bindTip } from "./tip.ts";
 import { freshShelf, shelfBar, shelfMatch, shelfOrder, type ShelfKind } from "./shelf-bar.ts";
@@ -451,6 +451,7 @@ function apply(kit: AuctionKit, loadout: Loadout, step: AuctionStep): string | n
     addInstance(loadout, "ability", key);
   }
   if (!kit.owned.includes(kit.weapon)) kit.weapon = kit.owned[0] ?? kit.weapon;
+  saveLoadout(loadout);
   return null;
 }
 
@@ -504,6 +505,7 @@ function takeStored(kit: AuctionKit, loadout: Loadout, pick: SellPick): void {
     const left = equippedWeaponLeft(loadout);
     if (left) kit.weapon = left;
   }
+  saveLoadout(loadout);
 }
 
 function equippedWeaponLeft(loadout: Loadout): WeaponId | null {

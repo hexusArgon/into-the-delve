@@ -2,15 +2,23 @@ import { MONSTER_DOOR_GAP, ROOMS, type Door, type RoomPattern, type Side } from 
 import { placeFurniture, scatterInterior } from "./interior.ts";
 import { FLOOR_ROOMS, HERO_HP, PORTAL_SHARE } from "./rules.ts";
 import { ELEMENTS, KIT, MONSTERS, monsterById } from "../data/monsters.ts";
+import { GEAR } from "../data/items.ts";
+import { HERO_ABILITIES } from "../data/hero-abilities.ts";
+import { WEAPONS } from "../data/weapons.ts";
 import type { RunAbility } from "../data/hero-abilities.ts";
 import { EMPTY_GEAR, type GearBonus } from "../data/items.ts";
 import { weaponById, type WeaponId } from "../data/weapons.ts";
+import { rollDropCount } from "./adventure.ts";
 import {
   DIRS,
   OPPOSITE,
   SIDE_FACING,
   buildLayout,
+  claimFloorLoot,
   createRoom,
+  onBoard,
+  lootName,
+  type CarryLoot,
   distancesTo,
   isBlocked,
   isFloor,
@@ -44,6 +52,10 @@ const FIGHT_PACK_MAX = 6;
 export interface RoomGoods {
   broken: string[];
   piles: Cell[];
+  /** Шмотки последней комнаты. Пусто, пока этаж не зачищен или их уже подняли. */
+  loot: (Cell & CarryLoot)[];
+  /** Ключи открытых сундуков, x,y. */
+  opened: string[];
 }
 
 export interface Run {
@@ -64,6 +76,8 @@ export interface Run {
   current: number;
   /** Портал в хаб. Появляется в комнате, где зачистили последнюю. */
   exit: { room: number; cell: Cell } | null;
+  /** Выбранный уровень. 0 — без прибавки к монстрам и с одной вещью. */
+  adventure: number;
   state: RoomState;
 }
 
@@ -227,6 +241,52 @@ function spareMonsterCell(state: RoomState): Cell | null {
   return pool[0] ?? null;
 }
 
+/** Не ближе 4 клеток по Чебышёву от места, где появился герой. Если таких клеток меньше стаи — остальные берутся дальше всех. */
+const SPAWN_GAP = 4;
+
+function scatterMonsters(state: RoomState, rng: () => number): void {
+  const pack = state.monsters.filter(onBoard);
+  if (pack.length === 0) return;
+  const hero = state.hero;
+  const room = state.room;
+  const banned = new Set<string>([`${hero.x},${hero.y}`]);
+  for (const door of state.exits) banned.add(`${door.x},${door.y}`);
+  for (const barrel of state.barrels) banned.add(`${barrel.x},${barrel.y}`);
+  for (const chair of state.chairs) banned.add(`${chair.x},${chair.y}`);
+  for (const chest of state.chests) if (!chest.open) banned.add(`${chest.x},${chest.y}`);
+  const reach = distancesTo(room, hero);
+  const far: Cell[] = [];
+  const rest: Cell[] = [];
+  for (let y = 0; y < room.h; y += 1) {
+    for (let x = 0; x < room.w; x += 1) {
+      if (isBlocked(room, x, y) || isPit(room, x, y) || banned.has(`${x},${y}`)) continue;
+      if ((reach[y * room.w + x] ?? -1) < 0) continue;
+      const cell = { x, y };
+      if (state.exits.some((door) => Math.abs(cell.x - door.x) + Math.abs(cell.y - door.y) < MONSTER_DOOR_GAP)) continue;
+      const gap = Math.max(Math.abs(cell.x - hero.x), Math.abs(cell.y - hero.y));
+      if (gap > SPAWN_GAP) far.push(cell);
+      else rest.push(cell);
+    }
+  }
+  const pool = far.length >= pack.length ? far.slice() : [...far, ...rest];
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    const swap = pool[i]!;
+    pool[i] = pool[j]!;
+    pool[j] = swap;
+  }
+  pack.forEach((monster, index) => {
+    const cell = pool[index];
+    if (!cell) return;
+    monster.x = cell.x;
+    monster.y = cell.y;
+  });
+}
+
+function stateChestsOpen(state: RoomState): string[] {
+  return state.chests.filter((chest) => chest.open).map((chest) => `${chest.x},${chest.y}`);
+}
+
 const GROUND_KINDS: readonly GroundKind[] = ["ice", "fire", "oil", "poison", "water"];
 
 /** В каждой боевой комнате по луже каждой стихии, в стороне от входа и дверей. */
@@ -284,7 +344,7 @@ function exitsOf(room: FloorRoom): Door[] {
 }
 
 function enter(
-  run: Pick<Run, "rooms" | "cleared" | "goods" | "weapon" | "ammo" | "gear" | "weaponHit" | "abilities" | "abilityCd">,
+  run: Pick<Run, "seed" | "adventure" | "rooms" | "cleared" | "goods" | "weapon" | "ammo" | "gear" | "weaponHit" | "abilities" | "abilityCd">,
   index: number,
   via: Side | null,
   heroHp: number,
@@ -306,8 +366,9 @@ function enter(
     abilities: run.abilities,
     abilityCd: run.abilityCd,
     monsterKind: room.monsterIds[0],
+    adventure: run.adventure,
   });
-  const goods = run.goods[index] ?? { broken: [], piles: [] };
+  const goods = run.goods[index] ?? { broken: [], piles: [], loot: [], opened: [] };
   const broken = new Set(goods.broken);
   const furn = placeFurniture(state.room, state.exits);
   state.furniture = furn.pieces;
@@ -325,15 +386,25 @@ function enter(
     .map((prop) => ({ x: prop.x, y: prop.y }));
   state.broken = [...goods.broken];
   state.piles = goods.piles.map((pile) => ({ x: pile.x, y: pile.y }));
+  state.loot = goods.loot.map((item) => ({ ...item }));
+  const opened = new Set(goods.opened ?? []);
+  state.chests = scatterInterior(state.room, state.exits).flatMap((prop) =>
+    prop.kind === "chest" || prop.kind === "cellchest"
+      ? [{ kind: prop.kind, x: prop.x, y: prop.y, open: opened.has(`${prop.x},${prop.y}`) }]
+      : [],
+  );
   if (!cleared) {
     for (const id of room.monsterIds.slice(1)) {
       const spec = monsterById(id);
       const cell = spareMonsterCell(state);
       if (!spec || !cell) continue;
-      state.monsters.push(monsterFighter(spec, { x: cell.x, y: cell.y, facing: room.pattern.monster.facing }, true));
+      state.monsters.push(monsterFighter(spec, { x: cell.x, y: cell.y, facing: room.pattern.monster.facing }, true, run.adventure));
     }
+    scatterMonsters(state, seeded((run.seed + 1) * 1000 + index * 17));
   }
   state.carried = carried;
+  const prize = claimFloorLoot(state);
+  if (prize) state.note = `${state.note} ${prize}.`.trim();
   if (room.role === "fight") seedGround(state);
   if (room.role === "start" && !via) state.note = "Start of the floor. Exits are the gaps in the walls.";
   else if (!cleared) state.note = "The doors slammed shut. Defeat the monsters to leave.";
@@ -346,11 +417,12 @@ export function createRun(
   gear: GearBonus = EMPTY_GEAR,
   weaponHit: number | null = null,
   abilities: (RunAbility | null)[] = [],
+  adventure = 0,
 ): Run {
   const rooms = buildFloor(seed);
   const cleared = rooms.map((room) => room.role === "start");
   const visited = rooms.map((_, index) => index === 0);
-  const goods = rooms.map(() => ({ broken: [], piles: [] }));
+  const goods = rooms.map(() => ({ broken: [], piles: [], loot: [] as (Cell & CarryLoot)[], opened: [] }));
   const run = {
     seed,
     rooms,
@@ -365,6 +437,7 @@ export function createRun(
     cleared,
     current: 0,
     exit: null,
+    adventure,
     state: null as unknown as RoomState,
   };
   run.state = enter(run, 0, null, HERO_HP + gear.maxHp, 0);
@@ -377,10 +450,19 @@ export function syncRun(run: Run): void {
   run.goods[run.current] = {
     broken: [...run.state.broken],
     piles: run.state.piles.map((pile) => ({ x: pile.x, y: pile.y })),
+    loot: run.state.loot.map((item) => ({ ...item })),
+    opened: stateChestsOpen(run.state),
   };
-  if (!run.exit && run.cleared.every(Boolean)) {
-    run.exit = { room: run.current, cell: exitCell(run.state) };
-    run.state.note = `${run.state.note} The hub portal is open.`.trim();
+  if (!run.exit && run.cleared.every(Boolean) && run.rooms.length > 1) {
+    const portal = exitCell(run.state);
+    run.exit = { room: run.current, cell: portal };
+    const placed = placeDrops(run.state, portal, rollDrops(run.seed, run.adventure));
+    run.state.loot = placed;
+    const names = placed.map((drop) => lootName(drop)).join(", ");
+    run.state.note = `${run.state.note} The hub portal is open. ${names} dropped.`.trim();
+    const prize = claimFloorLoot(run.state);
+    if (prize) run.state.note = `${run.state.note} ${prize}.`.trim();
+    run.goods[run.current]!.loot = run.state.loot.map((item) => ({ ...item }));
   }
   run.abilityCd = {};
   for (const ability of run.abilities) {
@@ -410,6 +492,54 @@ function exitCell(state: RoomState): Cell {
   return pool[0] ?? { x: state.hero.x, y: state.hero.y };
 }
 
+/** Три равные ветки: экипировка, оружие, способность. Внутри ветки — любой id каталога. */
+function rollOne(rng: () => number): CarryLoot {
+  const roll = rng();
+  const kind = roll < 1 / 3 ? "gear" : roll < 2 / 3 ? "weapon" : "ability";
+  const pool =
+    kind === "gear" ? GEAR.map((item) => item.id) : kind === "weapon" ? WEAPONS.map((weapon) => weapon.id) : HERO_ABILITIES.map((row) => row.id);
+  return { kind, catalogId: pool[Math.floor(rng() * pool.length)]! };
+}
+
+function rollDrops(seed: number, level: number): CarryLoot[] {
+  const rng = seeded(seed ^ 0x9e3779b9);
+  const count = rollDropCount(level, rng);
+  return Array.from({ length: count }, () => rollOne(rng));
+}
+
+function placeDrops(state: RoomState, portal: Cell, drops: readonly CarryLoot[]): (Cell & CarryLoot)[] {
+  const placed: (Cell & CarryLoot)[] = [];
+  const taken = new Set<string>();
+  for (const drop of drops) {
+    const cell = lootCell(state, portal, taken);
+    const key = `${cell.x},${cell.y}`;
+    if (taken.has(key)) continue;
+    taken.add(key);
+    placed.push({ ...drop, ...cell });
+  }
+  return placed;
+}
+
+function lootCell(state: RoomState, portal: Cell, taken: ReadonlySet<string>): Cell {
+  const skip = new Set<string>([`${state.hero.x},${state.hero.y}`, `${portal.x},${portal.y}`, ...taken]);
+  for (const door of state.exits) skip.add(`${door.x},${door.y}`);
+  const pool: Cell[] = [];
+  for (let y = 0; y < state.room.h; y += 1) {
+    for (let x = 0; x < state.room.w; x += 1) {
+      if (isBlocked(state.room, x, y) || isPit(state.room, x, y) || !isFloor(state.room, x, y)) continue;
+      if (skip.has(`${x},${y}`)) continue;
+      pool.push({ x, y });
+    }
+  }
+  pool.sort(
+    (a, b) =>
+      Math.abs(a.x - state.hero.x) + Math.abs(a.y - state.hero.y) - (Math.abs(b.x - state.hero.x) + Math.abs(b.y - state.hero.y)) ||
+      a.x - b.x ||
+      a.y - b.y,
+  );
+  return pool[0] ?? portal;
+}
+
 /** Если герой вышел в дверь, переносит его в соседнюю комнату. HP сохраняется, Blink и шкала — новые. */
 export function travel(run: Run): boolean {
   const side = run.state.leaving;
@@ -419,11 +549,13 @@ export function travel(run: Run): boolean {
   if (next === undefined) return false;
   syncRun(run);
   const carried = run.state.carried;
+  const kept = run.state.found.map((item) => ({ kind: item.kind, catalogId: item.catalogId }));
   const hp = run.state.hero.hp;
   run.ammo = run.state.ammo;
   run.current = next;
   run.visited[next] = true;
   run.state = enter(run, next, OPPOSITE[side], hp, carried);
+  run.state.found = [...kept, ...run.state.found];
   return true;
 }
 
@@ -454,11 +586,13 @@ export function teleport(run: Run, to: number): boolean {
   const hp = run.state.hero.hp;
   const facing = run.state.hero.facing;
   const carried = run.state.carried;
+  const kept = run.state.found.map((item) => ({ kind: item.kind, catalogId: item.catalogId }));
   run.ammo = run.state.ammo;
   syncRun(run);
   run.current = to;
   run.visited[to] = true;
   run.state = enter(run, to, null, hp, carried);
+  run.state.found = [...kept, ...run.state.found];
   run.state.hero.x = dest.portal.x;
   run.state.hero.y = dest.portal.y;
   run.state.hero.facing = facing;

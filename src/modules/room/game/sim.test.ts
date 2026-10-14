@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { MONSTER_DOOR_GAP, ROOM_SIZES, ROOMS, STAMP_SIZES, type RoomPattern } from "../data/rooms.ts";
 import { HERO_HP } from "./rules.ts";
-import { monsterById } from "../data/monsters.ts";
+import { ELEMENTS, KIT, monsterById } from "../data/monsters.ts";
 import {
+  nearestAim,
   attack,
   attackCells,
   blink,
@@ -11,6 +12,7 @@ import {
   createRoom,
   distancesTo,
   doorway,
+  groundAt,
   isBlocked,
   isFloor,
   isPit,
@@ -345,6 +347,22 @@ assert.deepEqual(
   attackCells(reach).map((cell) => `${cell.x},${cell.y}`),
   ["5,4", "6,4", "7,4", "8,4"],
 );
+reach.look = { x: -1, y: 0 };
+reach.weapon = "sword";
+assert.deepEqual(
+  attackCells(reach).map((cell) => `${cell.x},${cell.y}`).sort(),
+  ["3,3", "3,4", "3,5"],
+);
+reach.look = { x: 1, y: 1 };
+assert.deepEqual(
+  attackCells(reach).map((cell) => `${cell.x},${cell.y}`).sort(),
+  ["4,5", "5,4", "5,5"],
+);
+reach.look = null;
+assert.equal(nearestAim({ x: 4, y: 4 }, { x: 9, y: 5 })?.x, 1);
+assert.equal(nearestAim({ x: 4, y: 4 }, { x: 9, y: 5 })?.y, 0);
+assert.equal(nearestAim({ x: 4, y: 4 }, { x: 7, y: 6 })?.x, 1);
+assert.equal(nearestAim({ x: 4, y: 4 }, { x: 7, y: 6 })?.y, 1);
 reach.weapon = "shotgun";
 assert.deepEqual(
   attackCells(reach).map((cell) => `${cell.x},${cell.y}`).sort(),
@@ -480,9 +498,29 @@ goblin.hero.y = 2;
 goblin.monster.x = 5;
 goblin.monster.y = 2;
 wait(goblin, () => 0);
-assert.equal(goblin.monster.x, 3);
+assert.equal(goblin.monster.x, 5);
+assert.equal(goblin.monster.windup?.kind, "pounce");
+assert.equal(goblin.monster.windup?.turns, 1);
+assert.equal(goblin.monster.windup?.center.x, 3);
+assert.equal(goblin.monster.windup?.center.y, 2);
 assert.equal(goblin.monster.cooldowns.dash, 2);
 assert.equal(goblin.hero.hp, HERO_HP);
+wait(goblin, () => 0);
+assert.equal(goblin.monster.x, 3);
+assert.equal(goblin.monster.windup, null);
+assert.equal(goblin.hero.hp, HERO_HP);
+
+const chestRoom = createRoom(OPEN, { monsterKind: "1" });
+chestRoom.chests.push({ kind: "chest", x: 3, y: 6, open: false });
+assert.equal(attack(chestRoom, () => 0), true);
+assert.equal(chestRoom.chests[0]!.open, true);
+assert.equal(chestRoom.piles.length, 5);
+assert.match(chestRoom.note, /chest opens/);
+const walked = createRoom(OPEN, { monsterKind: "1" });
+walked.chests.push({ kind: "chest", x: 3, y: 6, open: false });
+assert.equal(step(walked, "right", () => 0), true);
+assert.equal(walked.chests[0]!.open, true);
+assert.equal(walked.piles.length, 5);
 
 const blocked = createRoom(
   {
@@ -593,15 +631,53 @@ assert.equal(dogDiagonal.monster.windup, null);
 assert.equal(dogDiagonal.monster.cooldowns.dash ?? 0, 0);
 assert.equal(Math.abs(dogDiagonal.monster.x - 5) + Math.abs(dogDiagonal.monster.y - 3), 1);
 
+const tough = createRoom(OPEN, { monsterKind: "7", adventure: 1 });
+tough.hero.x = tough.monster.x - 1;
+tough.hero.y = tough.monster.y;
+tough.monster.cooldowns.swing = 99;
+const beforeBite = tough.hero.hp;
+wait(tough, () => 0);
+const toughSpec = monsterById("7");
+assert.ok(toughSpec);
+assert.equal(tough.monster.maxHp, Math.round(toughSpec.maxHp * 1.1));
+assert.equal(tough.hero.hp, beforeBite - toughSpec.bite * 1.1);
+
 const houndRow = createRoom(OPEN, { monsterKind: "15" });
 houndRow.hero.x = 1;
 houndRow.hero.y = 6;
 houndRow.monster.x = 6;
 houndRow.monster.y = 6;
 wait(houndRow, () => 0);
+assert.equal(houndRow.monster.x, 6);
+assert.equal(houndRow.monster.windup?.kind, "rush");
+assert.equal(houndRow.monster.windup?.turns, 1);
+assert.deepEqual(
+  houndRow.monster.windup?.cells.map((cell) => cell.x),
+  [5, 4, 3, 2, 1],
+);
+assert.equal(houndRow.hero.hp, HERO_HP);
+assert.equal(groundAt(houndRow, 1, 6), null);
+wait(houndRow, () => 0);
 assert.equal(houndRow.monster.x, 2);
 assert.equal(houndRow.monster.y, 6);
-assert.ok(houndRow.hero.hp < HERO_HP);
+assert.equal(houndRow.monster.windup, null);
+assert.equal(houndRow.hero.hp, HERO_HP - KIT.hound.damage - ELEMENTS.fireTick);
+const onto = createRoom(OPEN, { monsterKind: "15" });
+onto.hero.x = 3;
+onto.hero.y = 6;
+onto.monster.x = 6;
+onto.monster.y = 6;
+wait(onto, () => 0);
+wait(onto, () => 0);
+assert.equal(onto.monster.x, 3);
+assert.equal(onto.hero.x === 3 && onto.hero.y === 6, false);
+assert.equal(onto.hero.hp, HERO_HP - KIT.hound.damage - ELEMENTS.fireTick);
+for (const x of [5, 4, 3]) assert.equal(groundAt(onto, x, 6)?.kind, "fire");
+assert.equal(groundAt(onto, 2, 6), null);
+assert.equal(groundAt(onto, 6, 6), null);
+for (const x of [5, 4, 3, 2, 1]) assert.equal(groundAt(houndRow, x, 6)?.kind, "fire");
+assert.equal(groundAt(houndRow, 6, 6), null);
+assert.equal(groundAt(houndRow, 0, 6), null);
 
 const houndDiagonal = createRoom(OPEN, { monsterKind: "15" });
 houndDiagonal.hero.x = 2;
