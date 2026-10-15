@@ -19,10 +19,12 @@ import { drawBlinkFx } from "./blink-draw.ts";
 import { burstAge, drawAbilityBurst, drawHazardHint, drawHeroZones, drawWindupHint, type AbilityBurst } from "./ability-draw.ts";
 import { drawExitPad, drawMapOverlay, drawMinimap, drawPortalPad, hitMapRoom, type MapHit, type MapView } from "./map.ts";
 import { Motion, type Pose } from "./motion.ts";
+import type { Door } from "../data/rooms.ts";
 import { weaponById, type WeaponId } from "../data/weapons.ts";
 import {
   DIRS,
   attackCells,
+  doorway,
   interactTarget,
   blinkCells,
   isBlocked,
@@ -990,6 +992,34 @@ export class RoomRenderer {
     const y = Math.floor((py - box.oy) / box.size);
     if (x < 0 || y < 0 || x >= room.w || y >= room.h) return null;
     return { x, y };
+  }
+
+  /** Проём двери, даже если он нарисован за краем сетки комнаты. */
+  doorMouthAt(px: number, py: number, doors: readonly Door[]): Cell | null {
+    if (!this.view || doors.length === 0) return null;
+    const { box } = this.view;
+    let best: { cell: Cell; d: number } | null = null;
+    for (const door of doors) {
+      for (const cell of [door, doorway(door)]) {
+        const cx = box.ox + (cell.x + 0.5) * box.size;
+        const cy = box.oy + (cell.y + 0.5) * box.size;
+        const d = Math.hypot(px - cx, py - cy);
+        if (d > box.size * 0.9) continue;
+        if (!best || d < best.d) best = { cell, d };
+      }
+    }
+    return best?.cell ?? null;
+  }
+
+  /** Сторона тапа относительно героя. Попадание в его клетку — без шага. */
+  directionAt(px: number, py: number, hero: Cell): Dir | null {
+    if (!this.view) return null;
+    const { box } = this.view;
+    const dx = px - (box.ox + (hero.x + 0.5) * box.size);
+    const dy = py - (box.oy + (hero.y + 0.5) * box.size);
+    if (Math.hypot(dx, dy) < box.size * 0.45) return null;
+    if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? "right" : "left";
+    return dy > 0 ? "down" : "up";
   }
 
   paint(

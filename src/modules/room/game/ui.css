@@ -523,6 +523,32 @@ button.dungeon-gear-slot {
   gap: calc(44 * var(--hud));
 }
 
+.dungeon-touch-actions {
+  gap: max(12px, calc(16 * var(--hud)));
+  pointer-events: auto;
+}
+
+.dungeon-touch-action {
+  min-width: max(112px, calc(160 * var(--hud)));
+  min-height: max(48px, calc(72 * var(--hud)));
+  padding: 12px 20px;
+  font: 700 max(16px, calc(28 * var(--hud))) Palatino Linotype, Palatino, serif;
+  pointer-events: auto;
+}
+
+.dungeon-map-close {
+  position: absolute;
+  top: max(12px, calc(16 * var(--hud)));
+  right: max(12px, calc(16 * var(--hud)));
+  z-index: 6;
+  width: max(48px, calc(72 * var(--hud)));
+  height: max(48px, calc(72 * var(--hud)));
+  padding: 0;
+  font: 700 max(28px, calc(40 * var(--hud))) Palatino Linotype, Palatino, serif;
+  line-height: 1;
+  pointer-events: auto;
+}
+
 .dungeon-prompt {
   display: flex;
   align-items: center;

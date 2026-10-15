@@ -250,6 +250,22 @@ export function equippedWeaponId(loadout: Loadout): WeaponId | null {
   return inst.catalogId as WeaponId;
 }
 
+/** Пустые слоты способностей и снаряжения заполняются из мешка. Занятый слот не меняется. */
+export function fillEmptyWear(loadout: Loadout): void {
+  for (const item of unworn(loadout)) {
+    if (item.kind !== "ability") continue;
+    const index = loadout.wornAbilities.indexOf(null);
+    if (index < 0) break;
+    placeInstance(loadout, item.id, { kind: "ability", index });
+  }
+  for (const item of unworn(loadout)) {
+    if (item.kind !== "gear") continue;
+    const index = loadout.worn.indexOf(null);
+    if (index < 0) break;
+    placeInstance(loadout, item.id, { kind: "gear", index });
+  }
+}
+
 /** По экземпляру каждой способности героя. В freshLoadout не входит: там меч и два пояса. */
 export function grantHeroAbilities(loadout: Loadout): void {
   for (const row of HERO_ABILITIES) {

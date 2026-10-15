@@ -1,6 +1,6 @@
 import { RoomRenderer } from "./view.ts";
 import { loadSprites, type Sprites } from "./sprites.ts";
-import { abilityAim, arrowBeam, attack, blink, blinkCells, castHeroAbility, face, interactTarget, livingMonsters, nearestAim, onBoard, reload, roomMonsters, step, useChest, wait, type Dir, type RoomState } from "./sim.ts";
+import { abilityAim, arrowBeam, attack, blink, blinkCells, castHeroAbility, doorway, face, interactTarget, livingMonsters, nearestAim, onBoard, reload, roomMonsters, step, useChest, wait, SIDE_FACING, type Dir, type RoomState } from "./sim.ts";
 import { heroAuras, monsterAuras, type Aura } from "./statuses.ts";
 import { monsterById, strikeElement, type DamageType } from "../data/monsters.ts";
 import { abilityView } from "../data/hero-abilities.ts";
@@ -119,6 +119,7 @@ export class RoomController {
   private choosingBlink = false;
   private aimingWeapon = false;
   private weaponSlot: HTMLElement | null = null;
+  private mapClose: HTMLButtonElement | null = null;
   private readonly coarse = coarsePointer();
   private mapOpen = false;
   private swing: number | null = null;
@@ -229,7 +230,7 @@ export class RoomController {
     const center = document.createElement("div");
     center.className = "dungeon-hud-center";
     const prompts = document.createElement("div");
-    prompts.className = "dungeon-prompts";
+    prompts.className = this.coarse ? "dungeon-prompts dungeon-touch-actions" : "dungeon-prompts";
     prompts.append(
       this.coarse ? this.phoneAction("Turn", () => this.turnClockwise()) : prompt("Shift", "Turn"),
       this.coarse ? this.phoneAction("Wait", () => this.wait()) : prompt("X", "Wait"),
@@ -250,6 +251,19 @@ export class RoomController {
     this.goldIcon.className = "dungeon-corner-coin";
     this.goldText = document.createElement("span");
     host.append(this.canvas, this.focusAuras, bar, this.mountCorner());
+    if (this.coarse) {
+      const closeMap = document.createElement("button");
+      closeMap.type = "button";
+      closeMap.className = "dungeon-button dungeon-map-close";
+      closeMap.textContent = "×";
+      closeMap.setAttribute("aria-label", "Close map");
+      closeMap.hidden = true;
+      closeMap.addEventListener("click", () => {
+        if (this.mapOpen) this.toggleMap();
+      });
+      this.mapClose = closeMap;
+      host.append(closeMap);
+    }
     const leave = lesson ? () => this.lesson?.dead(this.lessonStep) : onHub;
     if (leave) this.lostPanel = this.lostBanner(leave);
     if (this.lostPanel) host.append(this.lostPanel);
@@ -841,7 +855,7 @@ export class RoomController {
       return;
     }
     if (cell && this.phoneUseTile(cell)) return;
-    if (cell) this.phoneStep(cell);
+    this.phoneStep(cell, point);
   }
 
   private minimapContains(point: { x: number; y: number }): boolean {
@@ -863,10 +877,8 @@ export class RoomController {
   private phoneAction(label: string, run: () => void): HTMLButtonElement {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "dungeon-prompt";
-    const text = document.createElement("span");
-    text.textContent = label;
-    button.append(text);
+    button.className = "dungeon-button dungeon-touch-action";
+    button.textContent = label;
     button.addEventListener("click", run);
     return button;
   }
@@ -876,12 +888,22 @@ export class RoomController {
     this.face(CLOCKWISE[(index + 1) % CLOCKWISE.length] ?? "up");
   }
 
-  private phoneStep(cell: { x: number; y: number }): void {
-    const dx = cell.x - this.state.hero.x;
-    const dy = cell.y - this.state.hero.y;
-    if (Math.abs(dx) + Math.abs(dy) !== 1) return;
-    const dir: Dir = dx === 1 ? "right" : dx === -1 ? "left" : dy === 1 ? "down" : "up";
-    this.walk(dir);
+  private phoneStep(cell: { x: number; y: number } | null, point: { x: number; y: number }): void {
+    const mouth = this.renderer.doorMouthAt(point.x, point.y, this.state.exits);
+    const doorDir = mouth || cell ? this.phoneDoorDir(mouth ?? cell!) : null;
+    const dir = doorDir ?? this.renderer.directionAt(point.x, point.y, this.state.hero);
+    if (dir) this.walk(dir);
+  }
+
+  private phoneDoorDir(cell: { x: number; y: number }): Dir | null {
+    for (const door of this.state.exits) {
+      const mouth = doorway(door);
+      const hits = (cell.x === door.x && cell.y === door.y) || (cell.x === mouth.x && cell.y === mouth.y);
+      if (!hits) continue;
+      if (this.state.hero.x === door.x && this.state.hero.y === door.y) return SIDE_FACING[door.side];
+      return this.dirToward(door.x, door.y);
+    }
+    return null;
   }
 
   private phoneUseTile(cell: { x: number; y: number }): boolean {
@@ -1427,6 +1449,7 @@ export class RoomController {
     this.playAbilities();
     this.paintAuras();
     this.fitFocus();
+    if (this.mapClose) this.mapClose.hidden = !this.mapOpen;
     this.draw();
     this.listeners.forEach((listener) => listener());
   }

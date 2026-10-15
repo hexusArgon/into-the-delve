@@ -4,6 +4,7 @@ import { heroAbilityById } from "./hero-abilities.ts";
 import {
   abilityAmount,
   abilitySplash,
+  fillEmptyWear,
   grantHeroAbilities,
   addInstance,
   equippedWeaponHit,
@@ -89,6 +90,22 @@ assert.equal(heroAbilityById("ram"), undefined);
 const granted = freshLoadout();
 grantHeroAbilities(granted);
 assert.equal(granted.items.filter((item) => item.kind === "ability").length, 6);
+fillEmptyWear(granted);
+assert.equal(granted.wornAbilities.filter((id) => id !== null).length, 4);
+assert.equal(granted.worn.filter((id) => id !== null).length, 2);
+const keptAbility = granted.items.find((item) => item.kind === "ability" && !granted.wornAbilities.includes(item.id));
+assert.ok(keptAbility);
+const occupied = freshLoadout();
+grantHeroAbilities(occupied);
+const firstAbility = occupied.items.find((item) => item.kind === "ability")!;
+occupied.wornAbilities[1] = firstAbility.id;
+const keptGear = occupied.items.find((item) => item.catalogId === "belt")!;
+occupied.worn[3] = keptGear.id;
+fillEmptyWear(occupied);
+assert.equal(occupied.wornAbilities[1], firstAbility.id);
+assert.equal(occupied.worn[3], keptGear.id);
+assert.equal(occupied.wornAbilities.filter((id) => id !== null).length, 4);
+assert.equal(occupied.worn.filter((id) => id !== null).length, 2);
 assert.equal(freshLoadout().items.length, 3);
 const spear = freshLoadout("spear");
 assert.equal(spear.items.find((item) => item.kind === "weapon")?.catalogId, "spear");

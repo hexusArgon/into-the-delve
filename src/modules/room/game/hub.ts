@@ -15,6 +15,7 @@ import {
   removeInstance,
   equippedWeaponHit,
   equippedWeaponId,
+  fillEmptyWear,
   grantHeroAbilities,
   saveLoadout,
   storedLoadout,
@@ -80,12 +81,14 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
   const loadout = storedLoadout(startWeapon);
   grantHeroAbilities(loadout);
   grantPersonalGear(loadout);
+  if (coarsePointer()) fillEmptyWear(loadout);
   syncKit(kit, loadout);
   saveLoadout(loadout);
   void openCloud(loadout, startWeapon).then(() => {
     if (!alive) return;
     keepPersonalGear(loadout);
     grantHeroAbilities(loadout);
+    if (coarsePointer()) fillEmptyWear(loadout);
     syncKit(kit, loadout);
     saveLoadout(loadout);
   });
