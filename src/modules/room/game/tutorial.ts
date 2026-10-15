@@ -88,15 +88,37 @@ export function lessonWeapon(step: LessonStep): WeaponId {
   return "sword";
 }
 
-export function lessonText(step: LessonStep): string {
+const PHONE_COPY: Partial<Record<LessonStep, string>> = {
+  move: "Tap an adjacent tile. A diagonal does not count. After a step, the monster moves.",
+  turn: "Tap Turn. The hero turns 90 degrees clockwise. Turning is not a turn, and the monster does not move.",
+  reload: "The pistol is not full. Tap the weapon to reload. This spends the turn. An empty pistol reloads when you confirm an attack. The rifle and shotgun do not.",
+  blink: "Tap Blink, then tap a lit tile. Tap Blink again to cancel. A cancel does not spend a charge.",
+  wait: "Tap Wait. The world still moves.",
+  pick: "Pick the weapon you start with. The doors open when the enemy is dead. Tap the minimap to open the floor map. This lesson is one room.",
+};
+
+const PHONE_SWING = "Tap the weapon, then tap a tile. Tap the weapon again to cancel. A miss still spends the turn.";
+const PHONE_HUB = "Tap the path on the right. That starts a run.";
+
+export function coarsePointer(): boolean {
+  return typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+}
+
+export function lessonText(step: LessonStep, phone = false): string {
   if (isSwingStep(step)) {
     const weapon = weaponById(lessonWeapon(step));
-    return `${weapon.name}. ${weapon.figure} Left-click. A miss still spends the turn.`;
+    const tail = phone ? PHONE_SWING : "Left-click. A miss still spends the turn.";
+    return `${weapon.name}. ${weapon.figure} ${tail}`;
   }
+  if (phone && PHONE_COPY[step]) return PHONE_COPY[step];
   return STATIC_COPY[step] ?? "";
 }
 
 export const HUB_COPY = "Press the path on the right. That starts a run.";
+
+export function hubCopy(phone = false): string {
+  return phone ? PHONE_HUB : HUB_COPY;
+}
 
 /** Пока шаг не закрыт, остальные боевые действия не вызываются. На «добить» бой уже обычный. */
 export function lessonAllows(step: LessonStep, action: LessonAction): boolean {

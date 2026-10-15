@@ -316,7 +316,8 @@ button.dungeon-gear-slot {
   display: flex;
 }
 
-.dungeon-ability.is-armed {
+.dungeon-ability.is-armed,
+.dungeon-weapon-aim.is-armed {
   border-color: #f0e2c4;
   box-shadow:
     inset 0 0 calc(8 * var(--hud)) rgba(0, 0, 0, 0.65),
@@ -544,6 +545,17 @@ button.dungeon-gear-slot {
   box-shadow: inset 0 0 0 calc(2 * var(--hud)) #2a2116;
   color: #f0e2c4;
   font: 700 calc(26 * var(--hud)) Palatino Linotype, Palatino, serif;
+}
+
+button.dungeon-prompt {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
 }
 
 .dungeon-portrait-face {

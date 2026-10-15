@@ -119,9 +119,21 @@ export function minimapPanel(map: MapView): { width: number; height: number } | 
 }
 
 function minimapScale(ctx: CanvasRenderingContext2D): number {
-  const host = ctx.canvas.closest(".dungeon");
+  return hudScale(ctx.canvas);
+}
+
+export function hudScale(node: Element | null): number {
+  const host = node?.closest(".dungeon") ?? node;
   const parsed = host ? Number.parseFloat(getComputedStyle(host).getPropertyValue("--hud")) : Number.NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+/** Прямоугольник миникарты в координатах холста. Тот же расчёт, что у рисунка. */
+export function minimapFrame(width: number, map: MapView, scale: number): { x: number; y: number; w: number; h: number } | null {
+  const panel = minimapPanel(map);
+  if (!panel) return null;
+  const margin = MINIMAP_MARGIN * scale;
+  return { x: width - panel.width * scale - margin, y: margin, w: panel.width * scale, h: panel.height * scale };
 }
 
 export function drawMinimap(ctx: CanvasRenderingContext2D, width: number, map: MapView): void {
@@ -133,14 +145,13 @@ export function drawMinimap(ctx: CanvasRenderingContext2D, width: number, map: M
   const minX = Math.min(...xs);
   const minY = Math.min(...ys);
   const scale = minimapScale(ctx);
+  const frame = minimapFrame(width, map, scale);
+  if (!frame) return;
   const cell = MINIMAP_CELL * scale;
   const step = MINIMAP_STEP * scale;
   const pad = MINIMAP_PAD * scale;
-  const margin = MINIMAP_MARGIN * scale;
-  const panelW = panel.width * scale;
-  const panelH = panel.height * scale;
-  const left = width - panelW - margin;
-  const top = margin;
+  const left = frame.x;
+  const top = frame.y;
   const center = (slot: Cell): Cell => ({
     x: left + pad + (slot.x - minX) * step + cell / 2,
     y: top + pad + (slot.y - minY) * step + cell / 2,
@@ -151,7 +162,7 @@ export function drawMinimap(ctx: CanvasRenderingContext2D, width: number, map: M
   ctx.strokeStyle = "#6e5830";
   ctx.lineWidth = Math.max(1, scale);
   ctx.beginPath();
-  ctx.roundRect(left, top, panelW, panelH, 2 * scale);
+  ctx.roundRect(left, top, frame.w, frame.h, 2 * scale);
   ctx.fill();
   ctx.stroke();
 

@@ -10,12 +10,12 @@ import type { RunAbility } from "../data/hero-abilities.ts";
 import type { WeaponId } from "../data/weapons.ts";
 import { WEAPONS, weaponById } from "../data/weapons.ts";
 import { createRun, syncRun, teleport, travel, type Run } from "./floor.ts";
-import { MINIMAP_MARGIN, minimapPanel } from "./map.ts";
+import { MINIMAP_MARGIN, hudScale, minimapFrame, minimapPanel } from "./map.ts";
 import { playAbility } from "./ability-sfx.ts";
 import { playFootstep, playHeroDeath, playMonsterCue, playReload, playShieldBreak, playWeaponSound, preloadSwordBlows } from "./sfx.ts";
 import { installDungeonMusic } from "./music.ts";
 import { openSettings } from "./settings-view.ts";
-import { isSwingStep, lessonAdvance, lessonAllows, lessonText, lessonWeapon, tutorialRun, type LessonEvent, type LessonHooks, type LessonStep } from "./tutorial.ts";
+import { coarsePointer, isSwingStep, lessonAdvance, lessonAllows, lessonText, lessonWeapon, tutorialRun, type LessonEvent, type LessonHooks, type LessonStep } from "./tutorial.ts";
 import { paintWeaponIcon } from "./hub.ts";
 import "./ui.css";
 
@@ -76,6 +76,8 @@ function prompt(key: string, label: string): HTMLElement {
   return row;
 }
 
+const CLOCKWISE: readonly Dir[] = ["up", "right", "down", "left"];
+
 function paintBlinkIcon(canvas: HTMLCanvasElement): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -115,6 +117,9 @@ export class RoomController {
   private heroRattled = false;
   private diedByFall = false;
   private choosingBlink = false;
+  private aimingWeapon = false;
+  private weaponSlot: HTMLElement | null = null;
+  private readonly coarse = coarsePointer();
   private mapOpen = false;
   private swing: number | null = null;
   private readonly heldMoves = new Map<string, Dir>();
@@ -225,7 +230,10 @@ export class RoomController {
     center.className = "dungeon-hud-center";
     const prompts = document.createElement("div");
     prompts.className = "dungeon-prompts";
-    prompts.append(prompt("Shift", "Turn"), prompt("X", "Wait"));
+    prompts.append(
+      this.coarse ? this.phoneAction("Turn", () => this.turnClockwise()) : prompt("Shift", "Turn"),
+      this.coarse ? this.phoneAction("Wait", () => this.wait()) : prompt("X", "Wait"),
+    );
     center.append(prompts);
 
     const hands = this.mountGear();
@@ -389,7 +397,7 @@ export class RoomController {
 
   private renderLesson(): void {
     if (!this.lessonText) return;
-    this.lessonText.textContent = lessonText(this.lessonStep);
+    this.lessonText.textContent = lessonText(this.lessonStep, this.coarse);
     if (this.lessonPicks) this.lessonPicks.style.display = this.lessonStep === "pick" ? "flex" : "none";
     this.paintLessonWeapons();
   }
@@ -459,6 +467,7 @@ export class RoomController {
   face(dir: Dir): void {
     if (this.locked()) return;
     if (this.lesson && !lessonAllows(this.lessonStep, "face") && !isSwingStep(this.lessonStep)) return;
+    this.aimingWeapon = false;
     const facing = this.state.hero.facing;
     const x = this.state.hero.x;
     const y = this.state.hero.y;
@@ -690,6 +699,7 @@ export class RoomController {
       this.hover = cell;
       this.paintAuras();
     }
+    if (this.coarse) return;
     const look = cell ? nearestAim(this.state.hero, cell) : null;
     const prev = this.state.look;
     if (look?.x === prev?.x && look?.y === prev?.y) return;
@@ -699,6 +709,10 @@ export class RoomController {
 
   private onPointer(event: PointerEvent): void {
     if (this.pause) return;
+    if (this.coarse && event.button === 0) {
+      this.onCoarsePointer(event);
+      return;
+    }
     if (this.mapOpen) {
       this.onMapPointer(event);
       return;
@@ -799,6 +813,194 @@ export class RoomController {
       this.renderer.flash();
       this.voiceAggro();
     }
+    this.refresh();
+  }
+
+  private onCoarsePointer(event: PointerEvent): void {
+    if (this.locked() || this.state.outcome === "lost") return;
+    const point = this.canvasPoint(event);
+    if (this.minimapContains(point)) {
+      this.toggleMap();
+      return;
+    }
+    if (this.mapOpen) {
+      this.onMapPointer(event);
+      return;
+    }
+    const cell = this.renderer.cellAt(point.x, point.y);
+    if (this.abilitySlot !== null) {
+      this.confirmAbility(cell);
+      return;
+    }
+    if (this.choosingBlink) {
+      this.confirmBlink(cell);
+      return;
+    }
+    if (this.aimingWeapon) {
+      this.confirmWeapon(cell);
+      return;
+    }
+    if (cell && this.phoneUseTile(cell)) return;
+    if (cell) this.phoneStep(cell);
+  }
+
+  private minimapContains(point: { x: number; y: number }): boolean {
+    const frame = minimapFrame(this.canvas.width, this.mapView(), hudScale(this.host));
+    if (!frame) return false;
+    return point.x >= frame.x && point.x < frame.x + frame.w && point.y >= frame.y && point.y < frame.y + frame.h;
+  }
+
+  private toggleMap(): void {
+    if (this.lesson && !lessonAllows(this.lessonStep, "map")) return;
+    if (this.locked()) return;
+    this.mapOpen = !this.mapOpen;
+    this.choosingBlink = false;
+    this.aimingWeapon = false;
+    this.dropAbilityAim();
+    this.refresh();
+  }
+
+  private phoneAction(label: string, run: () => void): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "dungeon-prompt";
+    const text = document.createElement("span");
+    text.textContent = label;
+    button.append(text);
+    button.addEventListener("click", run);
+    return button;
+  }
+
+  private turnClockwise(): void {
+    const index = CLOCKWISE.indexOf(this.state.hero.facing);
+    this.face(CLOCKWISE[(index + 1) % CLOCKWISE.length] ?? "up");
+  }
+
+  private phoneStep(cell: { x: number; y: number }): void {
+    const dx = cell.x - this.state.hero.x;
+    const dy = cell.y - this.state.hero.y;
+    if (Math.abs(dx) + Math.abs(dy) !== 1) return;
+    const dir: Dir = dx === 1 ? "right" : dx === -1 ? "left" : dy === 1 ? "down" : "up";
+    this.walk(dir);
+  }
+
+  private phoneUseTile(cell: { x: number; y: number }): boolean {
+    const chest = this.state.chests.find((item) => !item.open && item.x === cell.x && item.y === cell.y);
+    if (chest) {
+      if (useChest(this.state, cell.x, cell.y)) {
+        this.commit();
+        this.refresh();
+      }
+      return true;
+    }
+    const exit = this.run.exit;
+    if (exit && exit.room === this.run.current && exit.cell.x === cell.x && exit.cell.y === cell.y) {
+      if (!this.lesson) this.onHub?.();
+      return true;
+    }
+    return false;
+  }
+
+  private confirmWeapon(cell: { x: number; y: number } | null): void {
+    if (!cell) return;
+    const aim = nearestAim(this.state.hero, cell);
+    if (!aim) return;
+    this.state.look = aim;
+    const dir = this.dirToward(cell.x, cell.y);
+    if (dir) face(this.state, dir);
+    this.aimingWeapon = false;
+    this.attack();
+  }
+
+  private confirmBlink(cell: { x: number; y: number } | null): void {
+    if (this.lesson && this.lessonStep === "blink") {
+      if (cell && blinkCells(this.state).some((spot) => spot.x === cell.x && spot.y === cell.y)) {
+        this.choosingBlink = false;
+        const from = { x: this.state.hero.x, y: this.state.hero.y };
+        const before = this.state.blink;
+        if (blink(this.state, cell.x, cell.y) && (this.state.hero.x !== from.x || this.state.hero.y !== from.y) && this.state.blink < before) {
+          this.renderer.playBlink(from, { x: this.state.hero.x, y: this.state.hero.y });
+          this.refresh();
+          this.lessonAfter("blink");
+        } else this.refresh();
+      }
+      return;
+    }
+    if (cell && blinkCells(this.state).some((spot) => spot.x === cell.x && spot.y === cell.y)) {
+      this.choosingBlink = false;
+      const from = { x: this.state.hero.x, y: this.state.hero.y };
+      if (blink(this.state, cell.x, cell.y)) {
+        this.renderer.playBlink(from, { x: this.state.hero.x, y: this.state.hero.y });
+        this.lessonAfter("blink");
+      }
+      this.refresh();
+    }
+  }
+
+  private confirmAbility(cell: { x: number; y: number } | null): void {
+    const slot = this.abilitySlot;
+    if (slot === null) return;
+    const armed = this.state.abilities[slot];
+    if (!armed) return;
+    if (armed.cast === "arrow") {
+      if (!cell || !nearestAim(this.state.hero, cell)) return;
+      this.state.look = nearestAim(this.state.hero, cell);
+      const places = this.places();
+      const cast = castHeroAbility(this.state, slot, cell);
+      this.abilitySlot = null;
+      this.state.aim = null;
+      if (cast) {
+        this.playMoves(places);
+        this.commit();
+      }
+      this.refresh();
+      return;
+    }
+    const aim = this.state.aim ?? [];
+    if (cell && aim.some((spot) => spot.x === cell.x && spot.y === cell.y)) {
+      const places = this.places();
+      const cast = castHeroAbility(this.state, slot, cell);
+      this.abilitySlot = null;
+      this.state.aim = null;
+      if (cast) {
+        this.playMoves(places);
+        this.commit();
+      }
+      this.refresh();
+    }
+  }
+
+  private pressWeapon(): void {
+    if (this.pause || this.mapOpen || this.locked() || this.state.outcome === "lost") return;
+    if (this.lesson && this.lessonStep === "reload") {
+      this.doReload();
+      return;
+    }
+    if (this.aimingWeapon) {
+      this.aimingWeapon = false;
+      this.refresh();
+      return;
+    }
+    if (this.lesson && !lessonAllows(this.lessonStep, "attack")) return;
+    this.choosingBlink = false;
+    this.dropAbilityAim();
+    this.aimingWeapon = true;
+    this.refresh();
+  }
+
+  private doReload(): void {
+    if (this.lesson && !lessonAllows(this.lessonStep, "reload")) return;
+    if (this.locked() || this.mapOpen || this.pause || this.state.outcome === "lost") return;
+    this.choosingBlink = false;
+    this.aimingWeapon = false;
+    this.dropAbilityAim();
+    const places = this.places();
+    if (reload(this.state)) {
+      playReload(this.state.weapon, this.state.hero.facing);
+      this.playMoves(places);
+      this.lessonAfter("reload");
+    }
+    this.commit();
     this.refresh();
   }
 
@@ -909,8 +1111,14 @@ export class RoomController {
     const row = document.createElement("div");
     row.className = "dungeon-hud-right";
 
-    const weapon = document.createElement("div");
+    const weapon = document.createElement(this.coarse ? "button" : "div");
     weapon.className = "dungeon-slot dungeon-gear-slot";
+    if (weapon instanceof HTMLButtonElement) {
+      weapon.type = "button";
+      weapon.classList.add("dungeon-weapon-aim");
+      weapon.addEventListener("click", () => this.pressWeapon());
+    }
+    this.weaponSlot = weapon;
     const weaponIcon = document.createElement("canvas");
     weaponIcon.width = 96;
     weaponIcon.height = 96;
@@ -920,7 +1128,8 @@ export class RoomController {
     weaponKey.textContent = "LMB";
     const ammoBadge = document.createElement("span");
     ammoBadge.className = "dungeon-slot-count";
-    weapon.append(weaponIcon, weaponKey, ammoBadge);
+    if (!this.coarse) weapon.append(weaponIcon, weaponKey, ammoBadge);
+    else weapon.append(weaponIcon, ammoBadge);
     bindTip(
       weapon,
       () => weaponById(this.state.weapon).name,
@@ -1015,6 +1224,7 @@ export class RoomController {
     this.ammoBadge.textContent = shots === null ? "" : String(shots);
     this.blinkBadge.textContent = String(this.state.blink);
     this.blinkButton.classList.toggle("is-armed", this.choosingBlink);
+    this.weaponSlot?.classList.toggle("is-armed", this.aimingWeapon);
     this.blinkButton.setAttribute("aria-label", `Blink ${this.state.blink}`);
   }
 
@@ -1022,6 +1232,7 @@ export class RoomController {
     if (this.pause || this.mapOpen || this.host.querySelector(".dungeon-settings")) return;
     if (this.locked() || this.state.outcome === "lost") return;
     if (this.lesson && !lessonAllows(this.lessonStep, "blink")) return;
+    this.aimingWeapon = false;
     if (this.choosingBlink) {
       this.choosingBlink = false;
       this.state.note = "Blink cancelled.";
@@ -1043,6 +1254,7 @@ export class RoomController {
 
   private pressAbility(slot: number): void {
     if (this.lesson || this.pause || this.mapOpen || this.host.querySelector(".dungeon-settings")) return;
+    this.aimingWeapon = false;
     if (this.locked()) {
       this.state.note = "Wait until the turn finishes drawing.";
       this.refresh();
@@ -1119,12 +1331,8 @@ export class RoomController {
     if (this.pause) return;
     if (event.code === "Tab") {
       event.preventDefault();
-      if (this.lesson && !lessonAllows(this.lessonStep, "map")) return;
-      if (event.repeat || this.locked()) return;
-      this.mapOpen = !this.mapOpen;
-      this.choosingBlink = false;
-      this.dropAbilityAim();
-      this.refresh();
+      if (event.repeat) return;
+      this.toggleMap();
       return;
     }
     const dir = MOVE_KEYS[event.code];
@@ -1150,17 +1358,7 @@ export class RoomController {
     }
     if (event.repeat || this.locked() || this.mapOpen) return;
     if (event.code === "KeyR") {
-      if (this.lesson && !lessonAllows(this.lessonStep, "reload")) return;
-      this.choosingBlink = false;
-      this.dropAbilityAim();
-      const places = this.places();
-      if (reload(this.state)) {
-        playReload(this.state.weapon, this.state.hero.facing);
-        this.playMoves(places);
-        this.lessonAfter("reload");
-      }
-      this.commit();
-      this.refresh();
+      this.doReload();
       event.preventDefault();
       return;
     }
@@ -1378,6 +1576,7 @@ export class RoomController {
       this.choosingBlink,
       this.mapView(),
       this.mapOpen,
+      !this.coarse || this.aimingWeapon,
     );
   }
 

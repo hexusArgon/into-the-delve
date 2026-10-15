@@ -1002,6 +1002,7 @@ export class RoomRenderer {
     aimBlink: boolean,
     map: MapView | null = null,
     mapOpen = false,
+    showAttacks = true,
   ): void {
     const room = state.room;
     const time = performance.now();
@@ -1039,7 +1040,7 @@ export class RoomRenderer {
     if (pattern) alignWallPattern(pattern, box, sprites);
     const blinks = aimBlink ? blinkCells(state) : (state.aim ?? []);
     const abilityAiming = !aimBlink && state.aim !== null;
-    const attacks = state.outcome !== "lost" && !aimBlink && !abilityAiming ? attackCells(state) : [];
+    const attacks = showAttacks && state.outcome !== "lost" && !aimBlink && !abilityAiming ? attackCells(state) : [];
     const portal = map?.rooms[map.current]?.portal ?? null;
     const exit = map?.exit ?? null;
     drawGround(ctx, box, state, time);
