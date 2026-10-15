@@ -46,12 +46,12 @@ export function bindTip(
     title.style.fontWeight = "700";
     const body = document.createElement("div");
     body.textContent = typeof text === "function" ? text() : text;
-    body.style.marginTop = "4px";
+    body.style.marginTop = "calc(4 * var(--hud))";
     body.style.color = "#d4bc82";
     body.style.whiteSpace = "pre-wrap";
     node.append(title, body);
     node.style.pointerEvents = "none";
-    node.style.maxWidth = "320px";
+    node.style.maxWidth = "calc(320 * var(--hud))";
     node.style.display = "block";
     moveTip(event);
   };
@@ -67,10 +67,10 @@ export function tipBox(): HTMLElement {
   tip.style.position = "fixed";
   tip.style.zIndex = "30";
   tip.style.display = "none";
-  tip.style.maxWidth = "320px";
-  tip.style.padding = "8px 10px";
+  tip.style.maxWidth = "calc(320 * var(--hud))";
+  tip.style.padding = "calc(8 * var(--hud)) calc(10 * var(--hud))";
   tip.style.pointerEvents = "none";
-  tip.style.font = "14px Palatino Linotype, Palatino, serif";
+  tip.style.font = "calc(14 * var(--hud)) Palatino Linotype, Palatino, serif";
   tip.addEventListener("pointerenter", () => {
     tipHover = true;
     window.clearTimeout(hideTimer);
@@ -103,7 +103,7 @@ export function hideTip(): void {
   if (!tip) return;
   tip.style.display = "none";
   tip.style.pointerEvents = "none";
-  tip.style.maxWidth = "320px";
+  tip.style.maxWidth = "calc(320 * var(--hud))";
 }
 
 /** Карточка стоит на месте, пока курсор на ней или на иконке. */
@@ -113,7 +113,7 @@ export function bindCardTip(el: HTMLElement, render: () => HTMLElement): void {
     const node = tipBox();
     node.replaceChildren(render());
     node.style.pointerEvents = "auto";
-    node.style.maxWidth = "340px";
+    node.style.maxWidth = "calc(340 * var(--hud))";
     node.style.display = "block";
     placeTip(event.clientX, event.clientY);
   };
@@ -132,7 +132,7 @@ export function bindAbilityTip(el: HTMLElement, read: () => AbilityView | null):
     title.style.fontWeight = "700";
     const body = document.createElement("div");
     body.textContent = "Empty slot.";
-    body.style.marginTop = "4px";
+    body.style.marginTop = "calc(4 * var(--hud))";
     body.style.color = "#d4bc82";
     empty.append(title, body);
     return empty;

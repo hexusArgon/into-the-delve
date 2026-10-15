@@ -10,12 +10,12 @@ export function paintGuild(host: HTMLElement, rows: readonly GuildRow[], onBack:
   host.style.overflow = "auto";
 
   const page = document.createElement("div");
-  page.style.maxWidth = "720px";
+  page.style.maxWidth = "calc(720 * var(--hud))";
   page.style.margin = "0 auto";
-  page.style.padding = "28px 20px 48px";
+  page.style.padding = "calc(28 * var(--hud)) calc(20 * var(--hud)) calc(48 * var(--hud))";
   page.style.display = "flex";
   page.style.flexDirection = "column";
-  page.style.gap = "14px";
+  page.style.gap = "calc(14 * var(--hud))";
 
   const title = document.createElement("h1");
   title.className = "dungeon-title";
@@ -28,8 +28,8 @@ export function paintGuild(host: HTMLElement, rows: readonly GuildRow[], onBack:
 
   const table = document.createElement("div");
   table.style.display = "grid";
-  table.style.gridTemplateColumns = "72px 1fr 120px";
-  table.style.gap = "8px 16px";
+  table.style.gridTemplateColumns = "calc(72 * var(--hud)) 1fr calc(120 * var(--hud))";
+  table.style.gap = "calc(8 * var(--hud)) calc(16 * var(--hud))";
   table.style.alignItems = "center";
   for (const heading of ["Rank", "Name", "Level"]) {
     const cell = document.createElement("div");
@@ -59,8 +59,8 @@ export function paintGuild(host: HTMLElement, rows: readonly GuildRow[], onBack:
   back.type = "button";
   back.textContent = "Back";
   back.className = "dungeon-button dungeon-back";
-  back.style.fontSize = "18px";
-  back.style.padding = "14px 22px";
+  back.style.fontSize = "calc(18 * var(--hud))";
+  back.style.padding = "calc(14 * var(--hud)) calc(22 * var(--hud))";
   back.style.cursor = "pointer";
   back.addEventListener("click", onBack);
 

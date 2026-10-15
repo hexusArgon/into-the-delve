@@ -1,6 +1,8 @@
 import { RoomRenderer } from "./view.ts";
 import { loadSprites, type Sprites } from "./sprites.ts";
-import { abilityAim, arrowBeam, attack, blink, blinkCells, castHeroAbility, face, interactTarget, livingMonsters, nearestAim, reload, roomMonsters, step, useChest, wait, type Dir, type RoomState } from "./sim.ts";
+import { abilityAim, arrowBeam, attack, blink, blinkCells, castHeroAbility, face, interactTarget, livingMonsters, nearestAim, onBoard, reload, roomMonsters, step, useChest, wait, type Dir, type RoomState } from "./sim.ts";
+import { heroAuras, monsterAuras, type Aura } from "./statuses.ts";
+import { monsterById, strikeElement, type DamageType } from "../data/monsters.ts";
 import { abilityView } from "../data/hero-abilities.ts";
 import { bindAbilityTip, bindTip } from "./tip.ts";
 import { EMPTY_GEAR, type GearBonus } from "../data/items.ts";
@@ -8,7 +10,7 @@ import type { RunAbility } from "../data/hero-abilities.ts";
 import type { WeaponId } from "../data/weapons.ts";
 import { WEAPONS, weaponById } from "../data/weapons.ts";
 import { createRun, syncRun, teleport, travel, type Run } from "./floor.ts";
-import { METER_TURNS } from "./rules.ts";
+import { MINIMAP_MARGIN, minimapPanel } from "./map.ts";
 import { playAbility } from "./ability-sfx.ts";
 import { playFootstep, playHeroDeath, playMonsterCue, playReload, playShieldBreak, playWeaponSound, preloadSwordBlows } from "./sfx.ts";
 import { installDungeonMusic } from "./music.ts";
@@ -21,8 +23,7 @@ import "./ui.css";
 const HOLD_STEP_MS = 200;
 
 function shownHp(value: number): string {
-  const rounded = Math.round(value * 100) / 100;
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+  return String(Math.trunc(value));
 }
 
 const MOVE_KEYS: Record<string, Dir> = {
@@ -98,8 +99,8 @@ function paintBlinkIcon(canvas: HTMLCanvasElement): void {
 export class RoomController {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
-  private readonly note: HTMLElement;
-  private readonly stats: HTMLElement;
+  private readonly goldText: HTMLElement;
+  private readonly goldIcon: HTMLCanvasElement;
   private readonly renderer = new RoomRenderer();
   private sprites: Sprites | null = null;
   private seed = newSeed();
@@ -121,6 +122,9 @@ export class RoomController {
   private lastMoveAt = 0;
   private moveTimer = 0;
   private readonly portrait: HTMLCanvasElement;
+  private readonly heroAurasRow: HTMLElement;
+  private readonly focusAuras: HTMLElement;
+  private hover: { x: number; y: number } | null = null;
   private readonly hpFill: HTMLElement;
   private readonly hpText: HTMLElement;
   private readonly mpFill: HTMLElement;
@@ -191,6 +195,11 @@ export class RoomController {
     this.portrait.width = 192;
     this.portrait.height = 192;
     this.portrait.className = "dungeon-portrait-face";
+    this.heroAurasRow = document.createElement("div");
+    this.heroAurasRow.className = "dungeon-auras";
+    this.focusAuras = document.createElement("div");
+    this.focusAuras.className = "dungeon-focus";
+    this.focusAuras.hidden = true;
 
     const bars = document.createElement("div");
     bars.className = "dungeon-bars";
@@ -210,18 +219,14 @@ export class RoomController {
     this.hpText = hp.text;
     this.mpFill = mp.fill;
     this.mpText = mp.text;
-    this.stats = document.createElement("div");
-    this.stats.className = "dungeon-hud-meta";
-    bars.append(hp.row, mp.row, this.stats);
+    bars.append(this.heroAurasRow, hp.row, mp.row);
 
     const center = document.createElement("div");
     center.className = "dungeon-hud-center";
-    this.note = document.createElement("div");
-    this.note.className = "dungeon-hud-note";
     const prompts = document.createElement("div");
     prompts.className = "dungeon-prompts";
     prompts.append(prompt("Shift", "Turn"), prompt("X", "Wait"));
-    center.append(this.note, prompts);
+    center.append(prompts);
 
     const hands = this.mountGear();
     this.weaponIcon = hands.weaponIcon;
@@ -231,7 +236,12 @@ export class RoomController {
 
     left.append(this.portrait, bars, this.mountAbilityBar());
     bar.append(left, center, hands.row);
-    host.append(this.canvas, bar);
+    this.goldIcon = document.createElement("canvas");
+    this.goldIcon.width = 64;
+    this.goldIcon.height = 64;
+    this.goldIcon.className = "dungeon-corner-coin";
+    this.goldText = document.createElement("span");
+    host.append(this.canvas, this.focusAuras, bar, this.mountCorner());
     const leave = lesson ? () => this.lesson?.dead(this.lessonStep) : onHub;
     if (leave) this.lostPanel = this.lostBanner(leave);
     if (this.lostPanel) host.append(this.lostPanel);
@@ -239,6 +249,18 @@ export class RoomController {
 
     this.canvas.addEventListener("pointerdown", (event) => this.onPointer(event));
     this.canvas.addEventListener("pointermove", (event) => this.onHover(event));
+    this.canvas.addEventListener("pointerleave", (event) => {
+      const next = event.relatedTarget;
+      if (next instanceof Node && this.focusAuras.contains(next)) return;
+      this.hover = null;
+      this.paintAuras();
+    });
+    this.focusAuras.addEventListener("pointerleave", (event) => {
+      const next = event.relatedTarget;
+      if (next instanceof Node && (this.canvas === next || this.canvas.contains(next))) return;
+      this.hover = null;
+      this.paintAuras();
+    });
     this.onKey = (event) => this.handleKey(event);
     this.onKeyUp = (event) => this.handleKeyUp(event);
     this.onBlur = () => this.releaseMoves();
@@ -260,6 +282,7 @@ export class RoomController {
       this.paintLoadout();
       this.paintAbilityBar();
       this.paintLessonWeapons();
+      this.paintGold(sprites.gold);
       this.draw();
     });
     preloadSwordBlows();
@@ -323,25 +346,25 @@ export class RoomController {
     const picks = document.createElement("div");
     picks.style.display = "none";
     picks.style.flexWrap = "wrap";
-    picks.style.gap = "8px";
+    picks.style.gap = "calc(8 * var(--hud))";
     for (const weapon of WEAPONS) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "dungeon-button";
-      button.style.padding = "6px";
+      button.style.padding = "calc(6 * var(--hud))";
       button.style.display = "flex";
       button.style.flexDirection = "column";
       button.style.alignItems = "center";
-      button.style.gap = "4px";
-      button.style.width = "88px";
+      button.style.gap = "calc(4 * var(--hud))";
+      button.style.width = "calc(88 * var(--hud))";
       const canvas = document.createElement("canvas");
       canvas.width = 48;
       canvas.height = 48;
-      canvas.style.width = "48px";
-      canvas.style.height = "48px";
+      canvas.style.width = "calc(48 * var(--hud))";
+      canvas.style.height = "calc(48 * var(--hud))";
       const label = document.createElement("span");
       label.textContent = weapon.name;
-      label.style.fontSize = "12px";
+      label.style.fontSize = "calc(12 * var(--hud))";
       button.append(canvas, label);
       button.addEventListener("click", () => {
         if (this.lessonStep !== "pick") return;
@@ -352,7 +375,7 @@ export class RoomController {
     const skip = document.createElement("button");
     skip.type = "button";
     skip.className = "dungeon-button";
-    skip.style.padding = "8px 12px";
+    skip.style.padding = "calc(8 * var(--hud)) calc(12 * var(--hud))";
     skip.style.alignSelf = "flex-start";
     skip.textContent = "Skip";
     skip.addEventListener("click", () => this.lesson?.skip());
@@ -601,20 +624,20 @@ export class RoomController {
     panel.style.justifyContent = "center";
     const card = document.createElement("div");
     card.className = "dungeon-lost-card";
-    card.style.padding = "24px";
+    card.style.padding = "calc(24 * var(--hud))";
     card.style.display = "flex";
     card.style.flexDirection = "column";
-    card.style.gap = "12px";
+    card.style.gap = "calc(12 * var(--hud))";
     card.style.alignItems = "flex-start";
     const title = document.createElement("div");
     title.className = "dungeon-title";
     title.textContent = "The run is over";
-    title.style.fontSize = "22px";
+    title.style.fontSize = "calc(22 * var(--hud))";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "dungeon-button dungeon-button-primary";
     button.textContent = "To the hub";
-    button.style.padding = "10px 16px";
+    button.style.padding = "calc(10 * var(--hud)) calc(16 * var(--hud))";
     button.style.cursor = "pointer";
     button.addEventListener("click", onHub);
     card.append(title, button);
@@ -654,8 +677,19 @@ export class RoomController {
   }
 
   private onHover(event: PointerEvent): void {
-    if (this.pause || this.mapOpen || this.state.outcome === "lost") return;
+    if (this.pause || this.mapOpen || this.state.outcome === "lost") {
+      if (this.hover) {
+        this.hover = null;
+        this.paintAuras();
+      }
+      return;
+    }
     const cell = this.cellFromEvent(event);
+    const sameCell = cell?.x === this.hover?.x && cell?.y === this.hover?.y;
+    if (!sameCell) {
+      this.hover = cell;
+      this.paintAuras();
+    }
     const look = cell ? nearestAim(this.state.hero, cell) : null;
     const prev = this.state.look;
     if (look?.x === prev?.x && look?.y === prev?.y) return;
@@ -789,6 +823,37 @@ export class RoomController {
     return dy > 0 ? "down" : "up";
   }
 
+  private mountCorner(): HTMLElement {
+    const corner = document.createElement("div");
+    corner.className = "dungeon-corner";
+    if (!this.lesson) {
+      const pause = document.createElement("button");
+      pause.type = "button";
+      pause.className = "dungeon-corner-pause";
+      pause.textContent = "Pause";
+      pause.addEventListener("click", () => this.togglePause());
+      corner.append(pause);
+    }
+    const purse = document.createElement("div");
+    purse.className = "dungeon-corner-gold";
+    purse.append(this.goldIcon, this.goldText);
+    corner.append(purse);
+    return corner;
+  }
+
+  private paintGold(gold: HTMLCanvasElement): void {
+    const ctx = this.goldIcon.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, this.goldIcon.width, this.goldIcon.height);
+    ctx.drawImage(gold, 0, 0, this.goldIcon.width, this.goldIcon.height);
+  }
+
+  private togglePause(): void {
+    if (this.lesson || this.host.querySelector(".dungeon-settings")) return;
+    if (this.pause) this.closePause();
+    else this.openPause();
+  }
+
   private openPause(): void {
     if (this.pause) return;
     this.releaseMoves();
@@ -802,7 +867,7 @@ export class RoomController {
     panel.addEventListener("click", (event) => event.stopPropagation());
     const title = document.createElement("h1");
     title.className = "dungeon-title";
-    title.style.fontSize = "28px";
+    title.style.fontSize = "calc(28 * var(--hud))";
     title.style.margin = "0";
     title.textContent = "Menu";
     const resume = this.pauseButton("Resume", true, () => this.closePause());
@@ -1047,12 +1112,8 @@ export class RoomController {
     if (event.key === "Shift") this.shiftHeld = true;
     if (event.code === "Escape") {
       event.preventDefault();
-      if (this.lesson || event.repeat || this.host.querySelector(".dungeon-settings")) return;
-      if (this.pause) {
-        this.closePause();
-        return;
-      }
-      this.openPause();
+      if (event.repeat) return;
+      this.togglePause();
       return;
     }
     if (this.pause) return;
@@ -1144,17 +1205,11 @@ export class RoomController {
   }
 
   private refresh(): void {
-    const meter = this.state.meterTurns > 0 ? ` · Meter ${this.state.meterTurns}/${METER_TURNS}` : "";
     this.hpText.textContent = `${shownHp(this.state.hero.hp)}/${shownHp(this.state.hero.maxHp)}`;
     this.hpFill.style.width = `${Math.max(0, this.state.hero.hp / this.state.hero.maxHp) * 100}%`;
     this.mpText.textContent = `${this.state.mp}/${this.state.maxMp}`;
     this.mpFill.style.width = `${Math.max(0, this.state.mp / this.state.maxMp) * 100}%`;
-    const room = this.state.room;
-    const visited = this.run.visited.filter(Boolean).length;
-    const living = livingMonsters(this.state);
-    const foe = living.length === 0 ? "" : living.length === 1 ? `${living[0]!.name} · ` : `${living.length} foes · `;
-    this.stats.textContent = `${foe}${room.name} · ${visited}/${this.run.rooms.length} · gold ${this.state.carried}${meter}`;
-    this.note.textContent = this.state.note;
+    this.goldText.textContent = String(this.state.carried);
     this.paintAbilityBar();
     if (this.state.strike) {
       const from = this.state.strike.from;
@@ -1172,8 +1227,115 @@ export class RoomController {
     }
     if (this.lostPanel) this.lostPanel.style.display = this.showLost() ? "flex" : "none";
     this.playAbilities();
+    this.paintAuras();
+    this.fitFocus();
     this.draw();
     this.listeners.forEach((listener) => listener());
+  }
+
+  private fitFocus(): void {
+    const panel = this.mapOpen ? null : minimapPanel(this.mapView());
+    const gap = 12;
+    const inset = panel ? panel.width + MINIMAP_MARGIN + gap : MINIMAP_MARGIN;
+    this.focusAuras.style.right = `calc(${inset} * var(--hud))`;
+  }
+
+  private paintAuras(): void {
+    this.fillAuras(this.heroAurasRow, heroAuras(this.state));
+    const monster = this.hover
+      ? this.state.monsters.find((unit) => onBoard(unit) && unit.x === this.hover?.x && unit.y === this.hover?.y) ?? null
+      : null;
+    this.paintFocus(monster);
+  }
+
+  private paintFocus(monster: RoomState["monsters"][number] | null): void {
+    this.focusAuras.replaceChildren();
+    if (!monster || monster.role === "hero") {
+      this.focusAuras.hidden = true;
+      return;
+    }
+    this.focusAuras.hidden = false;
+    const head = document.createElement("div");
+    head.className = "dungeon-focus-head";
+    const name = document.createElement("span");
+    name.className = "dungeon-focus-name";
+    name.textContent = monster.name;
+    head.append(name);
+    const strike = strikeElement(monster.role);
+    if (strike) head.append(this.elementChip(strike, "Strikes"));
+    for (const type of monsterById(monster.kind)?.immune ?? []) head.append(this.elementChip(type, "Resists"));
+    const list = document.createElement("div");
+    list.className = "dungeon-focus-list";
+    const art = this.sprites?.status;
+    for (const aura of monsterAuras(this.state, monster)) {
+      const row = document.createElement("div");
+      row.className = "dungeon-focus-row";
+      const slot = document.createElement("div");
+      slot.className = `dungeon-aura dungeon-slot dungeon-aura-${aura.tone}`;
+      slot.dataset.aura = aura.id;
+      const canvas = document.createElement("canvas");
+      canvas.width = 64;
+      canvas.height = 64;
+      canvas.className = "dungeon-aura-icon";
+      const icon = art?.[aura.id];
+      const ctx = canvas.getContext("2d");
+      if (ctx && icon) ctx.drawImage(icon, 0, 0, canvas.width, canvas.height);
+      slot.append(canvas);
+      if (aura.mark || aura.counts.length > 0) {
+        const count = document.createElement("span");
+        count.className = "dungeon-aura-count";
+        count.textContent = aura.mark || aura.counts.join("\n");
+        slot.append(count);
+      }
+      const copy = document.createElement("p");
+      copy.className = "dungeon-focus-copy";
+      const title = document.createElement("b");
+      title.textContent = `${aura.name}: `;
+      copy.append(title, aura.text);
+      row.append(slot, copy);
+      list.append(row);
+    }
+    this.focusAuras.append(head, list);
+  }
+
+  private elementChip(type: DamageType, label: string): HTMLElement {
+    const chip = document.createElement("span");
+    chip.className = "dungeon-focus-chip";
+    const canvas = document.createElement("canvas");
+    canvas.width = 48;
+    canvas.height = 48;
+    canvas.className = "dungeon-focus-mark";
+    paintElementMark(canvas, type);
+    const text = document.createElement("span");
+    text.textContent = label;
+    chip.append(canvas, text);
+    return chip;
+  }
+
+  private fillAuras(host: HTMLElement, auras: readonly Aura[]): void {
+    host.replaceChildren();
+    const art = this.sprites?.status;
+    for (const aura of auras) {
+      const slot = document.createElement("div");
+      slot.className = `dungeon-aura dungeon-slot dungeon-aura-${aura.tone}`;
+      slot.dataset.aura = aura.id;
+      const canvas = document.createElement("canvas");
+      canvas.width = 64;
+      canvas.height = 64;
+      canvas.className = "dungeon-aura-icon";
+      const icon = art?.[aura.id];
+      const ctx = canvas.getContext("2d");
+      if (ctx && icon) ctx.drawImage(icon, 0, 0, canvas.width, canvas.height);
+      slot.append(canvas);
+      if (aura.mark || aura.counts.length > 0) {
+        const count = document.createElement("span");
+        count.className = "dungeon-aura-count";
+        count.textContent = aura.mark || aura.counts.join("\n");
+        slot.append(count);
+      }
+      bindTip(slot, aura.name, aura.text);
+      host.append(slot);
+    }
   }
 
   private playAbilities(): void {
@@ -1229,4 +1391,74 @@ export class RoomController {
   private showLost(): boolean {
     return this.state.outcome === "lost" && this.renderer.lostReady();
   }
+}
+
+const ELEMENT_INK: Record<DamageType, string> = {
+  physical: "#d9d3c7",
+  fire: "#e2582a",
+  earth: "#c4a15a",
+  poison: "#7dce45",
+  water: "#3a8fd4",
+  ice: "#d7f4ff",
+};
+
+function paintElementMark(canvas: HTMLCanvasElement, type: DamageType): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const s = canvas.width;
+  ctx.clearRect(0, 0, s, s);
+  ctx.beginPath();
+  ctx.arc(s / 2, s / 2, s * 0.46, 0, Math.PI * 2);
+  ctx.fillStyle = "#14181c";
+  ctx.fill();
+  ctx.lineWidth = Math.max(2, s * 0.06);
+  ctx.strokeStyle = ELEMENT_INK[type];
+  ctx.stroke();
+  ctx.fillStyle = ELEMENT_INK[type];
+  ctx.save();
+  ctx.translate(s / 2, s / 2);
+  const u = s * 0.2;
+  ctx.beginPath();
+  if (type === "earth") {
+    ctx.moveTo(0, -u * 1.1);
+    ctx.lineTo(u, 0);
+    ctx.lineTo(0, u * 1.1);
+    ctx.lineTo(-u, 0);
+    ctx.closePath();
+    ctx.fill();
+  } else if (type === "fire") {
+    ctx.moveTo(0, -u * 1.3);
+    ctx.quadraticCurveTo(u, 0, u * 0.45, u);
+    ctx.quadraticCurveTo(0, u * 0.2, -u * 0.45, u);
+    ctx.quadraticCurveTo(-u, 0, 0, -u * 1.3);
+    ctx.fill();
+  } else if (type === "poison") {
+    ctx.moveTo(0, -u * 1.2);
+    ctx.bezierCurveTo(u, -u * 0.2, u * 0.8, u * 0.8, 0, u);
+    ctx.bezierCurveTo(-u * 0.8, u * 0.8, -u, -u * 0.2, 0, -u * 1.2);
+    ctx.fill();
+  } else if (type === "water") {
+    ctx.moveTo(-u, u * 0.2);
+    ctx.quadraticCurveTo(-u * 0.4, -u, 0, u * 0.2);
+    ctx.quadraticCurveTo(u * 0.4, u * 1.3, u, u * 0.2);
+    ctx.lineWidth = Math.max(2, s * 0.08);
+    ctx.stroke();
+  } else if (type === "ice") {
+    ctx.moveTo(0, -u * 1.15);
+    ctx.lineTo(0, u * 1.15);
+    ctx.moveTo(-u, 0);
+    ctx.lineTo(u, 0);
+    ctx.moveTo(-u * 0.7, -u * 0.7);
+    ctx.lineTo(u * 0.7, u * 0.7);
+    ctx.moveTo(u * 0.7, -u * 0.7);
+    ctx.lineTo(-u * 0.7, u * 0.7);
+    ctx.lineWidth = Math.max(2, s * 0.08);
+    ctx.stroke();
+  } else {
+    ctx.moveTo(-u * 0.85, u * 0.85);
+    ctx.lineTo(u * 0.85, -u * 0.85);
+    ctx.lineWidth = Math.max(2, s * 0.1);
+    ctx.stroke();
+  }
+  ctx.restore();
 }

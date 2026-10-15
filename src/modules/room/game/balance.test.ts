@@ -75,6 +75,22 @@ assert.equal(spore.hp, 0);
 assert.equal(spored.hero.poison, 0);
 assert.equal(groundAt(spored, 3, 6), null);
 
+// Взрыв споры бьёт на 30 ядом и кладёт 1 стак. Клетка под героем в том же раунде добавляет ещё стак и тик 1.
+const burst = room("14");
+burst.monster.cooldowns.spires = 99;
+burst.monster.x = 11;
+burst.monster.y = 11;
+const bomb = monsterFighter(SPORE, { x: 3, y: 6, facing: "left" }, true);
+burst.monsters.push(bomb);
+wait(burst, () => 0);
+assert.equal(bomb.windup?.kind, "fuse");
+assert.equal(burst.hero.hp, HERO_HP);
+wait(burst, () => 0);
+assert.equal(bomb.hp, 0);
+assert.equal(burst.hero.hp, HERO_HP - KIT.spore.damage - 1);
+assert.equal(burst.hero.poison, 2);
+assert.equal(groundAt(burst, 2, 6)?.stacks, 1);
+
 // Стан игрока пропускает его ход, кулдауны за пропуск не тикают.
 const grabbed = room("16");
 grabbed.monster.mode = "ground";

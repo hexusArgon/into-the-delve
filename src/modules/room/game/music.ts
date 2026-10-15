@@ -87,7 +87,15 @@ function applyMusic(): void {
   musicGain.gain.exponentialRampToValueAtTime(target, now + 0.2);
 }
 
-/** Один случайный трек из семи CC0. Включается с первого клика или клавиши. */
+const CROSSFADE = 1.6;
+
+/** Два последних трека: [только что, перед ним]. Следующий выбор их пропускает. */
+const recent: string[] = [];
+const decoded = new Map<string, Promise<AudioBuffer | null>>();
+let generation = 0;
+let current: { source: AudioBufferSourceNode; gain: GainNode } | null = null;
+
+/** Случайный трек из семи. По окончании — другой, не из двух предыдущих. */
 export function installDungeonMusic(): void {
   if (armed || started) return;
   armed = true;
@@ -111,34 +119,96 @@ async function begin(ctx: AudioContext): Promise<void> {
     master.gain.exponentialRampToValueAtTime(Math.max(0.0001, MUSIC_PEAK * musicVol), now + 2);
   }
   master.connect(ctx.destination);
-
-  const buffer = await loadRandom(ctx);
-  if (!buffer || musicGain !== master) return;
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  source.loop = true;
-  source.connect(master);
-  source.start();
+  for (const url of TRACKS) void loadTrack(ctx, url);
+  await playNext(ctx, master);
 }
 
-async function loadRandom(ctx: AudioContext): Promise<AudioBuffer | null> {
-  const left = [...TRACKS];
+async function playNext(ctx: AudioContext, master: GainNode): Promise<void> {
+  const token = ++generation;
+  const picked = await takeTrack(ctx);
+  if (!picked || token !== generation || musicGain !== master) return;
+  recent.unshift(picked.url);
+  if (recent.length > 2) recent.pop();
+
+  const now = ctx.currentTime;
+  const fade = Math.min(CROSSFADE, Math.max(0.4, picked.buffer.duration * 0.12));
+  fadeOut(current, now, fade);
+
+  const source = ctx.createBufferSource();
+  const gain = ctx.createGain();
+  source.buffer = picked.buffer;
+  source.loop = false;
+  source.connect(gain);
+  gain.connect(master);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(1, now + fade);
+  source.start(now);
+  current = { source, gain };
+
+  let handed = false;
+  let timer = 0;
+  const go = (): void => {
+    if (handed || token !== generation) return;
+    handed = true;
+    window.clearTimeout(timer);
+    void playNext(ctx, master);
+  };
+  source.onended = () => {
+    try {
+      source.disconnect();
+      gain.disconnect();
+    } catch {
+      /* узел уже снят */
+    }
+    go();
+  };
+  const lead = Math.max(0.3, picked.buffer.duration - fade);
+  timer = window.setTimeout(go, lead * 1000);
+}
+
+function fadeOut(playing: { source: AudioBufferSourceNode; gain: GainNode } | null, now: number, fade: number): void {
+  if (!playing) return;
+  playing.gain.gain.cancelScheduledValues(now);
+  playing.gain.gain.setValueAtTime(Math.max(0.0001, playing.gain.gain.value), now);
+  playing.gain.gain.exponentialRampToValueAtTime(0.0001, now + fade);
+  try {
+    playing.source.stop(now + fade);
+  } catch {
+    /* трек уже доиграл */
+  }
+}
+
+/** Случайный трек, кроме двух последних. Если выбор пуст, остаётся хотя бы не предыдущий. */
+async function takeTrack(ctx: AudioContext): Promise<{ url: string; buffer: AudioBuffer } | null> {
+  const last = recent[0];
+  const before = recent[1];
+  const fresh = TRACKS.filter((url) => url !== last && url !== before);
+  const notLast = TRACKS.filter((url) => url !== last);
+  const pool = fresh.length > 0 ? fresh : notLast.length > 0 ? notLast : [...TRACKS];
+  const left = [...pool];
   while (left.length > 0) {
     const pick = Math.floor(Math.random() * left.length);
     const url = left.splice(pick, 1)[0];
     if (!url) continue;
     const buffer = await loadTrack(ctx, url);
-    if (buffer) return buffer;
+    if (buffer) return { url, buffer };
   }
   return null;
 }
 
 function loadTrack(ctx: AudioContext, url: string): Promise<AudioBuffer | null> {
-  return fetch(url)
+  const cached = decoded.get(url);
+  if (cached) return cached;
+  const pending = fetch(url)
     .then((response) => {
       if (!response.ok) throw new Error(response.statusText);
       return response.arrayBuffer();
     })
     .then((bytes) => ctx.decodeAudioData(bytes))
-    .catch(() => null);
+    .catch(() => {
+      decoded.delete(url);
+      return null;
+    });
+  decoded.set(url, pending);
+  return pending;
 }

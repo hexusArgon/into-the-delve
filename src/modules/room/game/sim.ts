@@ -503,7 +503,7 @@ function fanCells(state: RoomState, depth: number, step: Cell): Cell[] {
       const x = hero.x + step.x * i + side.x * offset;
       const y = hero.y + step.y * i + side.y * offset;
       if (isBlocked(state.room, x, y)) break;
-      cells.push({ x, y });
+    cells.push({ x, y });
     }
   }
   return cells;
@@ -514,8 +514,8 @@ function aroundCells(state: RoomState): Cell[] {
   for (const step of AROUND) {
     const x = state.hero.x + step.x;
     const y = state.hero.y + step.y;
-    if (isBlocked(state.room, x, y)) continue;
-    cells.push({ x, y });
+      if (isBlocked(state.room, x, y)) continue;
+      cells.push({ x, y });
   }
   return cells;
 }
@@ -933,11 +933,12 @@ function hurt(
   source: Fighter | null,
   rng: () => number,
   ability = false,
+  directPoison = false,
 ): number {
   if (target.hp <= 0) return 0;
   if (target !== state.hero && !onBoard(target)) return 0;
   if (target === state.hero && state.dodge > 0 && rng() < Math.min(1, state.dodge)) return 0;
-  if (type === "poison") {
+  if (type === "poison" && !directPoison) {
     dose(state, target, amount, source, rng, ability);
     return 0;
   }
@@ -956,6 +957,10 @@ function hurt(
     if (type === "water") target.wet = ELEMENTS.wetTurns;
   }
   landed(state, target, dealt, source, rng, ability);
+  if (directPoison && target.hp > 0) {
+    target.poison += 1;
+    target.poisonWindow = ELEMENTS.poisonWindow;
+  }
   return dealt;
 }
 
@@ -1022,11 +1027,11 @@ function chip(state: RoomState, target: Fighter, points: number, byHero: boolean
   target.freshStun = true;
   if (target.mode === "sleep") target.mode = "ground";
   if (byHero) {
-    state.meterTurns = METER_TURNS;
-    state.meterLevel += 1;
-    state.blink += 1;
+      state.meterTurns = METER_TURNS;
+      state.meterLevel += 1;
+      state.blink += 1;
+    }
   }
-}
 
 /** Стан пропускает ход целиком и отменяет отложенный удар. Два стана не складываются. */
 function stunUnit(state: RoomState, unit: Fighter, turns: number): void {
@@ -1057,8 +1062,30 @@ function kill(state: RoomState, unit: Fighter, rng: () => number): void {
   if (unit.packIndex !== undefined) releaseParcels(state, spot(unit), (parcel) => parcel.monster === unit.packIndex && !parcel.chest);
 }
 
+/** Клетки ауры: тот же квадрат, что и стаки вампиризма. Пока идут шпили, ауры нет. */
+export function acolyteAuraCells(state: RoomState): Cell[] {
+  const marked = new Set<string>();
+  const cells: Cell[] = [];
+  const reach = KIT.acolyte.aura;
+  for (const acolyte of state.monsters) {
+    if (acolyte.role !== "acolyte" || !onBoard(acolyte) || acolyte.windup?.kind === "spires") continue;
+    for (let dy = -reach; dy <= reach; dy += 1) {
+      for (let dx = -reach; dx <= reach; dx += 1) {
+        const x = acolyte.x + dx;
+        const y = acolyte.y + dy;
+        if (!isFloor(state.room, x, y)) continue;
+        const key = `${x},${y}`;
+        if (marked.has(key)) continue;
+        marked.add(key);
+        cells.push({ x, y });
+      }
+    }
+  }
+  return cells;
+}
+
 /** Стаки вампиризма: по одному от каждого послушника, чья аура накрывает монстра. */
-function vampirism(state: RoomState, unit: Fighter): number {
+export function vampirism(state: RoomState, unit: Fighter): number {
   let stacks = 0;
   for (const other of state.monsters) {
     if (other.role !== "acolyte" || !onBoard(other) || other.windup?.kind === "spires") continue;
@@ -1382,31 +1409,82 @@ function batTurn(state: RoomState, monster: Fighter, rng: () => number): string 
 
 function slimeTurn(state: RoomState, monster: Fighter, rng: () => number): string {
   if (monster.root > 0) return "";
-  const dirs = ORTHO.slice();
-  for (let i = dirs.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(rng() * (i + 1));
-    [dirs[i], dirs[j]] = [dirs[j]!, dirs[i]!];
+  const clean = roomHasCleanFloor(state);
+  const paths = slimePaths(state, monster);
+  const pool = clean ? slimeCover(state, paths) : paths;
+  const path = pick(pool, rng);
+  if (!path) return "";
+  const from = spot(monster);
+  for (const cell of path) {
+    faceToward(monster, cell);
+    monster.x = cell.x;
+    monster.y = cell.y;
+    breakObject(state, cell, rng);
+    writeGround(state, cell, "poison", KIT.slime.stacks, rng);
   }
-  for (const dir of dirs) {
-    const path: Cell[] = [];
-    for (let i = 1; i <= KIT.slime.steps; i += 1) {
-      const cell = { x: monster.x + dir.x * i, y: monster.y + dir.y * i };
-      if (!vacant(state, cell.x, cell.y)) break;
-      path.push(cell);
-    }
-    if (path.length === 0) continue;
-    const from = spot(monster);
-    for (const cell of path) {
-      faceToward(monster, cell);
-      monster.x = cell.x;
-      monster.y = cell.y;
-      breakObject(state, cell, rng);
-      writeGround(state, cell, "poison", KIT.slime.stacks, rng);
-    }
-    state.fx.push({ kind: "move", from, to: spot(monster), act: "slime" });
-    return "";
-  }
+  state.fx.push({ kind: "move", from, to: spot(monster), act: "slime" });
   return "";
+}
+
+function roomHasCleanFloor(state: RoomState): boolean {
+  for (let y = 0; y < state.room.h; y += 1) {
+    for (let x = 0; x < state.room.w; x += 1) {
+      if (holdsGround(state, x, y) && groundAt(state, x, y)?.kind !== "poison") return true;
+    }
+  }
+  return false;
+}
+
+/** След до KIT.slime.steps клеток. Между шагами можно повернуть. Яд пол не закрывает. */
+function slimePaths(state: RoomState, monster: Fighter): Cell[][] {
+  const paths: Cell[][] = [];
+  const walk = (path: Cell[]): void => {
+    if (path.length > 0) paths.push(path.slice());
+    if (path.length >= KIT.slime.steps) return;
+    const here = path[path.length - 1] ?? spot(monster);
+    for (const step of ORTHO) {
+      const next = { x: here.x + step.x, y: here.y + step.y };
+      if (next.x === monster.x && next.y === monster.y) continue;
+      if (path.some((cell) => cell.x === next.x && cell.y === next.y)) continue;
+      if (!vacant(state, next.x, next.y)) continue;
+      path.push(next);
+      walk(path);
+      path.pop();
+    }
+  };
+  walk([]);
+  return paths;
+}
+
+/** Среди следов берёт те, что красят больше чистого пола. При равенстве — ближе к оставшемуся чистому полу. */
+function slimeCover(state: RoomState, paths: Cell[][]): Cell[][] {
+  let bestPaint = -1;
+  let bestDist = Number.POSITIVE_INFINITY;
+  let chosen: Cell[][] = [];
+  for (const path of paths) {
+    const painted = path.filter((cell) => groundAt(state, cell.x, cell.y)?.kind !== "poison").length;
+    const end = path[path.length - 1]!;
+    const dist = nearestClean(state, end);
+    const better = painted > bestPaint || (painted === bestPaint && dist < bestDist);
+    if (better) {
+      bestPaint = painted;
+      bestDist = dist;
+      chosen = [path];
+    } else if (painted === bestPaint && dist === bestDist) chosen.push(path);
+  }
+  return chosen;
+}
+
+function nearestClean(state: RoomState, from: Cell): number {
+  let best = Number.POSITIVE_INFINITY;
+  for (let y = 0; y < state.room.h; y += 1) {
+    for (let x = 0; x < state.room.w; x += 1) {
+      if (!holdsGround(state, x, y) || groundAt(state, x, y)?.kind === "poison") continue;
+      const dist = Math.abs(x - from.x) + Math.abs(y - from.y);
+      if (dist < best) best = dist;
+    }
+  }
+  return best;
 }
 
 /** Прямоугольник 2 в глубину и 3 в ширину перед скелетом, в сторону героя. */
@@ -1454,6 +1532,19 @@ function spiritTurn(state: RoomState, monster: Fighter, _rng: () => number): str
 }
 
 function mushroomTurn(state: RoomState, monster: Fighter, rng: () => number): string {
+  if (ready(monster, "spore")) {
+    const open: Cell[] = [];
+    for (let y = 0; y < state.room.h; y += 1) {
+      for (let x = 0; x < state.room.w; x += 1) if (vacant(state, x, y)) open.push({ x, y });
+    }
+    const cell = pick(open, rng);
+    if (cell) {
+      state.monsters.push(monsterFighter(SPORE, { x: cell.x, y: cell.y, facing: monster.facing }, true, state.adventure));
+      monster.cooldowns.spore = KIT.mushroom.cooldown;
+      state.fx.push({ kind: "shot", from: spot(monster), to: cell, tone: "poison", act: "spore" });
+      return "The mushroom released a spore.";
+    }
+  }
   const hero = state.hero;
   const gap = manhattan(monster, hero);
   if (gap <= KIT.mushroom.keep && monster.root === 0) {
@@ -1467,19 +1558,6 @@ function mushroomTurn(state: RoomState, monster: Fighter, rng: () => number): st
       monster.y = next.y;
       breakObject(state, next, rng);
       return "";
-    }
-  }
-  if (ready(monster, "spore")) {
-    const open: Cell[] = [];
-    for (let y = 0; y < state.room.h; y += 1) {
-      for (let x = 0; x < state.room.w; x += 1) if (vacant(state, x, y)) open.push({ x, y });
-    }
-    const cell = pick(open, rng);
-    if (cell) {
-      state.monsters.push(monsterFighter(SPORE, { x: cell.x, y: cell.y, facing: monster.facing }, true, state.adventure));
-      monster.cooldowns.spore = KIT.mushroom.cooldown;
-      state.fx.push({ kind: "shot", from: spot(monster), to: cell, tone: "poison", act: "spore" });
-      return "The mushroom released a spore.";
     }
   }
   return "";
@@ -1552,9 +1630,9 @@ function wormUnder(state: RoomState, monster: Fighter, rng: () => number): strin
     const dist = distancesTo(room, hero);
     const here = dist[monster.y * room.w + monster.x] ?? -1;
     if (here > 0) {
-      const options = ORTHO.map((step) => ({ x: monster.x + step.x, y: monster.y + step.y })).filter(
-        (cell) => !isBlocked(room, cell.x, cell.y) && dist[cell.y * room.w + cell.x] === here - 1,
-      );
+  const options = ORTHO.map((step) => ({ x: monster.x + step.x, y: monster.y + step.y })).filter(
+    (cell) => !isBlocked(room, cell.x, cell.y) && dist[cell.y * room.w + cell.x] === here - 1,
+  );
       const next = pick(options, rng);
       if (next) {
         monster.x = next.x;
@@ -1817,7 +1895,7 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
     }
     case "fuse": {
       for (const unit of unitsIn(state, cast.cells, monster)) {
-        if (unit.role !== "mushroom") hurt(state, unit, KIT.spore.stacks, "poison", monster, rng);
+        if (unit.role !== "mushroom") hurt(state, unit, KIT.spore.damage, "poison", monster, rng, false, true);
       }
       pour(state, cast.cells, "poison", KIT.spore.stacks, rng);
       state.fx.push({ kind: "area", cells: cast.cells, tone: "poison", act: "pop" });
@@ -2210,40 +2288,22 @@ function breakChairs(state: RoomState, cells: readonly Cell[], rng: () => number
   return count;
 }
 
-/** Случайная ближайшая клетка пола, не под героем и не под монстром. */
+/** Ближайшая клетка пола. Золото может лежать стопкой, вещь клетку уже занимает. */
 function goldCell(state: RoomState, origin: Cell, rng: () => number): Cell | null {
-  let best = Number.POSITIVE_INFINITY;
-  const options: Cell[] = [];
-  for (let y = 0; y < state.room.h; y += 1) {
-    for (let x = 0; x < state.room.w; x += 1) {
-      if (x === state.hero.x && y === state.hero.y) continue;
-      if (state.monsters.some((monster) => onBoard(monster) && monster.x === x && monster.y === y)) continue;
-      if (!isFloor(state.room, x, y) || isBlocked(state.room, x, y)) continue;
-      const distance = Math.abs(x - origin.x) + Math.abs(y - origin.y);
-      if (distance < best) {
-        best = distance;
-        options.length = 0;
-        options.push({ x, y });
-      } else if (distance === best) options.push({ x, y });
-    }
-  }
-  return pick(options, rng);
+  return nearestDropCell(state, origin, lootTaken(state), rng);
 }
 
-function releaseParcels(state: RoomState, origin: Cell, match: (parcel: LootParcel) => boolean): void {
-  const due = state.pending.filter(match);
-  if (due.length === 0) return;
-  state.pending = state.pending.filter((parcel) => !match(parcel));
-  const taken = new Set(state.loot.map((loot) => `${loot.x},${loot.y}`));
-  for (const parcel of due) {
-    const cell = prizeCell(state, origin, taken) ?? origin;
-    taken.add(`${cell.x},${cell.y}`);
-    state.loot.push({ ...parcel.item, x: cell.x, y: cell.y });
-    state.spoilNames.push(lootName(parcel.item));
-  }
+function lootTaken(state: RoomState): Set<string> {
+  return new Set(state.loot.map((loot) => `${loot.x},${loot.y}`));
 }
 
-function prizeCell(state: RoomState, origin: Cell, taken: ReadonlySet<string>): Cell | null {
+function dropTaken(state: RoomState): Set<string> {
+  const taken = lootTaken(state);
+  for (const pile of state.piles) taken.add(`${pile.x},${pile.y}`);
+  return taken;
+}
+
+function nearestDropCell(state: RoomState, origin: Cell, taken: ReadonlySet<string>, rng: (() => number) | null): Cell | null {
   let best = Number.POSITIVE_INFINITY;
   const options: Cell[] = [];
   for (let y = 0; y < state.room.h; y += 1) {
@@ -2260,7 +2320,25 @@ function prizeCell(state: RoomState, origin: Cell, taken: ReadonlySet<string>): 
       } else if (distance === best) options.push({ x, y });
     }
   }
-  return options[0] ?? null;
+  if (options.length === 0) return null;
+  return rng ? pick(options, rng) : options[0]!;
+}
+
+function releaseParcels(state: RoomState, origin: Cell, match: (parcel: LootParcel) => boolean): void {
+  const due = state.pending.filter(match);
+  if (due.length === 0) return;
+  state.pending = state.pending.filter((parcel) => !match(parcel));
+  const taken = dropTaken(state);
+  for (const parcel of due) {
+    const cell = nearestDropCell(state, origin, taken, null);
+    if (!cell) {
+      state.pending.push(parcel);
+      continue;
+    }
+    taken.add(`${cell.x},${cell.y}`);
+    state.loot.push({ ...parcel.item, x: cell.x, y: cell.y });
+    state.spoilNames.push(lootName(parcel.item));
+  }
 }
 
 function takeGold(state: RoomState): number {

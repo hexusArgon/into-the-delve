@@ -28,7 +28,9 @@ import {
   isBlocked,
   isPit,
   activeHeroZones,
+  acolyteAuraCells,
   roomMonsters,
+  onBoard,
   type Cell,
   type Dir,
   type Fighter,
@@ -473,11 +475,14 @@ function drawFloorEffects(
   portal: Cell | null,
   time: number,
   exit: Cell | null = null,
+  exitArt: HTMLCanvasElement | null = null,
+  aura: readonly Cell[] = [],
 ): void {
   paintCells(ctx, box, attacks, time, (pulse) => `rgba(242, 193, 78, ${0.28 + 0.14 * pulse})`);
   paintCells(ctx, box, blinks, time, (pulse) => `rgba(42, 190, 170, ${0.3 + 0.12 * pulse})`);
   if (portal) drawPortalPad(ctx, box, portal, time);
-  if (exit) drawExitPad(ctx, box, exit, time);
+  if (exit && exitArt) drawExitPad(ctx, box, exit, exitArt);
+  paintCells(ctx, box, aura, time, (pulse) => `rgba(176, 36, 32, ${0.16 + 0.12 * pulse})`);
 }
 
 /** Цифра на клетке способности: сколько ходов монстра до удара. */
@@ -645,102 +650,85 @@ function drawCoinToss(ctx: CanvasRenderingContext2D, box: Box, sprite: HTMLCanva
 
 const SPORE_SCALE = 0.6;
 
-function tileHash(x: number, y: number, salt: number): number {
-  let n = Math.imul(x + salt * 17, 374761393) ^ Math.imul(y, 668265263);
-  n = Math.imul(n ^ (n >>> 13), 1274126177);
-  n ^= n >>> 16;
-  return (n >>> 0) / 4294967296;
+const paintCache = new Map<string, HTMLCanvasElement>();
+
+/** Градиент клетки собирается один раз на размер. Иначе забитый пол каждый кадр кормит сборщик мусора. */
+function cachedPaint(key: string, w: number, h: number, paint: (ctx: CanvasRenderingContext2D) => void): HTMLCanvasElement {
+  const id = `${key}:${w}x${h}`;
+  const found = paintCache.get(id);
+  if (found) return found;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(w));
+  canvas.height = Math.max(1, Math.ceil(h));
+  const ctx = canvas.getContext("2d");
+  if (ctx) paint(ctx);
+  paintCache.set(id, canvas);
+  return canvas;
 }
 
-function surfacePath(
-  ctx: CanvasRenderingContext2D,
-  px: number,
-  py: number,
-  size: number,
-  x: number,
-  y: number,
-  salt: number,
-): void {
-  const count = 12;
-  const points: { x: number; y: number }[] = [];
-  for (let i = 0; i < count; i += 1) {
-    const angle = (i / count) * Math.PI * 2;
-    const wobble = 0.78 + tileHash(x, y, salt + i) * 0.28;
-    points.push({
-      x: px + size * 0.5 + Math.cos(angle) * size * 0.44 * wobble,
-      y: py + size * 0.54 + Math.sin(angle) * size * 0.38 * wobble,
-    });
-  }
-  const first = points[0]!;
-  const last = points[count - 1]!;
-  ctx.beginPath();
-  ctx.moveTo((first.x + last.x) / 2, (first.y + last.y) / 2);
-  for (let i = 0; i < count; i += 1) {
-    const point = points[i]!;
-    const next = points[(i + 1) % count]!;
-    ctx.quadraticCurveTo(point.x, point.y, (point.x + next.x) / 2, (point.y + next.y) / 2);
-  }
-  ctx.closePath();
+function iceTile(size: number): HTMLCanvasElement {
+  return cachedPaint("ice", size, size, (ctx) => {
+    const sheet = ctx.createLinearGradient(0, 0, size, size);
+    sheet.addColorStop(0, "rgba(244, 252, 255, 0.72)");
+    sheet.addColorStop(0.4, "rgba(168, 214, 232, 0.34)");
+    sheet.addColorStop(1, "rgba(72, 128, 160, 0.5)");
+    ctx.fillStyle = sheet;
+    ctx.fillRect(0, 0, size, size);
+    const gloss = ctx.createRadialGradient(size * 0.32, size * 0.28, 0, size * 0.4, size * 0.4, size * 0.7);
+    gloss.addColorStop(0, "rgba(255, 255, 255, 0.45)");
+    gloss.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gloss;
+    ctx.fillRect(0, 0, size, size);
+  });
 }
 
-function drawIceCell(ctx: CanvasRenderingContext2D, px: number, py: number, size: number, x: number, y: number): void {
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(px, py, size, size);
-  ctx.clip();
-  const sheet = ctx.createLinearGradient(px, py, px + size, py + size);
-  sheet.addColorStop(0, "rgba(244, 252, 255, 0.72)");
-  sheet.addColorStop(0.4, "rgba(168, 214, 232, 0.34)");
-  sheet.addColorStop(1, "rgba(72, 128, 160, 0.5)");
-  ctx.fillStyle = sheet;
-  ctx.fillRect(px, py, size, size);
-  const gloss = ctx.createRadialGradient(px + size * 0.32, py + size * 0.28, 0, px + size * 0.4, py + size * 0.4, size * 0.7);
-  gloss.addColorStop(0, "rgba(255, 255, 255, 0.45)");
-  gloss.addColorStop(1, "rgba(255, 255, 255, 0)");
-  ctx.fillStyle = gloss;
-  ctx.fillRect(px, py, size, size);
-  ctx.strokeStyle = "rgba(236, 248, 255, 0.32)";
-  ctx.lineWidth = Math.max(1, size * 0.01);
-  ctx.beginPath();
-  for (let i = 0; i < 4; i += 1) {
-    let sx = 0.2 + tileHash(x, y, 10 + i) * 0.6;
-    let sy = 0.16 + tileHash(x, y, 20 + i) * 0.35;
-    ctx.moveTo(px + size * sx, py + size * sy);
-    for (let step = 0; step < 2; step += 1) {
-      sx += (tileHash(x, y, 40 + i * 3 + step) - 0.5) * 0.16;
-      sy += 0.07 + tileHash(x, y, 60 + i * 3 + step) * 0.08;
-      ctx.lineTo(px + size * sx, py + size * sy);
+function drawIceCell(ctx: CanvasRenderingContext2D, px: number, py: number, size: number, _x: number, _y: number): void {
+  ctx.drawImage(iceTile(size), px, py, size, size);
+}
+
+function flameTile(): HTMLCanvasElement {
+  return cachedPaint("flame", 32, 64, (ctx) => {
+    const body = ctx.createLinearGradient(16, 64, 16, 0);
+    body.addColorStop(0, "rgba(140, 28, 0, 0.15)");
+    body.addColorStop(0.25, "rgba(230, 70, 10, 0.95)");
+    body.addColorStop(0.62, "rgba(255, 170, 40, 0.9)");
+    body.addColorStop(1, "rgba(255, 236, 180, 0.05)");
+    ctx.fillStyle = body;
+    ctx.fillRect(0, 0, 32, 64);
+  });
+}
+
+function fireBed(size: number): HTMLCanvasElement {
+  return cachedPaint("firebed", size, size, (ctx) => {
+    const bed = ctx.createRadialGradient(size * 0.5, size * 0.72, size * 0.05, size * 0.5, size * 0.7, size * 0.55);
+    bed.addColorStop(0, "rgba(255, 120, 30, 0.55)");
+    bed.addColorStop(1, "rgba(120, 20, 0, 0)");
+    ctx.fillStyle = bed;
+    ctx.fillRect(0, 0, size, size);
+  });
+}
+
+function fireFrame(size: number, frame: number): HTMLCanvasElement {
+  const height = Math.ceil(size * 1.7);
+  return cachedPaint(`fireframe${frame}`, size, height, (ctx) => {
+    const py = size * 0.7;
+    ctx.fillStyle = "rgba(12, 6, 3, 0.62)";
+    ctx.fillRect(0, py, size, size);
+    ctx.drawImage(fireBed(size), 0, py, size, size);
+    const flicker = 0.84 + 0.16 * Math.sin(frame * 1.4);
+    for (let i = 0; i < 4; i += 1) {
+      const tall = size * (0.48 + (i % 2) * 0.22) * flicker;
+      const width = size * 0.16;
+      const x = size * (0.28 + i * 0.16);
+      const base = py + size * 0.82;
+      ctx.drawImage(flameTile(), x - width, base - tall, width * 2, tall);
+      const rise = (frame / 3 + i / 4) % 1;
+      ctx.globalAlpha = 1 - rise;
+      ctx.fillStyle = "#ffd27a";
+      ctx.fillRect(size * (0.2 + i * 0.18), py + size * (0.7 - rise * 0.9), Math.max(1.5, size * 0.03), Math.max(1.5, size * 0.03));
     }
-  }
-  ctx.stroke();
-  ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
-  for (let i = 0; i < 10; i += 1) {
-    const fx = px + tileHash(x, y, 80 + i) * size;
-    const fy = py + tileHash(x, y, 100 + i) * size;
-    ctx.fillRect(fx, fy, Math.max(1, size * 0.03), Math.max(1, size * 0.03));
-  }
-  ctx.restore();
-}
-
-function drawFlameTongue(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  base: number,
-  width: number,
-  height: number,
-): void {
-  ctx.save();
-  ctx.beginPath();
-  ctx.ellipse(x, base - height * 0.45, width, height * 0.55, 0, 0, Math.PI * 2);
-  ctx.clip();
-  const body = ctx.createLinearGradient(x, base, x, base - height);
-  body.addColorStop(0, "rgba(140, 28, 0, 0.15)");
-  body.addColorStop(0.25, "rgba(230, 70, 10, 0.95)");
-  body.addColorStop(0.62, "rgba(255, 170, 40, 0.9)");
-  body.addColorStop(1, "rgba(255, 236, 180, 0.05)");
-  ctx.fillStyle = body;
-  ctx.fillRect(x - width, base - height, width * 2, height);
-  ctx.restore();
+    ctx.globalAlpha = 1;
+  });
 }
 
 function drawFireCell(
@@ -752,31 +740,30 @@ function drawFireCell(
   x: number,
   y: number,
 ): void {
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(px, py - size * 0.7, size, size * 1.7);
-  ctx.clip();
-  ctx.fillStyle = "rgba(12, 6, 3, 0.62)";
-  ctx.fillRect(px, py, size, size);
-  const bed = ctx.createRadialGradient(px + size * 0.5, py + size * 0.72, size * 0.05, px + size * 0.5, py + size * 0.7, size * 0.55);
-  bed.addColorStop(0, "rgba(255, 120, 30, 0.55)");
-  bed.addColorStop(1, "rgba(120, 20, 0, 0)");
-  ctx.fillStyle = bed;
-  ctx.fillRect(px, py, size, size);
-  const flames = [0.28, 0.46, 0.62, 0.78];
-  for (let i = 0; i < flames.length; i += 1) {
-    const flicker = 0.84 + 0.16 * Math.sin(time / 90 + x + y + i * 1.7);
-    const lean = (tileHash(x, y, 30 + i) - 0.5) * size * 0.08;
-    const tall = 0.42 + tileHash(x, y, 50 + i) * 0.38;
-    drawFlameTongue(ctx, px + size * flames[i]! + lean, py + size * 0.82, size * 0.16, size * tall * flicker);
-  }
-  for (let i = 0; i < 4; i += 1) {
-    const rise = (time / 480 + tileHash(x, y, 9 + i)) % 1;
-    ctx.globalAlpha = 1 - rise;
-    ctx.fillStyle = "#ffd27a";
-    ctx.fillRect(px + size * (0.2 + i * 0.18), py + size * (0.7 - rise * 0.9), Math.max(1.5, size * 0.03), Math.max(1.5, size * 0.03));
-  }
-  ctx.restore();
+  const frame = Math.floor(time / 140 + x + y) % 3;
+  ctx.drawImage(fireFrame(size, frame), px, py - size * 0.7, size, size * 1.7);
+}
+
+function oilGloss(): HTMLCanvasElement {
+  return cachedPaint("oil", 64, 64, (ctx) => {
+    const gloss = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gloss.addColorStop(0, "rgba(255, 220, 150, 0.45)");
+    gloss.addColorStop(1, "rgba(255, 220, 150, 0)");
+    ctx.fillStyle = gloss;
+    ctx.fillRect(0, 0, 64, 64);
+  });
+}
+
+function oilTile(size: number): HTMLCanvasElement {
+  return cachedPaint("oiltile", size, size, (ctx) => {
+    ctx.fillStyle = "rgba(10, 8, 6, 0.82)";
+    ctx.beginPath();
+    ctx.ellipse(size * 0.5, size * 0.55, size * 0.42, size * 0.32, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(160, 120, 60, 0.35)";
+    ctx.lineWidth = Math.max(1, size * 0.02);
+    ctx.stroke();
+  });
 }
 
 function drawOilCell(
@@ -786,33 +773,49 @@ function drawOilCell(
   size: number,
   time: number,
   x: number,
-  y: number,
+  _y: number,
 ): void {
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(px, py, size, size);
-  ctx.clip();
-  ctx.fillStyle = "rgba(10, 8, 6, 0.82)";
-  surfacePath(ctx, px, py, size, x, y, 3);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(160, 120, 60, 0.35)";
-  ctx.lineWidth = Math.max(1, size * 0.02);
-  surfacePath(ctx, px, py, size, x, y, 3);
-  ctx.stroke();
+  ctx.drawImage(oilTile(size), px, py, size, size);
   const drift = Math.sin(time / 500 + x) * size * 0.012;
-  const gloss = ctx.createRadialGradient(
-    px + size * 0.38,
-    py + size * 0.4 + drift,
-    0,
-    px + size * 0.38,
-    py + size * 0.4,
-    size * 0.22,
-  );
-  gloss.addColorStop(0, "rgba(255, 220, 150, 0.45)");
-  gloss.addColorStop(1, "rgba(255, 220, 150, 0)");
-  ctx.fillStyle = gloss;
-  ctx.fillRect(px, py, size, size);
-  ctx.restore();
+  const gloss = size * 0.44;
+  ctx.drawImage(oilGloss(), px + size * 0.38 - gloss / 2, py + size * 0.4 + drift - gloss / 2, gloss, gloss);
+}
+
+function poisonDeep(size: number): HTMLCanvasElement {
+  return cachedPaint("poison", size, size, (ctx) => {
+    const deep = ctx.createRadialGradient(size * 0.5, size * 0.58, size * 0.05, size * 0.5, size * 0.55, size * 0.42);
+    deep.addColorStop(0, "rgba(40, 70, 8, 0.35)");
+    deep.addColorStop(1, "rgba(40, 70, 8, 0)");
+    ctx.fillStyle = deep;
+    ctx.fillRect(0, 0, size, size);
+  });
+}
+
+function poisonMist(): HTMLCanvasElement {
+  return cachedPaint("mist", 64, 64, (ctx) => {
+    const mist = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    mist.addColorStop(0, "rgba(190, 230, 70, 0.28)");
+    mist.addColorStop(1, "rgba(120, 170, 20, 0)");
+    ctx.fillStyle = mist;
+    ctx.fillRect(0, 0, 64, 64);
+  });
+}
+
+function poisonFrame(size: number, frame: number): HTMLCanvasElement {
+  const height = Math.ceil(size * 1.35);
+  return cachedPaint(`poisonframe${frame}`, size, height, (ctx) => {
+    const py = size * 0.35;
+    ctx.fillStyle = "rgba(90, 140, 18, 0.62)";
+    ctx.fillRect(0, py, size, size);
+    ctx.drawImage(poisonDeep(size), 0, py, size, size);
+    for (let i = 0; i < 3; i += 1) {
+      const rise = (frame / 3 + i * 0.33) % 1;
+      const mist = size * 0.44;
+      ctx.globalAlpha = 1 - rise;
+      ctx.drawImage(poisonMist(), size * (0.35 + i * 0.15) - mist / 2, py + size * (0.55 - rise * 0.4) - mist / 2, mist, mist);
+    }
+    ctx.globalAlpha = 1;
+  });
 }
 
 function drawPoisonCell(
@@ -824,46 +827,24 @@ function drawPoisonCell(
   x: number,
   y: number,
 ): void {
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(px, py - size * 0.35, size, size * 1.35);
-  ctx.clip();
-  ctx.fillStyle = "rgba(90, 140, 18, 0.62)";
-  surfacePath(ctx, px, py, size, x, y, 7);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(210, 240, 90, 0.35)";
-  ctx.lineWidth = Math.max(1, size * 0.02);
-  surfacePath(ctx, px, py, size, x, y, 7);
-  ctx.stroke();
-  const deep = ctx.createRadialGradient(px + size * 0.5, py + size * 0.58, size * 0.05, px + size * 0.5, py + size * 0.55, size * 0.42);
-  deep.addColorStop(0, "rgba(40, 70, 8, 0.35)");
-  deep.addColorStop(1, "rgba(40, 70, 8, 0)");
-  ctx.fillStyle = deep;
-  ctx.fillRect(px, py, size, size);
-  for (let i = 0; i < 3; i += 1) {
-    const rise = (time / 900 + i * 0.33) % 1;
-    const mist = ctx.createRadialGradient(
-      px + size * (0.35 + i * 0.15),
-      py + size * (0.55 - rise * 0.4),
-      0,
-      px + size * (0.35 + i * 0.15),
-      py + size * (0.5 - rise * 0.4),
-      size * 0.22,
-    );
-    mist.addColorStop(0, `rgba(190, 230, 70, ${0.28 * (1 - rise)})`);
-    mist.addColorStop(1, "rgba(120, 170, 20, 0)");
-    ctx.fillStyle = mist;
-    ctx.fillRect(px, py - size * 0.35, size, size * 1.35);
-  }
-  for (let i = 0; i < 3; i += 1) {
-    const bx = px + size * (0.3 + tileHash(x, y, 90 + i) * 0.4);
-    const by = py + size * (0.46 + tileHash(x, y, 110 + i) * 0.22) + Math.sin(time / 280 + i) * size * 0.015;
-    ctx.fillStyle = "rgba(220, 240, 110, 0.75)";
-    ctx.beginPath();
-    ctx.arc(bx, by, size * (0.018 + tileHash(x, y, 130 + i) * 0.016), 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
+  const frame = Math.floor(time / 200 + x + y) % 3;
+  ctx.drawImage(poisonFrame(size, frame), px, py - size * 0.35, size, size * 1.35);
+}
+
+function waterTile(size: number): HTMLCanvasElement {
+  return cachedPaint("water", size, size, (ctx) => {
+    const pool = ctx.createRadialGradient(size * 0.5, size * 0.56, size * 0.08, size * 0.5, size * 0.54, size * 0.5);
+    pool.addColorStop(0, "rgba(18, 70, 140, 0.55)");
+    pool.addColorStop(0.72, "rgba(50, 120, 190, 0.38)");
+    pool.addColorStop(1, "rgba(50, 120, 190, 0.12)");
+    ctx.fillStyle = pool;
+    ctx.fillRect(0, 0, size, size);
+    const shine = ctx.createRadialGradient(size * 0.4, size * 0.42, 0, size * 0.42, size * 0.48, size * 0.2);
+    shine.addColorStop(0, "rgba(230, 246, 255, 0.45)");
+    shine.addColorStop(1, "rgba(230, 246, 255, 0)");
+    ctx.fillStyle = shine;
+    ctx.fillRect(0, 0, size, size);
+  });
 }
 
 function drawWaterCell(
@@ -875,26 +856,7 @@ function drawWaterCell(
   x: number,
   y: number,
 ): void {
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(px, py, size, size);
-  ctx.clip();
-  const pool = ctx.createRadialGradient(px + size * 0.5, py + size * 0.56, size * 0.08, px + size * 0.5, py + size * 0.54, size * 0.5);
-  pool.addColorStop(0, "rgba(18, 70, 140, 0.55)");
-  pool.addColorStop(0.72, "rgba(50, 120, 190, 0.38)");
-  pool.addColorStop(1, "rgba(50, 120, 190, 0.12)");
-  ctx.fillStyle = pool;
-  surfacePath(ctx, px, py, size, x, y, 11);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(210, 236, 255, 0.55)";
-  ctx.lineWidth = Math.max(1, size * 0.018);
-  surfacePath(ctx, px, py, size, x, y, 11);
-  ctx.stroke();
-  const shine = ctx.createRadialGradient(px + size * 0.4, py + size * 0.42, 0, px + size * 0.42, py + size * 0.48, size * 0.2);
-  shine.addColorStop(0, "rgba(230, 246, 255, 0.45)");
-  shine.addColorStop(1, "rgba(230, 246, 255, 0)");
-  ctx.fillStyle = shine;
-  ctx.fillRect(px, py, size, size);
+  ctx.drawImage(waterTile(size), px, py, size, size);
   ctx.strokeStyle = "rgba(220, 240, 255, 0.35)";
   ctx.lineWidth = Math.max(1, size * 0.012);
   for (let i = 0; i < 2; i += 1) {
@@ -904,7 +866,7 @@ function drawWaterCell(
     ctx.ellipse(px + size * 0.5, py + size * 0.55, size * (0.12 + phase * 0.2), size * (0.045 + phase * 0.05), 0, 0, Math.PI * 2);
     ctx.stroke();
   }
-  ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 function drawGround(ctx: CanvasRenderingContext2D, box: Box, state: RoomState, time: number): void {
@@ -924,69 +886,40 @@ function drawGround(ctx: CanvasRenderingContext2D, box: Box, state: RoomState, t
   }
 }
 
-/** Яд, огонь, стан и шпили над юнитом. */
-function drawStatus(ctx: CanvasRenderingContext2D, box: Box, pose: Pose, unit: Fighter, time: number): void {
+/** Послушник бафает, пока не ставит шпили: тонкое красное кольцо и искры. */
+function drawAcolyteBuff(ctx: CanvasRenderingContext2D, box: Box, pose: Pose, time: number): void {
   const hop = stepJump(pose, box.size);
-  const x = box.ox + (pose.x + 0.5) * box.size;
-  const y = box.oy + (pose.y + 0.42) * box.size - hop.lift;
-  if (unit.mode === "sleep") {
-    for (let i = 0; i < 3; i += 1) {
-      const phase = (time / 700 + i / 3) % 1;
-      ctx.save();
-      ctx.globalAlpha = 0.35 + (1 - phase) * 0.45;
-      ctx.fillStyle = "#8fd36a";
-      ctx.beginPath();
-      ctx.arc(x + (i - 1) * box.size * 0.14, y - phase * box.size * 0.35, Math.max(2, box.size * 0.04), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-  if (unit.root > 0) {
-    ctx.save();
-    ctx.strokeStyle = "rgba(201, 179, 239, 0.9)";
-    ctx.lineWidth = Math.max(1.5, box.size * 0.035);
+  const cx = box.ox + (pose.x + 0.5) * box.size;
+  const feet = box.oy + (pose.y + 0.84) * box.size;
+  const rise = box.oy + (pose.y + 0.22) * box.size - hop.lift;
+  const pulse = 0.5 + 0.5 * Math.sin(time / 380);
+  ctx.save();
+  ctx.strokeStyle = `rgba(176, 36, 32, ${0.35 + 0.3 * pulse})`;
+  ctx.lineWidth = Math.max(1.5, box.size * 0.035);
+  ctx.beginPath();
+  ctx.ellipse(cx, feet, box.size * 0.32, box.size * 0.11, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  for (let i = 0; i < 4; i += 1) {
+    const phase = (time / 860 + i / 4) % 1;
+    const angle = i * 1.6 + time / 1500;
+    ctx.globalAlpha = 0.3 + (1 - phase) * 0.6;
+    ctx.fillStyle = i % 2 === 0 ? "#c43830" : "#e27872";
     ctx.beginPath();
-    ctx.ellipse(x, box.oy + (pose.y + 0.86) * box.size, box.size * 0.32, box.size * 0.1, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
+    ctx.arc(
+      cx + Math.cos(angle) * box.size * 0.2,
+      rise + phase * (feet - rise),
+      Math.max(1.6, box.size * 0.032),
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
   }
-  if (unit.poison > 0) {
-    for (let i = 0; i < 4; i += 1) {
-      const phase = (time / 520 + i / 4) % 1;
-      ctx.save();
-      ctx.globalAlpha = 0.35 + (1 - phase) * 0.55;
-      ctx.fillStyle = "#7ed34a";
-      ctx.beginPath();
-      ctx.arc(x + Math.sin(i * 1.7) * box.size * 0.16, y - phase * box.size * 0.45, Math.max(2, box.size * 0.045), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-  if (unit.burn > 0) {
-    for (let i = 0; i < 3; i += 1) {
-      const flick = 0.55 + Math.sin(time / 70 + i) * 0.45;
-      ctx.save();
-      ctx.globalAlpha = 0.55 + flick * 0.4;
-      ctx.fillStyle = i === 1 ? "#ffd27a" : "#e25822";
-      ctx.beginPath();
-      ctx.ellipse(x + (i - 1) * box.size * 0.12, y - box.size * 0.05 * flick, box.size * 0.05, box.size * (0.12 + flick * 0.1), 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-  if (unit.stun > 0) {
-    for (let i = 0; i < 3; i += 1) {
-      const angle = time / 260 + (i * Math.PI * 2) / 3;
-      ctx.save();
-      ctx.fillStyle = "#f4e3a2";
-      ctx.beginPath();
-      ctx.arc(x + Math.cos(angle) * box.size * 0.22, y - box.size * 0.42 + Math.sin(angle) * box.size * 0.07, Math.max(2, box.size * 0.045), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
+  ctx.restore();
 }
 
+function acolyteBuffing(monster: Fighter): boolean {
+  return monster.role === "acolyte" && onBoard(monster) && monster.windup?.kind !== "spires";
+}
 export class RoomRenderer {
   private background: { key: string; canvas: HTMLCanvasElement; box: Box; dressing: Dressing } | null = null;
   private pattern: { ctx: CanvasRenderingContext2D; value: CanvasPattern | null } | null = null;
@@ -1110,7 +1043,7 @@ export class RoomRenderer {
     const portal = map?.rooms[map.current]?.portal ?? null;
     const exit = map?.exit ?? null;
     drawGround(ctx, box, state, time);
-    drawFloorEffects(ctx, box, attacks, blinks, portal, time, exit);
+    drawFloorEffects(ctx, box, attacks, blinks, portal, time, exit, sprites.exit, acolyteAuraCells(state));
     for (const barrel of state.barrels) drawBarrel(ctx, box, sprites, barrel.x, barrel.y);
     for (const chest of state.chests) drawChest(ctx, box, sprites, chest);
     drawGold(ctx, box, sprites.gold, state.piles, (pile) => this.coinInFlight(pile, time));
@@ -1128,7 +1061,10 @@ export class RoomRenderer {
       }
       bodies.forEach((monster, index) => {
         const pose = poses.monsters[index];
-        if (monster.hp > 0 && pose && Math.round(pose.y) === row) this.drawMonster(ctx, box, monster, pose, sprites, true);
+        if (monster.hp > 0 && pose && Math.round(pose.y) === row) {
+          this.drawMonster(ctx, box, monster, pose, sprites, true);
+          if (acolyteBuffing(monster)) drawAcolyteBuff(ctx, box, pose, time);
+        }
       });
       for (const dead of dying) {
         if (Math.round(dead.pose.y) === row) this.drawMonster(ctx, box, dead.monster, dead.pose, sprites, true, dead.life);
@@ -1163,10 +1099,8 @@ export class RoomRenderer {
         if (monster.maxShield > 0) drawArmorBadge(ctx, cx, my - box.size * 0.16, box.size, monster.shield);
         drawHpBar(ctx, cx, my + box.size * 0.84, box.size, monster.hp, monster.maxHp);
       }
-      drawStatus(ctx, box, pose, monster, time);
     });
     if (state.hero.hp > 0) {
-      drawStatus(ctx, box, poses.hero, state.hero, time);
       const worn = weaponById(state.weapon);
       if (worn.magazine !== null) drawAmmoPips(ctx, box, poses.hero, worn.magazine, state.ammo ?? worn.magazine);
     }
@@ -1214,11 +1148,14 @@ export class RoomRenderer {
 
     blend.ctx.clearRect(0, 0, width, height);
     blend.ctx.globalAlpha = BLEND_FLOOR_ALPHA;
-    drawFloorEffects(blend.ctx, box, attacks, blinks, portal, time, exit);
+    drawFloorEffects(blend.ctx, box, attacks, blinks, portal, time, exit, sprites.exit, acolyteAuraCells(state));
     blend.ctx.globalAlpha = BLEND_ACTOR_ALPHA;
     roomMonsters(state).forEach((monster, index) => {
       const pose = monsterPoses[index];
-      if (monster.hp > 0 && pose) this.drawMonster(blend.ctx, box, monster, pose, sprites, false);
+      if (monster.hp > 0 && pose) {
+        this.drawMonster(blend.ctx, box, monster, pose, sprites, false);
+        if (acolyteBuffing(monster)) drawAcolyteBuff(blend.ctx, box, pose, time);
+      }
     });
     for (const dead of dying) this.drawMonster(blend.ctx, box, dead.monster, dead.pose, sprites, false, dead.life);
     this.drawHero(

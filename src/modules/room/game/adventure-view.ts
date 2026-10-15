@@ -15,12 +15,12 @@ export function paintAdventure(
   host.style.overflow = "auto";
 
   const page = document.createElement("div");
-  page.style.maxWidth = "720px";
+  page.style.maxWidth = "calc(720 * var(--hud))";
   page.style.margin = "0 auto";
-  page.style.padding = "28px 20px 48px";
+  page.style.padding = "calc(28 * var(--hud)) calc(20 * var(--hud)) calc(48 * var(--hud))";
   page.style.display = "flex";
   page.style.flexDirection = "column";
-  page.style.gap = "14px";
+  page.style.gap = "calc(14 * var(--hud))";
 
   const title = document.createElement("h1");
   title.className = "dungeon-title";
@@ -34,7 +34,7 @@ export function paintAdventure(
   const list = document.createElement("div");
   list.style.display = "flex";
   list.style.flexDirection = "column";
-  list.style.gap = "8px";
+  list.style.gap = "calc(8 * var(--hud))";
   const top = best === null ? 0 : best + 1;
   for (let level = 0; level <= top; level += 1) {
     const button = document.createElement("button");
@@ -43,13 +43,13 @@ export function paintAdventure(
     button.style.display = "flex";
     button.style.flexDirection = "column";
     button.style.alignItems = "flex-start";
-    button.style.gap = "4px";
-    button.style.padding = "12px 16px";
+    button.style.gap = "calc(4 * var(--hud))";
+    button.style.padding = "calc(12 * var(--hud)) calc(16 * var(--hud))";
     button.style.cursor = "pointer";
     button.style.textAlign = "left";
     const name = document.createElement("span");
     name.textContent = `Level ${level}`;
-    name.style.fontSize = "18px";
+    name.style.fontSize = "calc(18 * var(--hud))";
     const detail = document.createElement("span");
     detail.textContent = adventureBlurb(level);
     detail.style.opacity = "0.75";
@@ -62,8 +62,8 @@ export function paintAdventure(
   back.type = "button";
   back.textContent = "Back";
   back.className = "dungeon-button dungeon-back";
-  back.style.fontSize = "18px";
-  back.style.padding = "14px 22px";
+  back.style.fontSize = "calc(18 * var(--hud))";
+  back.style.padding = "calc(14 * var(--hud)) calc(22 * var(--hud))";
   back.style.cursor = "pointer";
   back.addEventListener("click", onBack);
 

@@ -17,6 +17,7 @@ import tableUrl from "../../../../assets/table.jpg";
 import chairUrl from "../../../../assets/chair.jpg";
 import woodFloorUrl from "../../../../assets/wood-floor.jpg";
 import goldUrl from "../../../../assets/gold.png";
+import exitUrl from "../../../../assets/portal-exit.jpg";
 import { WEAPONS, type WeaponId } from "../data/weapons.ts";
 
 /** Спрайт каждого типа оружия. Name файла — id из таблицы. */
@@ -36,6 +37,11 @@ const itemFiles = import.meta.glob("../../../../assets/items/*.jpg", {
 }) as Record<string, string>;
 
 const abilityFiles = import.meta.glob("../../../../assets/abilities/*.jpg", {
+  eager: true,
+  import: "default",
+}) as Record<string, string>;
+
+const statusFiles = import.meta.glob("../../../../assets/status/icon-*.jpg", {
   eager: true,
   import: "default",
 }) as Record<string, string>;
@@ -69,6 +75,8 @@ export interface Sprites {
   woodFloor: HTMLImageElement;
   /** Горсть монет на полу и в хранилище. */
   gold: HTMLCanvasElement;
+  /** Железная рама выхода из приключения. */
+  exit: HTMLCanvasElement;
   /** Спрайты монстров из таблицы, ключ — номер строки. */
   monsters: Readonly<Record<string, HTMLCanvasElement>>;
   /** Спрайт каждого типа оружия. */
@@ -79,6 +87,8 @@ export interface Sprites {
   items: Readonly<Record<string, HTMLCanvasElement>>;
   /** Иконки способностей героя. Ключ — id способности. */
   abilities: Readonly<Record<string, HTMLCanvasElement>>;
+  /** Иконки бафов и дебафов. Ключ — имя файла без icon-. */
+  status: Readonly<Record<string, HTMLCanvasElement>>;
 }
 
 export const FLOOR_STONES = 6;
@@ -183,7 +193,7 @@ function trimmed(source: HTMLCanvasElement): HTMLCanvasElement {
 }
 
 export async function loadSprites(): Promise<Sprites> {
-  const [core, monsters, weapons, props] = await Promise.all([
+  const [core, monsters, weapons, props, status] = await Promise.all([
     Promise.all(
       [
         heroUrl,
@@ -205,13 +215,15 @@ export async function loadSprites(): Promise<Sprites> {
         chairUrl,
         woodFloorUrl,
         goldUrl,
+        exitUrl,
       ].map(loadImage),
     ),
     loadMonsterSprites(),
     loadWeaponSprites(),
     loadPropSprites(),
+    loadStatusIcons(),
   ]);
-  const [hero, sword, monster, floor, wall, pillar, sarcophagus, torch, bones, candle, web, blood, barrel, chain, shelf, table, chair, woodFloor, gold] = core;
+  const [hero, sword, monster, floor, wall, pillar, sarcophagus, torch, bones, candle, web, blood, barrel, chain, shelf, table, chair, woodFloor, gold, exit] = core;
   const sprites: Sprites = {
     hero: keyed(hero!),
     sword: keyed(sword!),
@@ -232,16 +244,30 @@ export async function loadSprites(): Promise<Sprites> {
     chair: trimmed(keyed(chair!)),
     woodFloor: woodFloor!,
     gold: trimmed(plain(gold!)),
+    exit: trimmed(keyed(exit!)),
     monsters,
     weapons,
     props,
     items: {},
     abilities: {},
+    status,
   };
   // Иконки инвентаря не держат первый кадр комнаты: их очередь на том же хосте оставляла урок чёрным.
   void loadItemIcons().then((items) => Object.assign(sprites.items, items));
   void loadAbilityIcons().then((abilities) => Object.assign(sprites.abilities, abilities));
   return sprites;
+}
+
+async function loadStatusIcons(): Promise<Record<string, HTMLCanvasElement>> {
+  const status: Record<string, HTMLCanvasElement> = {};
+  await Promise.all(
+    Object.entries(statusFiles).map(async ([path, url]) => {
+      const id = /icon-([a-z0-9-]+)\.jpg$/.exec(path)?.[1];
+      if (!id) return;
+      status[id] = trimmed(keyed(await loadImage(url)));
+    }),
+  );
+  return status;
 }
 
 async function loadAbilityIcons(): Promise<Record<string, HTMLCanvasElement>> {

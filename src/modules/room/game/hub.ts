@@ -318,7 +318,7 @@ function lessonCard(text: string, skip: () => void): HTMLElement {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "dungeon-button";
-  button.style.padding = "8px 12px";
+  button.style.padding = "calc(8 * var(--hud)) calc(12 * var(--hud))";
   button.style.alignSelf = "flex-start";
   button.textContent = "Skip";
   button.addEventListener("click", skip);
@@ -549,8 +549,8 @@ function honeCell(
     const canvas = document.createElement("canvas");
     canvas.width = 72;
     canvas.height = 72;
-    canvas.style.width = "72px";
-    canvas.style.height = "72px";
+    canvas.style.width = "calc(72 * var(--hud))";
+    canvas.style.height = "calc(72 * var(--hud))";
     paintInstanceIcon(canvas, item, weapons, items, abilities);
     stampLevel(canvas, item.level);
     slot.append(canvas);
@@ -656,7 +656,7 @@ function screenTitle(text: string): HTMLElement {
   title.textContent = text;
   title.className = "dungeon-title";
   title.style.margin = "0";
-  title.style.fontSize = "32px";
+  title.style.fontSize = "calc(32 * var(--hud))";
   return title;
 }
 
@@ -670,7 +670,7 @@ function heading(text: string): HTMLElement {
   const el = document.createElement("h2");
   el.textContent = text;
   el.className = "dungeon-heading";
-  el.style.margin = "0 0 12px";
+  el.style.margin = "0 0 calc(12 * var(--hud))";
   return el;
 }
 
@@ -686,7 +686,7 @@ function equipmentRow(
   box.append(heading("Equipment"));
   const row = document.createElement("div");
   row.style.display = "flex";
-  row.style.gap = "10px";
+  row.style.gap = "calc(10 * var(--hud))";
   row.style.flexWrap = "wrap";
   const weaponInst = instanceById(loadout, loadout.weapon);
   const worn = weaponInst?.kind === "weapon" ? weaponById(weaponInst.catalogId as WeaponId) : weaponById(kit.weapon);
@@ -695,16 +695,16 @@ function equipmentRow(
   weaponSlot.className = weaponInst && (hone.target === weaponInst.id || hone.copy === weaponInst.id)
     ? "dungeon-slot dungeon-slot-worn"
     : "dungeon-slot dungeon-slot-worn";
-  weaponSlot.style.width = "108px";
-  weaponSlot.style.height = "88px";
-  weaponSlot.style.padding = "8px";
+  weaponSlot.style.width = "calc(108 * var(--hud))";
+  weaponSlot.style.height = "calc(88 * var(--hud))";
+  weaponSlot.style.padding = "calc(8 * var(--hud))";
   weaponSlot.dataset.drop = "weapon";
   weaponSlot.style.cursor = "pointer";
   const icon = document.createElement("canvas");
   icon.width = 72;
   icon.height = 72;
-  icon.style.width = "72px";
-  icon.style.height = "72px";
+  icon.style.width = "calc(72 * var(--hud))";
+  icon.style.height = "calc(72 * var(--hud))";
   weaponSlot.append(icon);
   if (weaponInst) {
     paintWeaponIcon(icon, weapons[weaponInst.catalogId as WeaponId]);
@@ -724,22 +724,22 @@ function equipmentRow(
     slot.dataset.drop = "gear";
     slot.dataset.slot = String(i);
     slot.style.font = "inherit";
-    slot.style.width = "88px";
-    slot.style.height = "88px";
+    slot.style.width = "calc(88 * var(--hud))";
+    slot.style.height = "calc(88 * var(--hud))";
     slot.style.cursor = "pointer";
-    slot.style.padding = "6px";
+    slot.style.padding = "calc(6 * var(--hud))";
     if (wornItem) {
       const canvas = document.createElement("canvas");
       canvas.width = 72;
       canvas.height = 72;
-      canvas.style.width = "72px";
-      canvas.style.height = "72px";
+      canvas.style.width = "calc(72 * var(--hud))";
+      canvas.style.height = "calc(72 * var(--hud))";
       paintItemIcon(canvas, items[wornItem.id]);
       if (wornInst) stampLevel(canvas, wornInst.level);
       slot.append(canvas);
     } else {
       slot.textContent = "Empty";
-      slot.style.fontSize = "13px";
+      slot.style.fontSize = "calc(13 * var(--hud))";
     }
     slot.addEventListener("click", () => {
       if (dragMoved) return;
@@ -777,7 +777,7 @@ function bankRow(
   box.append(heading("Storage"), shelfBar(shelf, redraw));
   const lead = document.createElement("p");
   lead.textContent = "Gear and abilities sit here. Equipped pieces stay in the slots on the left.";
-  lead.style.margin = "0 0 12px";
+  lead.style.margin = "0 0 calc(12 * var(--hud))";
   lead.style.opacity = "0.7";
   const row = document.createElement("div");
   row.className = "dungeon-storage";
@@ -960,7 +960,7 @@ function iconButton(onClick: () => void, worn: boolean): { button: HTMLButtonEle
   button.type = "button";
   button.className = worn ? "dungeon-slot dungeon-slot-worn" : "dungeon-slot";
   button.style.boxSizing = "border-box";
-  button.style.padding = "4px";
+  button.style.padding = "calc(4 * var(--hud))";
   button.style.cursor = "pointer";
   const canvas = document.createElement("canvas");
   canvas.width = 44;
@@ -1029,7 +1029,7 @@ function weaponCard(weapon: WeaponDef): HTMLElement {
   root.className = "dungeon-ability-card";
   const head = document.createElement("div");
   head.className = "dungeon-ability-head";
-  const title = document.createElement("div");
+    const title = document.createElement("div");
   title.className = "dungeon-ability-name";
   title.textContent = weapon.name;
   head.append(title);
@@ -1137,7 +1137,7 @@ function slotRow(
   box.append(heading("Abilities"));
   const row = document.createElement("div");
   row.style.display = "flex";
-  row.style.gap = "10px";
+  row.style.gap = "calc(10 * var(--hud))";
   row.style.flexWrap = "wrap";
   for (let i = 0; i < SLOTS; i += 1) {
     const wornId = loadout.wornAbilities[i] ?? null;
@@ -1148,16 +1148,16 @@ function slotRow(
     slot.dataset.drop = "ability";
     slot.dataset.slot = String(i);
     slot.style.font = "inherit";
-    slot.style.width = "88px";
-    slot.style.height = "88px";
+    slot.style.width = "calc(88 * var(--hud))";
+    slot.style.height = "calc(88 * var(--hud))";
     slot.style.cursor = "pointer";
-    slot.style.padding = "6px";
+    slot.style.padding = "calc(6 * var(--hud))";
     if (wornInst) {
       const canvas = document.createElement("canvas");
       canvas.width = 72;
       canvas.height = 72;
-      canvas.style.width = "72px";
-      canvas.style.height = "72px";
+      canvas.style.width = "calc(72 * var(--hud))";
+      canvas.style.height = "calc(72 * var(--hud))";
       paintItemIcon(canvas, abilities[wornInst.catalogId]);
       stampLevel(canvas, wornInst.level);
       slot.append(canvas);
@@ -1165,7 +1165,7 @@ function slotRow(
       armDrag(slot, wornInst.id, "ability");
     } else {
       slot.textContent = "Empty";
-      slot.style.fontSize = "13px";
+      slot.style.fontSize = "calc(13 * var(--hud))";
       bindTip(slot, "Ability", "Empty slot.");
     }
     slot.addEventListener("click", () => {
@@ -1268,8 +1268,8 @@ function menuButton(label: string, onClick: () => void, primary: boolean): HTMLB
   button.type = "button";
   button.textContent = label;
   button.className = primary ? "dungeon-button dungeon-button-primary" : "dungeon-button";
-  button.style.fontSize = "18px";
-  button.style.padding = "14px 22px";
+  button.style.fontSize = "calc(18 * var(--hud))";
+  button.style.padding = "calc(14 * var(--hud)) calc(22 * var(--hud))";
   button.style.cursor = "pointer";
   button.addEventListener("click", onClick);
   return button;

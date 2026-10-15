@@ -240,7 +240,7 @@ export function paintAuction(
       slot.type = "button";
       slot.className = picked ? "dungeon-slot dungeon-slot-worn" : "dungeon-slot";
       slot.style.boxSizing = "border-box";
-      slot.style.padding = "4px";
+      slot.style.padding = "calc(4 * var(--hud))";
       slot.style.cursor = "pointer";
       const canvas = document.createElement("canvas");
       canvas.width = 44;
@@ -326,7 +326,7 @@ export function paintAuction(
     fieldStyle(buyoutInput);
     const times = document.createElement("div");
     times.style.display = "flex";
-    times.style.gap = "8px";
+    times.style.gap = "calc(8 * var(--hud))";
     for (const span of LOT_HOURS) {
       times.append(
         button(`${span}h`, () => {
@@ -752,7 +752,7 @@ function parseMoney(raw: string): number | null {
 function row(): HTMLElement {
   const wrap = document.createElement("div");
   wrap.style.display = "flex";
-  wrap.style.gap = "16px";
+  wrap.style.gap = "calc(16 * var(--hud))";
   wrap.style.alignItems = "flex-start";
   wrap.style.flexWrap = "wrap";
   return wrap;
@@ -762,10 +762,10 @@ function column(): HTMLElement {
   const box = document.createElement("section");
   box.className = "dungeon-panel";
   box.style.flex = "1";
-  box.style.minWidth = "260px";
+  box.style.minWidth = "calc(260 * var(--hud))";
   box.style.display = "flex";
   box.style.flexDirection = "column";
-  box.style.gap = "8px";
+  box.style.gap = "calc(8 * var(--hud))";
   return box;
 }
 
@@ -791,7 +791,7 @@ function button(label: string, onClick: () => void, primary: boolean): HTMLButto
   node.textContent = label;
   node.className = primary ? "dungeon-button dungeon-button-primary" : "dungeon-button";
   node.style.textAlign = "left";
-  node.style.padding = "10px 14px";
+  node.style.padding = "calc(10 * var(--hud)) calc(14 * var(--hud))";
   node.style.cursor = "pointer";
   node.addEventListener("click", onClick);
   return node;
@@ -799,5 +799,5 @@ function button(label: string, onClick: () => void, primary: boolean): HTMLButto
 
 function fieldStyle(input: HTMLInputElement): void {
   input.className = "dungeon-input";
-  input.style.padding = "10px 12px";
+  input.style.padding = "calc(10 * var(--hud)) calc(12 * var(--hud))";
 }

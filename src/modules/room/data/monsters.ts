@@ -80,7 +80,7 @@ export const KIT = {
   spirit: { damage: 20, cooldown: 3, delay: 1 },
   goblin: { dash: 2, damage: 20, cooldown: 2, delay: 1 },
   mushroom: { keep: 4, cooldown: 3 },
-  spore: { fuse: 1, radius: 1, stacks: 1 },
+  spore: { fuse: 1, radius: 1, stacks: 1, damage: 30 },
   ember: { pause: 1, delay: 1, radius: 1, damage: 40, cooldown: 7 },
   worm: { delay: 2, radius: 1, damage: 70, push: 2, cooldown: 6 },
   /** Аура — квадрат 15×15 вокруг послушника: так решил дизайнер, лист пишет 8×8. */
@@ -155,4 +155,35 @@ export const SPORE: MonsterDef = {
 export function monsterById(id: string): MonsterDef | undefined {
   if (id === SPORE.id) return SPORE;
   return MONSTERS.find((monster) => monster.id === id);
+}
+
+/**
+ * Стихия основного удара. Физический укус не подменяет способность.
+ * null — урона нет, только контроль.
+ * Камни стража — земля, посадка один раз физическая, поэтому у стража земля.
+ */
+const STRIKE: Record<MonsterRole, DamageType | null> = {
+  dog: "physical",
+  spider: "poison",
+  corpse: "poison",
+  golem: "earth",
+  bat: "physical",
+  slime: "poison",
+  skeleton: "physical",
+  spirit: "physical",
+  goblin: "physical",
+  mushroom: "poison",
+  ember: "fire",
+  worm: "earth",
+  acolyte: null,
+  hound: "fire",
+  chest: "physical",
+  gargoyle: "earth",
+  drowned: "water",
+  whisper: "ice",
+  spore: "poison",
+};
+
+export function strikeElement(role: MonsterRole): DamageType | null {
+  return STRIKE[role];
 }

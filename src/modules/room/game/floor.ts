@@ -441,7 +441,7 @@ function enter(
   const prize = claimFloorLoot(state);
   if (prize) state.note = `${state.note} ${prize}.`.trim();
   if (room.role === "fight") seedGround(state);
-  if (room.role === "start" && !via) state.note = "Start of the floor. Exits are the gaps in the walls.";
+  if (room.role === "start" && !via) state.note = "";
   else if (!cleared) state.note = "The doors slammed shut. Defeat the monsters to leave.";
   return state;
 }

@@ -19,6 +19,6 @@ export function storageViewHeight(): number {
 export function storageScroll(count: number): HTMLDivElement {
   const frame = document.createElement("div");
   frame.className = storageLayout(count).scroll ? "dungeon-storage-scroll is-live" : "dungeon-storage-scroll is-quiet";
-  frame.style.maxHeight = `${storageViewHeight()}px`;
+  frame.style.maxHeight = `calc(${storageViewHeight()} * var(--hud))`;
   return frame;
 }

@@ -560,6 +560,16 @@ assert.equal(near.chests[0]!.open, true);
 assert.equal(near.piles.length, 5);
 assert.equal(interactTarget(near, null), null);
 
+const shared = createRoom(OPEN, { monsterKind: "1" });
+shared.chests.push({ kind: "chest", x: 4, y: 6, open: false });
+shared.pending.push({ room: 0, chest: { x: 4, y: 6 }, item: { kind: "gear", catalogId: "belt" } });
+assert.equal(useChest(shared, 4, 6, () => 0), true);
+const goldSpots = new Set(shared.piles.map((pile) => `${pile.x},${pile.y}`));
+assert.equal(shared.piles.length, 5);
+assert.equal(goldSpots.size, 1);
+assert.equal(shared.loot.length, 1);
+assert.equal(shared.piles.some((pile) => pile.x === shared.loot[0]!.x && pile.y === shared.loot[0]!.y), false);
+
 const blocked = createRoom(
   {
     id: "hall",
@@ -739,5 +749,53 @@ houndDiagonal.monster.y = 3;
 wait(houndDiagonal, () => 0);
 assert.equal(houndDiagonal.monster.cooldowns.dash ?? 0, 0);
 assert.equal(Math.abs(houndDiagonal.monster.x - 6) + Math.abs(houndDiagonal.monster.y - 3), 1);
+
+const shroom = createRoom(OPEN, { monsterKind: "11" });
+const cap = shroom.monsters[0]!;
+shroom.hero.x = cap.x + 1;
+shroom.hero.y = cap.y;
+const planted = { x: cap.x, y: cap.y };
+wait(shroom, () => 0);
+assert.equal(cap.x, planted.x);
+assert.equal(cap.y, planted.y);
+assert.equal(shroom.monsters.some((unit) => unit.role === "spore" && unit.hp > 0), true);
+cap.cooldowns.spore = KIT.mushroom.cooldown;
+const gap = Math.abs(cap.x - shroom.hero.x) + Math.abs(cap.y - shroom.hero.y);
+wait(shroom, () => 0);
+assert.equal(shroom.monsters.filter((unit) => unit.role === "spore" && unit.hp > 0).length, 1);
+assert.equal(Math.abs(cap.x - shroom.hero.x) + Math.abs(cap.y - shroom.hero.y) > gap, true);
+
+const slime = createRoom(OPEN, { monsterKind: "6" });
+const blob = slime.monsters[0]!;
+slime.hero.x = 9;
+slime.hero.y = 9;
+blob.x = 3;
+blob.y = 6;
+for (let y = 0; y < slime.room.h; y += 1) {
+  for (let x = 0; x < slime.room.w; x += 1) {
+    if (!isFloor(slime.room, x, y) || isBlocked(slime.room, x, y)) continue;
+    if ((x === 3 && y === 6) || (x === 4 && y === 6) || (x === 4 && y === 5)) continue;
+    slime.ground[y * slime.room.w + x] = { kind: "poison", stacks: 1, turns: ELEMENTS.puddleTurns };
+  }
+}
+wait(slime, () => 0);
+assert.equal(blob.x, 4);
+assert.equal(blob.y, 5);
+assert.equal(groundAt(slime, 4, 6)?.kind, "poison");
+assert.equal(groundAt(slime, 4, 5)?.kind, "poison");
+
+const soaked = createRoom(OPEN, { monsterKind: "6" });
+const wander = soaked.monsters[0]!;
+soaked.hero.x = 9;
+soaked.hero.y = 9;
+const soakedAt = { x: wander.x, y: wander.y };
+for (let y = 0; y < soaked.room.h; y += 1) {
+  for (let x = 0; x < soaked.room.w; x += 1) {
+    if (!isFloor(soaked.room, x, y) || isBlocked(soaked.room, x, y)) continue;
+    soaked.ground[y * soaked.room.w + x] = { kind: "poison", stacks: 1, turns: ELEMENTS.puddleTurns };
+  }
+}
+wait(soaked, () => 0);
+assert.equal(wander.x === soakedAt.x && wander.y === soakedAt.y, false);
 
 console.log("sim ok");
