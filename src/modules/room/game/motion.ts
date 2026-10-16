@@ -187,7 +187,7 @@ export class Motion {
     if (!this.heroSlide && !this.heroNext) this.scripted = false;
   }
 
-  present(hero: Cell, monsters: readonly Cell[], time: number): { hero: Pose; monsters: Pose[] } {
+  present(hero: Cell, monsters: readonly Cell[], time: number, holdMs = 0): { hero: Pose; monsters: Pose[] } {
     const still = (cell: Cell): Pose => ({ x: cell.x, y: cell.y, travel: null, jump: false });
     if (!this.seenHero || !this.seenMonsters || this.seenMonsters.length !== monsters.length) {
       if (!this.seenHero) this.seenHero = { x: hero.x, y: hero.y };
@@ -214,7 +214,7 @@ export class Motion {
           : null;
         this.seenHero = { x: hero.x, y: hero.y };
       }
-      const delay = this.scripted ? STEP_MS * 2 : heroOne ? REACT_MS : 0;
+      const delay = this.scripted ? STEP_MS * 2 : holdMs > 0 ? holdMs : heroOne ? REACT_MS : 0;
       this.monsterSlides = monsters.map((monster, index) => {
         const seen = this.seenMonsters?.[index] ?? monster;
         const from = sample(this.monsterSlides[index] ?? null, seen, time);

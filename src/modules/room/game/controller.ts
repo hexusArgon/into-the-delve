@@ -1,6 +1,6 @@
 import { RoomRenderer } from "./view.ts";
 import { loadSprites, type Sprites } from "./sprites.ts";
-import { abilityAim, arrowBeam, attack, blink, blinkCells, castHeroAbility, doorway, face, interactTarget, livingMonsters, nearestAim, onBoard, reload, roomMonsters, step, useChest, wait, SIDE_FACING, type Dir, type RoomState } from "./sim.ts";
+import { abilityAim, arrowBeam, attack, blink, blinkCells, castHeroAbility, face, interactTarget, livingMonsters, nearestAim, onBoard, reload, roomMonsters, step, useChest, usePortal, wait, type Dir, type RoomState } from "./sim.ts";
 import { heroAuras, monsterAuras, type Aura } from "./statuses.ts";
 import { monsterById, strikeElement, type DamageType } from "../data/monsters.ts";
 import { abilityView } from "../data/hero-abilities.ts";
@@ -12,7 +12,7 @@ import { WEAPONS, weaponById } from "../data/weapons.ts";
 import { createRun, syncRun, teleport, travel, type Run } from "./floor.ts";
 import { MINIMAP_MARGIN, hudScale, minimapFrame, minimapPanel } from "./map.ts";
 import { playAbility } from "./ability-sfx.ts";
-import { playFootstep, playHeroDeath, playMonsterCue, playReload, playShieldBreak, playWeaponSound, preloadSwordBlows } from "./sfx.ts";
+import { playAutomatonSwap, playAutomatonDeath, playBarrelFire, playBarrelIce, playBarrelOil, playBarrelPoison, playBarrelWater, playFootstep, playHeroDeath, playMonsterCue, playReload, playShieldBreak, playWeaponSound, preloadSwordBlows } from "./sfx.ts";
 import { installDungeonMusic } from "./music.ts";
 import { openSettings } from "./settings-view.ts";
 import { coarsePointer, isSwingStep, lessonAdvance, lessonAllows, lessonText, lessonWeapon, tutorialRun, type LessonEvent, type LessonHooks, type LessonStep } from "./tutorial.ts";
@@ -124,6 +124,8 @@ export class RoomController {
   private mapOpen = false;
   private swing: number | null = null;
   private readonly heldMoves = new Map<string, Dir>();
+  private arrowPointer: number | null = null;
+  private fullscreenButtonEl: HTMLButtonElement | null = null;
   private shiftHeld = false;
   private lastMoveAt = 0;
   private moveTimer = 0;
@@ -165,6 +167,7 @@ export class RoomController {
     weaponHit: number | null = null,
     abilities: (RunAbility | null)[] = [],
     private readonly adventure = 0,
+    private readonly onTutorial?: () => void,
   ) {
     this.onHub = onHub;
     this.host = host;
@@ -235,6 +238,7 @@ export class RoomController {
       this.coarse ? this.phoneAction("Turn", () => this.turnClockwise()) : prompt("Shift", "Turn"),
       this.coarse ? this.phoneAction("Wait", () => this.wait()) : prompt("X", "Wait"),
     );
+    if (this.coarse) center.append(this.movePad());
     center.append(prompts);
 
     const hands = this.mountGear();
@@ -471,6 +475,7 @@ export class RoomController {
     window.removeEventListener("keyup", this.onKeyUp);
     window.removeEventListener("blur", this.onBlur);
     window.removeEventListener("resize", this.onResize);
+    document.removeEventListener("fullscreenchange", this.onFullscreen);
   }
 
   private dropAbilityAim(): void {
@@ -534,7 +539,10 @@ export class RoomController {
       let broke = false;
       for (const place of beforeHit) {
         const died = place.hp > 0 && place.monster.hp <= 0;
-        if (died) playMonsterCue(place.monster.kind, "death", place.monster.facing);
+        if (died) {
+          if (place.monster.kind === "21") playAutomatonDeath(place.monster.facing);
+          else playMonsterCue(place.monster.kind, "death", place.monster.facing);
+        }
         if (place.shield > 0 && place.monster.shield === 0) {
           if (!died) playMonsterCue(place.monster.kind, "pain", place.monster.facing);
           broke = true;
@@ -575,6 +583,7 @@ export class RoomController {
 
   private releaseMoves(): void {
     this.heldMoves.clear();
+    this.arrowPointer = null;
     this.shiftHeld = false;
     if (this.moveTimer !== 0) {
       window.clearTimeout(this.moveTimer);
@@ -781,7 +790,7 @@ export class RoomController {
     const exit = this.run.exit;
     if (cell && exit && exit.room === this.run.current && cell.x === exit.cell.x && cell.y === exit.cell.y) {
       this.choosingBlink = false;
-      this.onHub?.();
+      this.leaveByPortal();
       return;
     }
     if (this.lesson && this.lessonStep === "blink") {
@@ -854,8 +863,7 @@ export class RoomController {
       this.confirmWeapon(cell);
       return;
     }
-    if (cell && this.phoneUseTile(cell)) return;
-    this.phoneStep(cell, point);
+    if (cell) this.phoneUseTile(cell);
   }
 
   private minimapContains(point: { x: number; y: number }): boolean {
@@ -888,22 +896,48 @@ export class RoomController {
     this.face(CLOCKWISE[(index + 1) % CLOCKWISE.length] ?? "up");
   }
 
-  private phoneStep(cell: { x: number; y: number } | null, point: { x: number; y: number }): void {
-    const mouth = this.renderer.doorMouthAt(point.x, point.y, this.state.exits);
-    const doorDir = mouth || cell ? this.phoneDoorDir(mouth ?? cell!) : null;
-    const dir = doorDir ?? this.renderer.directionAt(point.x, point.y, this.state.hero);
-    if (dir) this.walk(dir);
+  private movePad(): HTMLElement {
+    const pad = document.createElement("div");
+    pad.className = "dungeon-pad";
+    for (const dir of ["up", "left", "right", "down"] as const) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `dungeon-arrow dungeon-arrow-${dir}`;
+      button.setAttribute("aria-label", dir === "up" ? "Up" : dir === "down" ? "Down" : dir === "left" ? "Left" : "Right");
+      button.innerHTML =
+        '<svg viewBox="0 0 64 64" aria-hidden="true"><polygon points="32,7 57,30 45,30 45,57 19,57 19,30 7,30" fill="#fffef8" stroke="#e10600" stroke-width="5" stroke-linejoin="round"/></svg>';
+      button.addEventListener("contextmenu", (event) => event.preventDefault());
+      button.addEventListener("pointerdown", (event) => this.arrowDown(dir, event));
+      button.addEventListener("pointerup", (event) => this.arrowUp(event));
+      button.addEventListener("pointercancel", (event) => this.arrowUp(event));
+      pad.append(button);
+    }
+    return pad;
   }
 
-  private phoneDoorDir(cell: { x: number; y: number }): Dir | null {
-    for (const door of this.state.exits) {
-      const mouth = doorway(door);
-      const hits = (cell.x === door.x && cell.y === door.y) || (cell.x === mouth.x && cell.y === mouth.y);
-      if (!hits) continue;
-      if (this.state.hero.x === door.x && this.state.hero.y === door.y) return SIDE_FACING[door.side];
-      return this.dirToward(door.x, door.y);
+  private arrowDown(dir: Dir, event: PointerEvent): void {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const button = event.currentTarget;
+    if (button instanceof HTMLElement) {
+      try {
+        button.setPointerCapture(event.pointerId);
+      } catch {
+        // A pointer that is already gone does not block the step.
+      }
     }
-    return null;
+    this.arrowPointer = event.pointerId;
+    this.aimingWeapon = false;
+    this.heldMoves.clear();
+    this.heldMoves.set("touch-arrow", dir);
+    this.holdStep(true);
+    this.pumpMove();
+  }
+
+  private arrowUp(event: PointerEvent): void {
+    if (this.arrowPointer !== event.pointerId) return;
+    this.arrowPointer = null;
+    this.heldMoves.delete("touch-arrow");
   }
 
   private phoneUseTile(cell: { x: number; y: number }): boolean {
@@ -917,7 +951,7 @@ export class RoomController {
     }
     const exit = this.run.exit;
     if (exit && exit.room === this.run.current && exit.cell.x === cell.x && exit.cell.y === cell.y) {
-      if (!this.lesson) this.onHub?.();
+      if (!this.lesson) this.leaveByPortal();
       return true;
     }
     return false;
@@ -1058,11 +1092,48 @@ export class RoomController {
       pause.addEventListener("click", () => this.togglePause());
       corner.append(pause);
     }
+    if (this.coarse) corner.append(this.fullscreenButton());
     const purse = document.createElement("div");
     purse.className = "dungeon-corner-gold";
     purse.append(this.goldIcon, this.goldText);
     corner.append(purse);
     return corner;
+  }
+
+  private fullscreenButton(): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "dungeon-corner-pause";
+    button.textContent = "Full";
+    button.setAttribute("aria-label", "Fullscreen");
+    button.addEventListener("click", () => void this.toggleFullscreen());
+    this.fullscreenButtonEl = button;
+    document.addEventListener("fullscreenchange", this.onFullscreen);
+    return button;
+  }
+
+  private readonly onFullscreen = (): void => {
+    const on = document.fullscreenElement !== null;
+    if (!this.fullscreenButtonEl) return;
+    this.fullscreenButtonEl.textContent = on ? "Exit" : "Full";
+    this.fullscreenButtonEl.setAttribute("aria-pressed", on ? "true" : "false");
+  };
+
+  private async toggleFullscreen(): Promise<void> {
+    const node = this.host as HTMLElement & { webkitRequestFullscreen?: () => void };
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+      if (typeof node.requestFullscreen === "function") {
+        await node.requestFullscreen({ navigationUI: "hide" });
+        return;
+      }
+      node.webkitRequestFullscreen?.();
+    } catch {
+      // The page around the game can refuse fullscreen. The address bar stays.
+    }
   }
 
   private paintGold(gold: HTMLCanvasElement): void {
@@ -1095,7 +1166,7 @@ export class RoomController {
     title.style.margin = "0";
     title.textContent = "Menu";
     const resume = this.pauseButton("Resume", true, () => this.closePause());
-    const settings = this.pauseButton("Settings", false, () => openSettings(this.host));
+    const settings = this.pauseButton("Settings", false, () => openSettings(this.host, this.onTutorial));
     const giveUp = this.pauseButton("Surrender", false, () => {
       this.closePause();
       this.onHub?.();
@@ -1396,6 +1467,15 @@ export class RoomController {
     }
   }
 
+  private leaveByPortal(): void {
+    if (this.lesson || this.locked()) return;
+    if (usePortal(this.state)) this.onHub?.();
+    else {
+      this.commit();
+      this.refresh();
+    }
+  }
+
   private interact(): void {
     if (this.pause || this.mapOpen || this.locked() || this.state.outcome === "lost") return;
     if (this.choosingBlink || this.abilitySlot !== null) return;
@@ -1404,7 +1484,7 @@ export class RoomController {
     if (!target) return;
     if (target.kind === "portal") {
       if (this.lesson) return;
-      this.onHub?.();
+      this.leaveByPortal();
       return;
     }
     if (useChest(this.state, target.cell.x, target.cell.y)) {
@@ -1561,7 +1641,25 @@ export class RoomController {
 
   private playAbilities(): void {
     const heard = new Set<string>();
+    const facing = this.state.hero.facing;
     for (const fx of this.state.fx) {
+      if (fx.act === "swap") {
+        if (heard.has("swap")) continue;
+        heard.add("swap");
+        playAutomatonSwap(facing);
+        continue;
+      }
+      if (fx.act === "keg" && fx.kind === "area") {
+        const key = `keg:${fx.tone}`;
+        if (heard.has(key)) continue;
+        heard.add(key);
+        if (fx.tone === "fire") playBarrelFire(facing);
+        else if (fx.tone === "water") playBarrelWater(facing);
+        else if (fx.tone === "ice") playBarrelIce(facing);
+        else if (fx.tone === "poison") playBarrelPoison(facing);
+        else playBarrelOil(facing);
+        continue;
+      }
       if (!fx.act || heard.has(fx.act)) continue;
       heard.add(fx.act);
       playAbility(fx.act);

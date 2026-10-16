@@ -89,7 +89,7 @@ export function lessonWeapon(step: LessonStep): WeaponId {
 }
 
 const PHONE_COPY: Partial<Record<LessonStep, string>> = {
-  move: "Tap the direction you want. The hero steps one tile that way. After a step, the monster moves.",
+  move: "Tap an arrow. The hero steps one tile that way. After a step, the monster moves.",
   turn: "Tap Turn. The hero turns 90 degrees clockwise. Turning is not a turn, and the monster does not move.",
   reload: "The pistol is not full. Tap the weapon to reload. This spends the turn. An empty pistol reloads when you confirm an attack. The rifle and shotgun do not.",
   blink: "Tap Blink, then tap a lit tile. Tap Blink again to cancel. A cancel does not spend a charge.",

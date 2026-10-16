@@ -1,5 +1,6 @@
 import { heroAttributes, monsterAttributes, type Attributes } from "../data/attributes.ts";
 import { CHEST_GOLD, ELEMENTS, KIT, MONSTER_GOLD, RARE_GOLD, SPORE, monsterById, type DamageType, type MonsterDef, type MonsterRole } from "../data/monsters.ts";
+import type { DamageHit } from "./damage-float.ts";
 import { threatFactor } from "./adventure.ts";
 import type { BodyKind, Decor, Door, Facing, RoomPattern, RoomTheme, Side, Spawn, Stamp } from "../data/rooms.ts";
 import { EMPTY_GEAR, critFactor, itemById, type GearBonus } from "../data/items.ts";
@@ -72,7 +73,8 @@ export type WindupKind =
   | "pounce"
   | "rush"
   | "wisp"
-  | "spit";
+  | "spit"
+  | "swap";
 
 /** Отложенный удар. Владелец ждёт, срабатывание — его ход. Стан или смерть владельца удар отменяют. */
 export interface Windup {
@@ -95,6 +97,14 @@ export interface Hazard {
 }
 
 export type GroundKind = "fire" | "oil" | "poison" | "water" | "ice";
+
+/** Бочка автоматона. Не обычная бочка комнаты и не монстр. */
+export interface Keg {
+  x: number;
+  y: number;
+  element: GroundKind;
+  owner: Fighter;
+}
 
 export interface GroundCell {
   kind: GroundKind;
@@ -132,6 +142,8 @@ export interface Fighter {
   poisonPace: number;
   /** Обездвиживание шпилей: бить и кастовать можно, шагать и блинковать нельзя. Это не стан. */
   root: number;
+  /** Немота: каст ауры не идёт. */
+  silence: number;
   /** Кулдаун ледяного стана. */
   iceGuard: number;
   cooldowns: Record<string, number>;
@@ -215,7 +227,9 @@ export type AbilityAct =
   | "blizzard"
   | "arrow"
   | "quake"
-  | "shard";
+  | "shard"
+  | "keg"
+  | "swap";
 
 /** Короткий рисунок способности. Укус сюда не входит. */
 export type AbilityFx =
@@ -252,10 +266,14 @@ export interface RoomState {
   note: string;
   /** Рисунок только что сработавших способностей. Вид забирает и очищает. */
   fx: AbilityFx[];
+  /** Потеря здоровья за этот ход. Вид забирает и пускает числа вверх. */
+  hits: DamageHit[];
   /** Клетка обрыва, в которую герой только что шагнул. Вид проигрывает падение. */
   pitDrop: Cell | null;
   /** Бочки, которые ещё можно разбить шагом или ударом по клетке. */
   barrels: Cell[];
+  /** Бочки автоматона. Взрываются от урона по клетке, обычные бочки комнаты сюда не входят. */
+  kegs: Keg[];
   /** Столы и полки. Не ломаются. */
   furniture: { kind: "table" | "shelf"; x: number; y: number; w: number; h: number }[];
   /** Стулья. Как бочки: шаг или удар по клетке ломает стул. */
@@ -548,6 +566,7 @@ function fighter(base: FighterBase, mode: Mode): Fighter {
     poisonWindow: 0,
     poisonPace: 0,
     root: 0,
+    silence: 0,
     iceGuard: 0,
     cooldowns: {},
     windup: null,
@@ -701,8 +720,10 @@ export function createRoom(pattern: RoomPattern, entry: RoomEntry = {}): RoomSta
     meterLevel: 0,
     outcome: alive ? "play" : "won",
     fx: [],
+    hits: [],
     pitDrop: null,
     barrels: [],
+    kegs: [],
     furniture: [],
     chairs: [],
     chests: [],
@@ -888,7 +909,10 @@ function blast(state: RoomState, start: Cell, rng: () => number): void {
       if (groundAt(state, next.x, next.y)?.kind === "oil") queue.push(next);
     }
   }
-  if (burst.length > 0) state.fx.push({ kind: "area", cells: burst, tone: "fire" });
+  if (burst.length > 0) {
+    state.fx.push({ kind: "area", cells: burst, tone: "fire" });
+    touchKegs(state, burst, rng);
+  }
 }
 
 /** Лёд по воде замораживает клетку и соседние водяные домино. Кто стоит на них — стан. */
@@ -924,6 +948,17 @@ function damageFactor(unit: Fighter, type: DamageType): number {
   return factor;
 }
 
+/** Огонь и яд по автоматону режутся пополам уже после брони. Это не иммунитет. */
+function resistFactor(unit: Fighter, type: DamageType): number {
+  if (unit.role === "automaton" && (type === "fire" || type === "poison")) return KIT.automaton.resist;
+  return 1;
+}
+
+function markHit(state: RoomState, cell: Cell, dealt: number, type: DamageType, crit = false): void {
+  if (dealt <= 0) return;
+  state.hits.push({ x: cell.x, y: cell.y, amount: dealt, type, crit });
+}
+
 /** Удар способностью, укусом или оружием. Возвращает урон после брони, стихий и иммунитета. */
 function hurt(
   state: RoomState,
@@ -934,6 +969,7 @@ function hurt(
   rng: () => number,
   ability = false,
   directPoison = false,
+  crit = false,
 ): number {
   if (target.hp <= 0) return 0;
   if (target !== state.hero && !onBoard(target)) return 0;
@@ -948,10 +984,12 @@ function hurt(
     stunUnit(state, target, ELEMENTS.iceStun);
     target.iceGuard = ELEMENTS.iceStunCooldown;
   }
-  const raw = amount * damageFactor(target, type);
+  const raw = resistFactor(target, type) * amount * damageFactor(target, type);
   const dealt = target === state.hero ? wardAbsorb(state, raw, type) : raw;
   if (dealt > 0) {
     target.hp -= dealt;
+    markHit(state, target, dealt, type, crit);
+    touchKegs(state, [target], rng);
     if (type === "fire") target.burn = ELEMENTS.fireTurns;
     if (type === "earth") target.oil = ELEMENTS.oilTurns;
     if (type === "water") target.wet = ELEMENTS.wetTurns;
@@ -1062,13 +1100,18 @@ function kill(state: RoomState, unit: Fighter, rng: () => number): void {
   if (unit.packIndex !== undefined) releaseParcels(state, spot(unit), (parcel) => parcel.monster === unit.packIndex && !parcel.chest);
 }
 
-/** Клетки ауры: тот же квадрат, что и стаки вампиризма. Пока идут шпили, ауры нет. */
+/** Аура идёт, только пока послушник её кастует. Стан, немота и другой каст её снимают. */
+export function acolyteChanneling(unit: Fighter): boolean {
+  return unit.role === "acolyte" && onBoard(unit) && unit.stun === 0 && unit.silence === 0 && unit.windup === null;
+}
+
+/** Клетки ауры: тот же квадрат, что и стаки вампиризма. */
 export function acolyteAuraCells(state: RoomState): Cell[] {
   const marked = new Set<string>();
   const cells: Cell[] = [];
   const reach = KIT.acolyte.aura;
   for (const acolyte of state.monsters) {
-    if (acolyte.role !== "acolyte" || !onBoard(acolyte) || acolyte.windup?.kind === "spires") continue;
+    if (!acolyteChanneling(acolyte)) continue;
     for (let dy = -reach; dy <= reach; dy += 1) {
       for (let dx = -reach; dx <= reach; dx += 1) {
         const x = acolyte.x + dx;
@@ -1088,7 +1131,7 @@ export function acolyteAuraCells(state: RoomState): Cell[] {
 export function vampirism(state: RoomState, unit: Fighter): number {
   let stacks = 0;
   for (const other of state.monsters) {
-    if (other.role !== "acolyte" || !onBoard(other) || other.windup?.kind === "spires") continue;
+    if (!acolyteChanneling(other)) continue;
     if (chebyshev(other, unit) <= KIT.acolyte.aura) stacks += KIT.acolyte.vampirism;
   }
   return stacks;
@@ -1422,7 +1465,7 @@ function slimeTurn(state: RoomState, monster: Fighter, rng: () => number): strin
     breakObject(state, cell, rng);
     writeGround(state, cell, "poison", KIT.slime.stacks, rng);
   }
-  state.fx.push({ kind: "move", from, to: spot(monster), act: "slime" });
+  state.fx.push({ kind: "move", from, to: spot(monster) });
   return "";
 }
 
@@ -1768,6 +1811,130 @@ function whisperTurn(state: RoomState, monster: Fighter, rng: () => number): str
   return "";
 }
 
+function automatonTurn(state: RoomState, monster: Fighter, rng: () => number): string {
+  if (ready(monster, "swap")) {
+    const cell = spot(state.hero);
+    monster.windup = windup("swap", KIT.automaton.swapDelay, [cell], cell);
+    monster.cooldowns.swap = KIT.automaton.swapCooldown;
+    faceToward(monster, cell);
+    return "The automaton marks a swap.";
+  }
+  if (ready(monster, "keg")) {
+    const spots = ORTHO.map((step) => ({ x: monster.x + step.x, y: monster.y + step.y })).filter(
+      (cell) => vacant(state, cell.x, cell.y) && !kegAt(state, cell.x, cell.y),
+    );
+    const place = pick(spots, rng);
+    if (place) {
+      const element = pick(KEG_ELEMENTS, rng);
+      if (element) {
+        state.kegs.push({ x: place.x, y: place.y, element, owner: monster });
+        monster.cooldowns.keg = KIT.automaton.kegCooldown;
+        faceToward(monster, place);
+        return "The automaton sets a barrel.";
+      }
+    }
+  }
+  return stepToDanger(state, monster, rng);
+}
+
+/** Опасность клетки: лужи и чужие монстры в квадрате 3×3, включая её саму. */
+function dangerAt(state: RoomState, monster: Fighter, cell: Cell): number {
+  let score = 0;
+  for (let dy = -1; dy <= 1; dy += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      const x = cell.x + dx;
+      const y = cell.y + dy;
+      if (groundAt(state, x, y)) score += 1;
+      for (const other of state.monsters) {
+        if (other === monster || !onBoard(other)) continue;
+        if (other.x === x && other.y === y) score += 1;
+      }
+    }
+  }
+  return score;
+}
+
+function stepToDanger(state: RoomState, monster: Fighter, rng: () => number): string {
+  if (monster.root > 0) return "";
+  let best: Cell | null = null;
+  let bestScore = -1;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (let y = 0; y < state.room.h; y += 1) {
+    for (let x = 0; x < state.room.w; x += 1) {
+      if (!holdsGround(state, x, y)) continue;
+      const cell = { x, y };
+      const score = dangerAt(state, monster, cell);
+      const dist = manhattan(monster, cell);
+      if (score > bestScore || (score === bestScore && dist < bestDist)) {
+        best = cell;
+        bestScore = score;
+        bestDist = dist;
+      }
+    }
+  }
+  if (!best || (best.x === monster.x && best.y === monster.y)) return "";
+  const dist = distancesTo(state.room, best);
+  const here = dist[monster.y * state.room.w + monster.x] ?? -1;
+  if (here <= 0) return "";
+  const options = ORTHO.map((step) => ({ x: monster.x + step.x, y: monster.y + step.y })).filter(
+    (cell) => !isBlocked(state.room, cell.x, cell.y) && !taken(state, cell.x, cell.y) && dist[cell.y * state.room.w + cell.x] === here - 1,
+  );
+  const next = pick(options, rng);
+  if (!next) return "";
+  faceToward(monster, next);
+  monster.x = next.x;
+  monster.y = next.y;
+  return breakObject(state, next, rng) ? "Object broken." : "";
+}
+
+const KEG_ELEMENTS: readonly GroundKind[] = ["fire", "water", "ice", "poison", "oil"];
+let detonating = false;
+
+function kegAt(state: RoomState, x: number, y: number): Keg | undefined {
+  return state.kegs.find((keg) => keg.x === x && keg.y === y);
+}
+
+function explodeKeg(state: RoomState, keg: Keg, rng: () => number, seen: Set<Keg>): void {
+  if (seen.has(keg)) return;
+  seen.add(keg);
+  state.kegs = state.kegs.filter((item) => item !== keg);
+  const cells = square(state, keg, 1);
+  const type: DamageType = keg.element === "oil" ? "earth" : keg.element;
+  for (const unit of unitsIn(state, cells)) hurt(state, unit, KIT.automaton.blast, type, keg.owner, rng, false, type === "poison");
+  state.fx.push({ kind: "area", cells, tone: type, act: "keg" });
+  for (const other of state.kegs.filter((item) => cells.some((cell) => cell.x === item.x && cell.y === item.y))) {
+    explodeKeg(state, other, rng, seen);
+  }
+}
+
+function touchKegs(state: RoomState, cells: readonly Cell[], rng: () => number): void {
+  if (detonating) return;
+  const hits = state.kegs.filter((keg) => cells.some((cell) => cell.x === keg.x && cell.y === keg.y));
+  if (hits.length === 0) return;
+  detonating = true;
+  const seen = new Set<Keg>();
+  for (const keg of hits) explodeKeg(state, keg, rng, seen);
+  detonating = false;
+}
+
+function resolveSwap(state: RoomState, monster: Fighter, cell: Cell): string {
+  const occupant = boardUnits(state).find((unit) => unit !== monster && unit.x === cell.x && unit.y === cell.y) ?? null;
+  const from = spot(monster);
+  if (occupant && (occupant.root > 0 || occupant.stun > 0)) return "The swap fails. The target cannot move.";
+  if (occupant) {
+    monster.x = occupant.x;
+    monster.y = occupant.y;
+    occupant.x = from.x;
+    occupant.y = from.y;
+  } else {
+    monster.x = cell.x;
+    monster.y = cell.y;
+  }
+  faceToward(monster, from);
+  state.fx.push({ kind: "line", from, to: spot(monster), tone: "control", act: "swap" });
+  return occupant ? "The automaton swapped places." : "The automaton stepped onto the mark.";
+}
+
 function roleTurn(state: RoomState, monster: Fighter, rng: () => number): string {
   switch (monster.role) {
     case "dog":
@@ -1808,12 +1975,20 @@ function roleTurn(state: RoomState, monster: Fighter, rng: () => number): string
       return drownedTurn(state, monster, rng);
     case "whisper":
       return whisperTurn(state, monster, rng);
+    case "automaton":
+      return automatonTurn(state, monster, rng);
     default:
       return biteOrStep(state, monster, rng);
   }
 }
 
 function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: () => number): string {
+  const note = resolveCast(state, monster, cast, rng);
+  if (cast.kind !== "swap" && cast.kind !== "tongue" && cast.kind !== "spires") touchKegs(state, cast.cells, rng);
+  return note;
+}
+
+function resolveCast(state: RoomState, monster: Fighter, cast: Windup, rng: () => number): string {
   switch (cast.kind) {
     case "swing": {
       for (const unit of unitsIn(state, cast.cells, monster)) hurt(state, unit, KIT.skeleton.damage, "physical", monster, rng);
@@ -1833,11 +2008,13 @@ function resolveWindup(state: RoomState, monster: Fighter, cast: Windup, rng: ()
       state.fx.push({ kind: "shot", from: spot(monster), to: cell, tone: "poison", act: "spit" });
       return "The spider spat poison.";
     }
+    case "swap":
+      return resolveSwap(state, monster, cast.center);
     case "jump": {
       const from = spot(monster);
       monster.x = cast.center.x;
       monster.y = cast.center.y;
-      for (const unit of unitsIn(state, cast.cells, monster)) hurt(state, unit, KIT.corpse.stacks, "poison", monster, rng);
+      for (const unit of unitsIn(state, cast.cells, monster)) hurt(state, unit, KIT.corpse.damage, "poison", monster, rng, false, true);
       pour(state, cast.cells, "poison", KIT.corpse.stacks, rng);
       state.fx.push({ kind: "shot", from, to: spot(monster), tone: "poison", act: "leap" });
       state.fx.push({ kind: "area", cells: cast.cells, tone: "poison", act: "pop" });
@@ -1992,6 +2169,7 @@ function resolveHazard(state: RoomState, hazard: Hazard, rng: () => number): str
     const from = owner.anchor ?? spot(owner);
     if (heroHit && hero.hp > 0) knock(state, hero, from, KIT.gargoyle.stonePush, rng, DIRS[BACK[hero.facing]]);
     state.fx.push({ kind: "shot", from, to: hazard.center, tone: "earth", act: "fall" });
+    touchKegs(state, hazard.cells, rng);
     return "A stone from above.";
   }
   const water = hazard.kind === "geyser";
@@ -2000,6 +2178,7 @@ function resolveHazard(state: RoomState, hazard: Hazard, rng: () => number): str
   for (const unit of unitsIn(state, hazard.cells, owner)) hurt(state, unit, amount, type, owner, rng);
   pour(state, hazard.cells, type, 0, rng);
   state.fx.push({ kind: "area", cells: hazard.cells, tone: type, act: water ? "geyser" : "hail" });
+  touchKegs(state, hazard.cells, rng);
   return water ? "Geyser." : "Hail.";
 }
 
@@ -2084,10 +2263,12 @@ function monsterPhase(state: RoomState, rng: () => number): string {
 /** Тик в конце раунда без брони источника, щита и вампиризма. */
 function tickHit(state: RoomState, unit: Fighter, amount: number, type: DamageType, rng: () => number): void {
   if (amount <= 0 || immuneTo(unit, type)) return;
-  const raw = amount * damageFactor(unit, type);
+  const raw = resistFactor(unit, type) * amount * damageFactor(unit, type);
   const dealt = unit === state.hero ? wardAbsorb(state, raw, type) : raw;
   if (dealt <= 0) return;
   unit.hp -= dealt;
+  markHit(state, unit, dealt, type);
+  touchKegs(state, [unit], rng);
   if (unit.hp <= 0) kill(state, unit, rng);
 }
 
@@ -2103,7 +2284,7 @@ function tickWorld(state: RoomState, rng: () => number): void {
     }
     if (unit.poisonWindow <= 0) continue;
     if (unit.poison > 0) {
-      tickHit(state, unit, 1, "poison", rng);
+      tickHit(state, unit, unit.poison, "poison", rng);
       unit.poisonPace += 1;
       if (unit.poisonPace >= ELEMENTS.poisonStep) {
         unit.poison -= 1;
@@ -2182,7 +2363,9 @@ function landingAfterFall(state: RoomState, pit: Cell, from: Cell): Cell {
 
 function fallIntoPit(state: RoomState, pit: Cell, from: Cell, dir: Dir, rng: () => number): boolean {
   state.hero.facing = dir;
-  state.hero.hp -= state.hero.maxHp * PIT_HP_SHARE;
+  const dropped = state.hero.maxHp * PIT_HP_SHARE;
+  state.hero.hp -= dropped;
+  markHit(state, pit, dropped, "physical");
   state.pitDrop = pit;
   const dead = state.hero.hp <= 0;
   const place = dead ? pit : landingAfterFall(state, pit, from);
@@ -2267,13 +2450,25 @@ export function interactTarget(state: RoomState, exit: Cell | null): { kind: "ch
   return pick ? { kind: pick.kind, cell: pick.cell } : null;
 }
 
-/** Space у сундука. Ход не тратится. */
+/** Space у сундука. Ход тратится, мир ходит. */
 export function useChest(state: RoomState, x: number, y: number, rng: () => number = Math.random): boolean {
-  if (state.hero.hp <= 0 || state.outcome === "lost") return false;
+  if (!canControl(state)) return false;
+  if (!state.chests.some((item) => !item.open && item.x === x && item.y === y)) return false;
+  beginHeroTurn(state);
   if (!openChest(state, { x, y }, rng)) return false;
   state.note = "The chest opens.";
   if (state.spoilNames.length > 0) state.note = `${state.note} ${state.spoilNames.splice(0).join(", ")} dropped.`.trim();
+  afterAction(state, false, rng);
   return true;
+}
+
+/** Space у портала. Ход тратится. В хаб можно уйти, только если герой после этого жив. */
+export function usePortal(state: RoomState, rng: () => number = Math.random): boolean {
+  if (!canControl(state)) return false;
+  beginHeroTurn(state);
+  state.note = "The portal opens.";
+  afterAction(state, false, rng);
+  return state.hero.hp > 0 && state.outcome !== "lost";
 }
 
 function openChests(state: RoomState, cells: readonly Cell[], rng: () => number): number {
@@ -2519,15 +2714,20 @@ export function attack(state: RoomState, rng: () => number = Math.random): boole
   const targets = struck(state);
   const times = targets.length === 0 ? 0 : weapon.twice ? 2 : 1;
   if (weapon.magazine !== null) state.ammo = (shotsLeft(state) ?? weapon.magazine) - 1;
+  const kegsBefore = state.kegs.length;
   if (times === 0) {
-    state.note = `${weapon.name} hit nothing. The turn is still spent.${smashedNote}`;
+    touchKegs(state, swingCells, rng);
+    const burst = state.kegs.length < kegsBefore ? " The barrel bursts." : "";
+    state.note = `${weapon.name} hit nothing. The turn is still spent.${burst}${smashedNote}`;
     afterAction(state, false, rng);
     return true;
   }
   const shields = targets.map((target) => target.shield);
+  const weaponCrit = critFactor(state.critChance, state.critShare) > 1;
   for (const target of targets) {
-    for (let hit = 0; hit < times; hit += 1) hurt(state, target, swordDamage(state), "physical", state.hero, rng);
+    for (let hit = 0; hit < times; hit += 1) hurt(state, target, swordDamage(state), "physical", state.hero, rng, false, false, weaponCrit);
   }
+  touchKegs(state, swingCells, rng);
   const broke = targets.some((target, index) => (shields[index] ?? 0) > 0 && target.shield === 0);
   state.note = `${broke ? "Shield broken. The monster is stunned, and Blink is back." : "Hit."}${smashedNote}`;
   afterAction(state, broke, rng);
@@ -2670,8 +2870,10 @@ function castReady(state: RoomState, ability: RunAbility, cell: Cell | null): bo
 function poisonHp(state: RoomState, target: Fighter, amount: number, rng: () => number): void {
   if (target.hp <= 0 || !onBoard(target)) return;
   if (immuneTo(target, "poison")) return;
-  const dealt = amount * damageFactor(target, "poison");
+  const dealt = resistFactor(target, "poison") * amount * damageFactor(target, "poison");
   target.hp -= dealt;
+  markHit(state, target, dealt, "poison");
+  touchKegs(state, [target], rng);
   if (target.hp <= 0) {
     kill(state, target, rng);
     return;
@@ -2740,6 +2942,7 @@ function tickWard(state: RoomState, rng: () => number): void {
   if (!ward) return;
   const cells = square(state, state.hero, NEAR);
   for (const unit of unitsIn(state, cells, state.hero)) hurt(state, unit, ward.damage, "fire", state.hero, rng, true);
+  touchKegs(state, cells, rng);
   ward.left -= 1;
   if (ward.left <= 0) state.ward = null;
   if (cells.length > 0) state.fx.push({ kind: "area", cells, tone: "fire", act: "ward" });
@@ -2755,6 +2958,7 @@ function tickBlizzard(state: RoomState, rng: () => number): void {
   state.mp -= storm.mp;
   const cells = square(state, state.hero, BLIZZARD_REACH);
   for (const unit of unitsIn(state, cells, state.hero)) hurt(state, unit, storm.damage, "water", state.hero, rng, true);
+  touchKegs(state, cells, rng);
   for (const cell of cells) writeGround(state, cell, "water", 0, rng);
   if (cells.length > 0) state.fx.push({ kind: "area", cells, tone: "water", act: "blizzard" });
 }
@@ -2765,6 +2969,7 @@ function tickQuakes(state: RoomState, rng: () => number): void {
     const center = { x: zone.x, y: zone.y };
     const cells = square(state, center, NEAR);
     for (const unit of unitsIn(state, cells, state.hero)) hurt(state, unit, zone.damage, "earth", state.hero, rng, true);
+    touchKegs(state, cells, rng);
     for (const cell of cells) writeGround(state, cell, "oil", 0, rng);
     zone.left -= 1;
     if (zone.left > 0) next.push(zone);

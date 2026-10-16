@@ -72,7 +72,7 @@ export function paintAuction(
     host.style.display = "flex";
     host.style.flexDirection = "column";
     host.style.height = "100%";
-    host.style.overflow = "hidden";
+    host.style.overflow = "auto";
 
     const page = document.createElement("div");
     page.className = "dungeon-auction";

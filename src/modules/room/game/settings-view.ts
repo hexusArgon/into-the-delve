@@ -1,8 +1,8 @@
 import { musicEnabled, musicVolume, setMusicEnabled, setMusicVolume } from "./music.ts";
 import { playFootstep, setSfxEnabled, setSfxVolume, sfxEnabled, sfxVolume } from "./sfx.ts";
 
-/** Окно настроек поверх меню. Закрывается крестом, фоном и Escape. */
-export function openSettings(host: HTMLElement): void {
+/** Окно настроек поверх меню. Закрывается фоном и Escape. `onTutorial` запускает урок. */
+export function openSettings(host: HTMLElement, onTutorial?: () => void): void {
   const veil = document.createElement("div");
   veil.className = "dungeon-settings";
 
@@ -30,12 +30,22 @@ export function openSettings(host: HTMLElement): void {
   done.textContent = "Close";
   done.addEventListener("click", close);
 
+  const tutorial = document.createElement("button");
+  tutorial.type = "button";
+  tutorial.className = "dungeon-button";
+  tutorial.textContent = "Play Tutorial";
+  tutorial.addEventListener("click", () => {
+    close();
+    onTutorial?.();
+  });
+
   panel.append(
     title,
     channelRow("Music", musicEnabled, setMusicEnabled, musicVolume, setMusicVolume),
     channelRow("Sounds", sfxEnabled, setSfxEnabled, sfxVolume, setSfxVolume, () => {
       if (sfxEnabled()) playFootstep("right", 0.2);
     }),
+    ...(onTutorial ? [tutorial] : []),
     done,
   );
   veil.append(panel);

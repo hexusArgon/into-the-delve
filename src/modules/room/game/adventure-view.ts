@@ -1,6 +1,6 @@
-import { adventureBlurb } from "./adventure.ts";
+import { adventureSummary } from "./adventure.ts";
 
-/** Выбор уровня перед забегом. Открыты пройденные и следующий. */
+/** Выбор уровня перед забегом. Открыты пройденные и следующий. Список от большего к меньшему. */
 export function paintAdventure(
   host: HTMLElement,
   best: number | null,
@@ -15,58 +15,60 @@ export function paintAdventure(
   host.style.overflow = "auto";
 
   const page = document.createElement("div");
-  page.style.maxWidth = "calc(720 * var(--hud))";
-  page.style.margin = "0 auto";
-  page.style.padding = "calc(28 * var(--hud)) calc(20 * var(--hud)) calc(48 * var(--hud))";
-  page.style.display = "flex";
-  page.style.flexDirection = "column";
-  page.style.gap = "calc(14 * var(--hud))";
+  page.className = "dungeon-adventure-page";
 
   const title = document.createElement("h1");
   title.className = "dungeon-title";
-  title.textContent = "Adventure";
+  title.textContent = "Delve";
 
-  const lead = document.createElement("p");
-  lead.style.margin = "0";
-  lead.style.opacity = "0.75";
-  lead.textContent = "Each level adds 20% to an extra last-room drop and 10% to monster HP and damage. Every fifth level makes that extra drop certain.";
+  const row = document.createElement("div");
+  row.className = "dungeon-adventure";
 
-  const list = document.createElement("div");
-  list.style.display = "flex";
-  list.style.flexDirection = "column";
-  list.style.gap = "calc(8 * var(--hud))";
+  const pick = document.createElement("select");
+  pick.className = "dungeon-level-pick";
+  pick.setAttribute("aria-label", "Level");
+  const cleared = best ?? 0;
   const top = best === null ? 0 : best + 1;
-  for (let level = 0; level <= top; level += 1) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "dungeon-button";
-    button.style.display = "flex";
-    button.style.flexDirection = "column";
-    button.style.alignItems = "flex-start";
-    button.style.gap = "calc(4 * var(--hud))";
-    button.style.padding = "calc(12 * var(--hud)) calc(16 * var(--hud))";
-    button.style.cursor = "pointer";
-    button.style.textAlign = "left";
-    const name = document.createElement("span");
-    name.textContent = `Level ${level}`;
-    name.style.fontSize = "calc(18 * var(--hud))";
-    const detail = document.createElement("span");
-    detail.textContent = adventureBlurb(level);
-    detail.style.opacity = "0.75";
-    button.append(name, detail);
-    button.addEventListener("click", () => onPick(level));
-    list.append(button);
+  for (let level = top; level >= 0; level -= 1) {
+    const option = document.createElement("option");
+    option.value = String(level);
+    option.textContent = `Level ${level}`;
+    pick.append(option);
   }
+  pick.value = String(cleared);
+
+  const copy = document.createElement("div");
+  copy.className = "dungeon-level-copy";
+  const name = document.createElement("div");
+  name.className = "dungeon-level-name";
+  const loot = document.createElement("div");
+  loot.className = "dungeon-level-line";
+  const threat = document.createElement("div");
+  threat.className = "dungeon-level-line";
+  const start = document.createElement("button");
+  start.type = "button";
+  start.className = "dungeon-button dungeon-button-primary dungeon-delve";
+  start.textContent = "Into the Delve";
+  copy.append(name, loot, threat, start);
+
+  const show = (): void => {
+    const summary = adventureSummary(Number(pick.value));
+    name.textContent = summary.title;
+    loot.textContent = summary.loot;
+    threat.textContent = summary.threat;
+  };
+  show();
+  pick.addEventListener("change", show);
+  start.addEventListener("click", () => onPick(Number(pick.value)));
+
+  row.append(pick, copy);
 
   const back = document.createElement("button");
   back.type = "button";
   back.textContent = "Back";
   back.className = "dungeon-button dungeon-back";
-  back.style.fontSize = "calc(18 * var(--hud))";
-  back.style.padding = "calc(14 * var(--hud)) calc(22 * var(--hud))";
-  back.style.cursor = "pointer";
   back.addEventListener("click", onBack);
 
-  page.append(title, lead, list);
+  page.append(title, row);
   host.append(back, page);
 }

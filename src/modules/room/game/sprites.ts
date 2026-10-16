@@ -52,6 +52,11 @@ const monsterFiles = import.meta.glob("../../../../assets/monsters/*.jpg", {
   import: "default",
 }) as Record<string, string>;
 
+const kegFiles = import.meta.glob("../../../../assets/barrels/*.jpg", {
+  eager: true,
+  import: "default",
+}) as Record<string, string>;
+
 export interface Sprites {
   hero: HTMLCanvasElement;
   sword: HTMLCanvasElement;
@@ -68,6 +73,8 @@ export interface Sprites {
   web: HTMLCanvasElement;
   blood: HTMLCanvasElement;
   barrel: HTMLCanvasElement;
+  /** Бочки автоматона. Ключ — стихия: fire, water, ice, poison, oil. */
+  kegs: Readonly<Record<string, HTMLCanvasElement>>;
   chain: HTMLCanvasElement;
   shelf: HTMLCanvasElement;
   table: HTMLCanvasElement;
@@ -193,7 +200,7 @@ function trimmed(source: HTMLCanvasElement): HTMLCanvasElement {
 }
 
 export async function loadSprites(): Promise<Sprites> {
-  const [core, monsters, weapons, props, status] = await Promise.all([
+  const [core, monsters, weapons, props, status, kegs] = await Promise.all([
     Promise.all(
       [
         heroUrl,
@@ -222,6 +229,7 @@ export async function loadSprites(): Promise<Sprites> {
     loadWeaponSprites(),
     loadPropSprites(),
     loadStatusIcons(),
+    loadKegSprites(),
   ]);
   const [hero, sword, monster, floor, wall, pillar, sarcophagus, torch, bones, candle, web, blood, barrel, chain, shelf, table, chair, woodFloor, gold, exit] = core;
   const sprites: Sprites = {
@@ -238,6 +246,7 @@ export async function loadSprites(): Promise<Sprites> {
     web: trimmed(keyed(web!)),
     blood: trimmed(keyed(blood!)),
     barrel: trimmed(keyed(barrel!)),
+    kegs,
     chain: trimmed(keyed(chain!)),
     shelf: trimmed(keyed(shelf!)),
     table: trimmed(keyed(table!)),
@@ -316,6 +325,18 @@ async function loadWeaponSprites(): Promise<Partial<Record<WeaponId, HTMLCanvasE
     }),
   );
   return weapons;
+}
+
+async function loadKegSprites(): Promise<Record<string, HTMLCanvasElement>> {
+  const kegs: Record<string, HTMLCanvasElement> = {};
+  await Promise.all(
+    Object.entries(kegFiles).map(async ([path, url]) => {
+      const id = /[/\\]([a-z]+)\.jpg$/.exec(path)?.[1];
+      if (!id) return;
+      kegs[id] = trimmed(keyed(await loadImage(url)));
+    }),
+  );
+  return kegs;
 }
 
 async function loadMonsterSprites(): Promise<Record<string, HTMLCanvasElement>> {

@@ -75,7 +75,7 @@ assert.equal(spore.hp, 0);
 assert.equal(spored.hero.poison, 0);
 assert.equal(groundAt(spored, 3, 6), null);
 
-// Взрыв споры бьёт на 30 ядом и кладёт 1 стак. Клетка под героем в том же раунде добавляет ещё стак и тик 1.
+// Взрыв споры бьёт на 30 ядом и кладёт 1 стак. Клетка под героем в том же раунде добавляет ещё стак, тик бьёт на число стаков.
 const burst = room("14");
 burst.monster.cooldowns.spires = 99;
 burst.monster.x = 11;
@@ -87,7 +87,7 @@ assert.equal(bomb.windup?.kind, "fuse");
 assert.equal(burst.hero.hp, HERO_HP);
 wait(burst, () => 0);
 assert.equal(bomb.hp, 0);
-assert.equal(burst.hero.hp, HERO_HP - KIT.spore.damage - 1);
+assert.equal(burst.hero.hp, HERO_HP - KIT.spore.damage - 2);
 assert.equal(burst.hero.poison, 2);
 assert.equal(groundAt(burst, 2, 6)?.stacks, 1);
 
@@ -130,6 +130,16 @@ assert.equal(groundAt(leap, 2, 6)?.kind, "poison");
 assert.equal(groundAt(leap, 2, 6)?.stacks, KIT.corpse.stacks);
 assert.equal(leap.hero.poison, 0);
 
+const corpseBurst = room("3");
+corpseBurst.monster.x = 8;
+keeper(corpseBurst);
+wait(corpseBurst, () => 0);
+wait(corpseBurst, () => 0);
+wait(corpseBurst, () => 0);
+assert.equal(corpseBurst.monster.hp, 0);
+assert.equal(corpseBurst.hits.filter((hit) => hit.type === "poison" && hit.amount === KIT.corpse.damage).length, 1);
+assert.equal(groundAt(corpseBurst, 2, 6)?.stacks, KIT.corpse.stacks);
+
 // Под клеткой червя можно стоять. Удар по его клетке червя под землёй не задевает.
 const over = room("13");
 over.monster.mode = "under";
@@ -143,7 +153,7 @@ dig.monster.x = 4;
 attack(dig, () => 0);
 assert.equal(dig.monster.hp, dig.monster.maxHp);
 
-// Паук метит клетку на ход. Плевок кладёт порцию, тик той же клетки добавляет left одну.
+// Паук метит клетку на ход. Плевок кладёт порцию, тик той же клетки добавляет ещё одну, урон равен стакам.
 const spit = room("2");
 spit.monster.x = 6;
 wait(spit, () => 0);
@@ -155,7 +165,7 @@ assert.equal(groundAt(spit, spit.hero.x, spit.hero.y), null);
 assert.equal(spit.hero.hp, HERO_HP);
 wait(spit, () => 0);
 assert.equal(groundAt(spit, 2, 6)?.stacks, KIT.spider.stacks);
-assert.equal(spit.hero.hp, HERO_HP - 1);
+assert.equal(spit.hero.hp, HERO_HP - 2 * KIT.spider.stacks);
 assert.equal(spit.hero.poison, 2 * KIT.spider.stacks);
 
 const purse = room("7");
@@ -262,5 +272,97 @@ const pair = gearBonus(["whisper-mirror", "whisper-mirror"]);
 const pairChance = pointChance(pair.critChance);
 assert.equal(critFactor(pairChance, pair.critShare), 1 + pairChance * pair.critShare);
 assert.equal(gearBonus([null]).maxHp, EMPTY_GEAR.maxHp);
+
+const bot = monsterById("21");
+assert.ok(bot);
+assert.equal(bot.role, "automaton");
+assert.equal(bot.maxHp, 400);
+assert.equal(bot.bite, 0);
+assert.equal(bot.shield, 4);
+assert.equal(bot.rare, false);
+assert.equal(bot.spawn, true);
+assert.equal(bot.body, "iron");
+
+const quiet = room("21");
+quiet.monster.cooldowns.swap = 99;
+quiet.monster.cooldowns.keg = 99;
+quiet.monster.x = 8;
+quiet.kegs.push({ x: 9, y: 8, element: "fire", owner: quiet.monster });
+wait(quiet, () => 0);
+assert.equal(quiet.kegs.length, 1);
+assert.equal(quiet.hero.hp, HERO_HP);
+
+const blast = room("21");
+blast.monster.cooldowns.swap = 99;
+blast.monster.cooldowns.keg = 99;
+blast.hero.x = 2;
+blast.hero.y = 6;
+blast.hero.facing = "right";
+blast.monster.x = 4;
+blast.monster.y = 6;
+blast.kegs.push({ x: 3, y: 6, element: "fire", owner: blast.monster });
+attack(blast, () => 0);
+assert.equal(blast.kegs.length, 0);
+assert.equal(blast.hits.some((hit) => hit.amount === KIT.automaton.blast && hit.type === "fire"), true);
+assert.equal(blast.hero.hp, HERO_HP - KIT.automaton.blast - ELEMENTS.fireTick);
+assert.equal(blast.monster.hp, blast.monster.maxHp - KIT.automaton.blast * KIT.automaton.resist - ELEMENTS.fireTick * KIT.automaton.resist);
+assert.equal(blast.monster.shield, 3);
+
+const venom = room("21");
+venom.monster.cooldowns.swap = 99;
+venom.monster.cooldowns.keg = 99;
+venom.hero.x = 2;
+venom.hero.y = 6;
+venom.hero.facing = "right";
+venom.monster.x = 4;
+venom.monster.y = 6;
+venom.kegs.push({ x: 3, y: 6, element: "poison", owner: venom.monster });
+attack(venom, () => 0);
+assert.equal(venom.hero.poison, 1);
+assert.equal(venom.monster.poison, 1);
+assert.equal(venom.hits.some((hit) => hit.amount === KIT.automaton.blast && hit.type === "poison"), true);
+assert.equal(venom.hits.some((hit) => hit.amount === KIT.automaton.blast * KIT.automaton.resist && hit.type === "poison"), true);
+
+const traded = room("21");
+traded.monster.cooldowns.keg = 99;
+traded.hero.x = 2;
+traded.hero.y = 6;
+traded.monster.x = 5;
+traded.monster.y = 6;
+wait(traded, () => 0);
+assert.equal(traded.monster.windup?.kind, "swap");
+assert.equal(traded.monster.windup?.center.x, 2);
+assert.equal(traded.hero.x, 2);
+wait(traded, () => 0);
+assert.equal(traded.hero.x, 5);
+assert.equal(traded.hero.y, 6);
+assert.equal(traded.monster.x, 2);
+assert.equal(traded.monster.y, 6);
+assert.equal(traded.hero.hp, HERO_HP);
+
+const emptyMark = room("21");
+emptyMark.monster.cooldowns.keg = 99;
+emptyMark.hero.x = 2;
+emptyMark.hero.y = 6;
+emptyMark.hero.facing = "right";
+emptyMark.monster.x = 5;
+emptyMark.monster.y = 6;
+wait(emptyMark, () => 0);
+step(emptyMark, "up", () => 0);
+assert.equal(emptyMark.hero.x, 2);
+assert.equal(emptyMark.hero.y, 5);
+assert.equal(emptyMark.monster.x, 2);
+assert.equal(emptyMark.monster.y, 6);
+
+const roomBarrel = room("7");
+roomBarrel.monster.cooldowns.swing = 99;
+roomBarrel.monster.x = 9;
+roomBarrel.hero.x = 2;
+roomBarrel.hero.y = 6;
+roomBarrel.hero.facing = "right";
+roomBarrel.barrels = [{ x: 3, y: 6 }];
+attack(roomBarrel, () => 0);
+assert.equal(roomBarrel.barrels.length, 0);
+assert.equal(roomBarrel.hero.hp, HERO_HP);
 
 console.log("balance ok");

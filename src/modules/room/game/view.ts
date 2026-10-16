@@ -6,6 +6,7 @@ import {
   createWallPattern,
   dressRoom,
   drawBarrel,
+  drawKeg,
   drawChair,
   drawDoorBars,
   drawFurniture,
@@ -16,23 +17,24 @@ import {
   type Dressing,
 } from "./dungeon.ts";
 import { drawBlinkFx } from "./blink-draw.ts";
-import { burstAge, drawAbilityBurst, drawHazardHint, drawHeroZones, drawWindupHint, type AbilityBurst } from "./ability-draw.ts";
+import { ABILITY_MS, burstAge, drawAbilityBurst, drawHazardHint, drawHeroZones, drawWindupHint, type AbilityBurst } from "./ability-draw.ts";
 import { drawExitPad, drawMapOverlay, drawMinimap, drawPortalPad, hitMapRoom, type MapHit, type MapView } from "./map.ts";
+import { DAMAGE_INK, damageFan, damageLabel, type DamageHit } from "./damage-float.ts";
 import { Motion, type Pose } from "./motion.ts";
 import type { Door } from "../data/rooms.ts";
 import { weaponById, type WeaponId } from "../data/weapons.ts";
 import {
   DIRS,
+  acolyteAuraCells,
+  acolyteChanneling,
+  activeHeroZones,
   attackCells,
+  blinkCells,
   doorway,
   interactTarget,
-  blinkCells,
   isBlocked,
   isPit,
-  activeHeroZones,
-  acolyteAuraCells,
   roomMonsters,
-  onBoard,
   type Cell,
   type Dir,
   type Fighter,
@@ -58,6 +60,17 @@ export type { MapView };
 /** Насколько видны сквозь высокий объект фигуры и эффекты пола, которые он закрывает. */
 const BLEND_ACTOR_ALPHA = 0.5;
 const BLEND_FLOOR_ALPHA = 0.85;
+/** Сколько число урона летит вверх из фигуры. */
+const FLOAT_MS = 860;
+
+interface FlyingNumber {
+  x: number;
+  y: number;
+  text: string;
+  color: string;
+  angle: number;
+  start: number;
+}
 
 interface Layer {
   canvas: HTMLCanvasElement;
@@ -920,7 +933,7 @@ function drawAcolyteBuff(ctx: CanvasRenderingContext2D, box: Box, pose: Pose, ti
 }
 
 function acolyteBuffing(monster: Fighter): boolean {
-  return monster.role === "acolyte" && onBoard(monster) && monster.windup?.kind !== "spires";
+  return acolyteChanneling(monster);
 }
 export class RoomRenderer {
   private background: { key: string; canvas: HTMLCanvasElement; box: Box; dressing: Dressing } | null = null;
@@ -935,6 +948,7 @@ export class RoomRenderer {
   private heroDeathAt: number | null = null;
   private coins: CoinToss[] = [];
   private ability: AbilityBurst[] = [];
+  private numbers: FlyingNumber[] = [];
   private view: { box: Box; room: RoomLayout } | null = null;
   private mapHits: MapHit[] = [];
   private readonly layers = new Map<string, Layer>();
@@ -949,6 +963,7 @@ export class RoomRenderer {
     this.heroDeathAt = null;
     this.coins = [];
     this.ability = [];
+    this.numbers = [];
   }
 
   /** Плашка поражения появляется, когда кровь уже закрыла экран. */
@@ -958,6 +973,33 @@ export class RoomRenderer {
 
   moving(): boolean {
     return this.motion.moving();
+  }
+
+  private takeHits(state: RoomState, hero: Pose, monsters: readonly Pose[], time: number): void {
+    if (state.hits.length === 0) return;
+    const groups = new Map<string, DamageHit[]>();
+    for (const hit of state.hits) {
+      const key = `${hit.x},${hit.y}`;
+      const list = groups.get(key);
+      if (list) list.push(hit);
+      else groups.set(key, [hit]);
+    }
+    state.hits = [];
+    for (const list of groups.values()) {
+      list.forEach((hit, index) => {
+        const text = damageLabel(hit.amount, hit.crit);
+        if (!text) return;
+        const at = this.hitAnchor(state, hero, monsters, hit);
+        this.numbers.push({ x: at.x, y: at.y, text, color: DAMAGE_INK[hit.type], angle: damageFan(index, list.length), start: time });
+      });
+    }
+  }
+
+  private hitAnchor(state: RoomState, hero: Pose, monsters: readonly Pose[], hit: DamageHit): { x: number; y: number } {
+    if (state.hero.x === hit.x && state.hero.y === hit.y) return { x: hero.x, y: hero.y };
+    const index = state.monsters.findIndex((unit) => unit.x === hit.x && unit.y === hit.y);
+    const pose = index >= 0 ? monsters[index] : undefined;
+    return pose ? { x: pose.x, y: pose.y } : { x: hit.x, y: hit.y };
   }
 
   /** Мгновенный перенос. Камера встаёт на клетку посадки, вспышки гаснут сами. */
@@ -1040,6 +1082,9 @@ export class RoomRenderer {
       this.motion.queueStrike(state.strike.from, state.strike.to);
       state.strike = null;
     }
+    const heroCast = state.fx.some(
+      (fx) => fx.act === "bolt" || fx.act === "ward" || fx.act === "blizzard" || fx.act === "arrow" || fx.act === "quake" || fx.act === "shard",
+    );
     for (const fx of state.fx) {
       if (fx.kind === "dash" || fx.kind === "move") this.motion.queueRush(fx.from, fx.to, fx.act === "swoop");
       else if (fx.kind === "shot" && fx.act === "throw") this.motion.queueRush(fx.from, fx.to, true);
@@ -1048,7 +1093,9 @@ export class RoomRenderer {
     state.fx = [];
     this.ability = this.ability.filter((burst) => burstAge(burst, time) < 1);
     const bodies = roomMonsters(state);
-    const poses = this.motion.present(state.hero, bodies, time);
+    const poses = this.motion.present(state.hero, bodies, time, heroCast ? ABILITY_MS : 0);
+    this.takeHits(state, poses.hero, poses.monsters, time);
+    this.numbers = this.numbers.filter((num) => time - num.start < FLOAT_MS);
     const blink = this.motion.blinkMark(time);
     const pop = blink ? Math.min(1, blink.t / 0.4) : null;
     const dying = this.noteDeaths(state, time);
@@ -1076,6 +1123,10 @@ export class RoomRenderer {
     drawGround(ctx, box, state, time);
     drawFloorEffects(ctx, box, attacks, blinks, portal, time, exit, sprites.exit, acolyteAuraCells(state));
     for (const barrel of state.barrels) drawBarrel(ctx, box, sprites, barrel.x, barrel.y);
+    for (const keg of state.kegs) {
+      const art = sprites.kegs[keg.element];
+      if (art) drawKeg(ctx, box, art, keg.x, keg.y);
+    }
     for (const chest of state.chests) drawChest(ctx, box, sprites, chest);
     drawGold(ctx, box, sprites.gold, state.piles, (pile) => this.coinInFlight(pile, time));
     drawLoot(ctx, box, sprites, state.loot);
@@ -1135,6 +1186,7 @@ export class RoomRenderer {
       const worn = weaponById(state.weapon);
       if (worn.magazine !== null) drawAmmoPips(ctx, box, poses.hero, worn.magazine, state.ammo ?? worn.magazine);
     }
+    for (const num of this.numbers) drawDamageNumber(ctx, box, num, time);
     const interact = interactTarget(state, exit);
     if (interact) drawInteractHint(ctx, box, interact.cell);
     ctx.restore();
@@ -1465,4 +1517,27 @@ export class RoomRenderer {
     return this.pattern.value;
   }
 
+}
+
+/** 0° — вверх, положительный угол — вправо. Число стартует из фигуры и гаснет к концу. */
+function drawDamageNumber(ctx: CanvasRenderingContext2D, box: Box, num: FlyingNumber, time: number): void {
+  const t = (time - num.start) / FLOAT_MS;
+  if (t < 0 || t > 1) return;
+  const rise = 1 - (1 - t) ** 2;
+  const rad = ((num.angle - 90) * Math.PI) / 180;
+  const dist = box.size * 2.1 * rise;
+  const x = box.ox + (num.x + 0.5) * box.size + Math.cos(rad) * dist;
+  const y = box.oy + (num.y + 0.42) * box.size + Math.sin(rad) * dist;
+  ctx.save();
+  ctx.globalAlpha = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
+  ctx.font = `700 ${Math.max(16, box.size * 0.36)}px Palatino Linotype, Palatino, serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = Math.max(2, box.size * 0.045);
+  ctx.strokeStyle = "rgba(8, 6, 4, 0.92)";
+  ctx.strokeText(num.text, x, y);
+  ctx.fillStyle = num.color;
+  ctx.fillText(num.text, x, y);
+  ctx.restore();
 }

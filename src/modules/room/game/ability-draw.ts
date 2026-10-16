@@ -391,19 +391,118 @@ function drawShards(ctx: CanvasRenderingContext2D, box: Box, cells: readonly Cel
   }
 }
 
+/** Обмен автоматона: короткая металлическая вспышка на обеих клетках и искра по дуге. Не Blink. */
+function drawSwap(ctx: CanvasRenderingContext2D, box: Box, from: Cell, to: Cell, t: number): void {
+  const flash = fade(t, 0.2);
+  for (const cell of [from, to]) {
+    const p = pt(box, cell.x, cell.y);
+    ctx.save();
+    ctx.globalAlpha = flash;
+    ctx.strokeStyle = "#e8dcc8";
+    ctx.lineWidth = Math.max(2, box.size * 0.045);
+    ctx.beginPath();
+    ctx.moveTo(p.x - box.size * 0.18, p.y);
+    ctx.lineTo(p.x + box.size * 0.18, p.y);
+    ctx.moveTo(p.x, p.y - box.size * 0.18);
+    ctx.lineTo(p.x, p.y + box.size * 0.18);
+    ctx.stroke();
+    ctx.restore();
+    puff(ctx, p.x, p.y, box.size * (0.05 + t * 0.1), "#f4efe4", flash * 0.65);
+  }
+  if (from.x === to.x && from.y === to.y) return;
+  const u = Math.min(1, t / 0.55);
+  const spark = arc(box, from, to, u, 0.22);
+  puff(ctx, spark.x, spark.y, box.size * 0.055, "#ffe7a8", fade(t, 0.55));
+  for (let i = 0; i < 4; i += 1) {
+    const along = (i + 1) / 5;
+    if (u < along) continue;
+    const mote = arc(box, from, to, along, 0.22);
+    puff(ctx, mote.x, mote.y, box.size * 0.03, "#d7c48a", (1 - (u - along) / 0.5) * 0.7);
+  }
+}
+
+/** Взрыв бочки. Цвет берётся из tone кадра, не из отдельного акта. */
+function drawKeg(ctx: CanvasRenderingContext2D, box: Box, cells: readonly Cell[], tone: string, t: number): void {
+  const alpha = fade(t, 0.28);
+  for (const cell of cells) {
+    const p = pt(box, cell.x, cell.y);
+    if (tone === "fire") {
+      puff(ctx, p.x, p.y - box.size * 0.08 * t, box.size * (0.08 + t * 0.28), "#e25822", alpha * 0.8);
+      puff(ctx, p.x, p.y - box.size * 0.2 * t, box.size * (0.04 + t * 0.1), "#ffb15a", alpha);
+    } else if (tone === "water") {
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.85;
+      ctx.strokeStyle = "#3a7fd4";
+      ctx.lineWidth = Math.max(2, box.size * 0.04);
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y + box.size * 0.08, box.size * (0.08 + t * 0.36), box.size * (0.04 + t * 0.12), 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    } else if (tone === "ice") {
+      for (let i = 0; i < 4; i += 1) {
+        const ang = (i / 4) * Math.PI * 2 + 0.4;
+        const dist = box.size * t * 0.28;
+        ctx.save();
+        ctx.translate(p.x + Math.cos(ang) * dist, p.y + Math.sin(ang) * dist * 0.45);
+        ctx.rotate(ang);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "#e7f6ff";
+        ctx.fillRect(-box.size * 0.02, -box.size * 0.07, box.size * 0.04, box.size * 0.14);
+        ctx.restore();
+      }
+    } else if (tone === "poison") {
+      for (let i = 0; i < 4; i += 1) {
+        const ang = (i / 4) * Math.PI * 2;
+        const dist = box.size * (0.06 + t * 0.22);
+        puff(
+          ctx,
+          p.x + Math.cos(ang) * dist,
+          p.y + Math.sin(ang) * dist * 0.55,
+          box.size * (0.035 + (i % 2) * 0.02),
+          i % 2 === 0 ? "#d6e36a" : "#7ed34a",
+          alpha * 0.85,
+        );
+      }
+    } else {
+      puff(ctx, p.x, p.y + box.size * 0.06, box.size * (0.1 + t * 0.22), "#1a120c", alpha * 0.9);
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.7;
+      ctx.strokeStyle = "#6b4f1f";
+      ctx.lineWidth = Math.max(1, box.size * 0.03);
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y + box.size * 0.08, box.size * (0.12 + t * 0.2), box.size * (0.05 + t * 0.06), 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
+
 function drawAct(ctx: CanvasRenderingContext2D, box: Box, burst: AbilityBurst, t: number): boolean {
-  const act = burst.act;
+  const act = burst.act as string | undefined;
   if (!act) return false;
+  if (act === "swap") {
+    if (burst.kind === "line") {
+      drawSwap(ctx, box, burst.from, burst.to, t);
+      return true;
+    }
+    if (burst.kind === "area" && burst.cells.length > 0) {
+      const from = burst.cells[0]!;
+      const to = burst.cells[burst.cells.length - 1] ?? from;
+      drawSwap(ctx, box, from, to, t);
+      return true;
+    }
+    return false;
+  }
+  if (act === "keg" && burst.kind === "area") {
+    drawKeg(ctx, box, burst.cells, burst.tone, t);
+    return true;
+  }
   if (act === "dash" && burst.kind === "dash") {
     drawDash(ctx, box, burst.from, burst.to, burst.tone === "fire", t);
     return true;
   }
   if (act === "swoop" && burst.kind === "dash") {
     drawSwoop(ctx, box, burst.from, burst.to, t);
-    return true;
-  }
-  if (act === "slime" && burst.kind === "move") {
-    drawTrail(ctx, box, burst.from, burst.to, t, "#6fbf45");
     return true;
   }
   if (act === "spit" && burst.kind === "shot") {

@@ -7,6 +7,7 @@ import {
   attack,
   interactTarget,
   useChest,
+  usePortal,
   attackCells,
   blink,
   blinkCells,
@@ -379,6 +380,21 @@ dual.hero.facing = "right";
 attack(dual, () => 0);
 assert.equal(dual.monster.hp, dual.monster.maxHp - 100);
 assert.equal(dual.monster.shield, 0);
+const swings = dual.hits.filter((hit) => hit.type === "physical" && hit.amount === 50);
+assert.equal(swings.length, 2);
+assert.equal(swings.every((hit) => !hit.crit && hit.x === swings[0]?.x && hit.y === swings[0]?.y), true);
+const critSwing = createRoom(OPEN);
+critSwing.weapon = "dual";
+critSwing.hero.x = 8;
+critSwing.hero.y = 6;
+critSwing.hero.facing = "right";
+critSwing.critChance = 1;
+critSwing.critShare = 1;
+critSwing.monster.cooldowns.swing = 99;
+attack(critSwing, () => 0);
+const critHits = critSwing.hits.filter((hit) => hit.crit);
+assert.equal(critHits.length, 2);
+assert.equal(critHits.every((hit) => hit.type === "physical"), true);
 
 const diagonal = createRoom(OPEN);
 diagonal.hero.x = 8;
@@ -533,6 +549,7 @@ goblinOn.hero.x = goblinMark.x;
 goblinOn.hero.y = goblinMark.y;
 wait(goblinOn, () => 0);
 assert.equal(goblinOn.hero.hp, HERO_HP - KIT.goblin.damage);
+assert.equal(goblinOn.hits.some((hit) => hit.type === "physical" && hit.amount === KIT.goblin.damage), true);
 assert.equal(goblinOn.hero.x === goblinMark.x && goblinOn.hero.y === goblinMark.y, false);
 
 const chestRoom = createRoom(OPEN, { monsterKind: "1" });
@@ -559,6 +576,24 @@ assert.equal(useChest(near, 4, 6, () => 0), true);
 assert.equal(near.chests[0]!.open, true);
 assert.equal(near.piles.length, 5);
 assert.equal(interactTarget(near, null), null);
+const timed = createRoom(OPEN, { monsterKind: "1" });
+timed.chests.push({ kind: "chest", x: 4, y: 5, open: false });
+timed.hero.x = 4;
+timed.hero.y = 6;
+timed.monster.x = 9;
+timed.monster.y = 6;
+timed.monster.cooldowns.dash = 99;
+assert.equal(useChest(timed, 4, 5, () => 0), true);
+assert.equal(timed.monster.x, 8);
+const portal = createRoom(OPEN, { monsterKind: "1" });
+portal.hero.x = 4;
+portal.hero.y = 6;
+portal.monster.x = 9;
+portal.monster.y = 6;
+portal.monster.cooldowns.dash = 99;
+assert.equal(usePortal(portal, () => 0), true);
+assert.equal(portal.monster.x, 8);
+assert.equal(portal.hero.hp, HERO_HP);
 
 const shared = createRoom(OPEN, { monsterKind: "1" });
 shared.chests.push({ kind: "chest", x: 4, y: 6, open: false });
@@ -700,8 +735,8 @@ const beforeBite = tough.hero.hp;
 wait(tough, () => 0);
 const toughSpec = monsterById("7");
 assert.ok(toughSpec);
-assert.equal(tough.monster.maxHp, Math.round(toughSpec.maxHp * 1.1));
-assert.equal(tough.hero.hp, beforeBite - toughSpec.bite * 1.1);
+assert.equal(tough.monster.maxHp, Math.round(toughSpec.maxHp * 1.2));
+assert.equal(tough.hero.hp, beforeBite - toughSpec.bite * 1.2);
 
 const houndRow = createRoom(OPEN, { monsterKind: "15" });
 houndRow.hero.x = 1;
@@ -784,6 +819,23 @@ assert.equal(blob.y, 5);
 assert.equal(groundAt(slime, 4, 6)?.kind, "poison");
 assert.equal(groundAt(slime, 4, 5)?.kind, "poison");
 
+const trail = createRoom(OPEN, { monsterKind: "6" });
+const crawler = trail.monsters[0]!;
+trail.hero.x = 9;
+trail.hero.y = 9;
+crawler.x = 2;
+crawler.y = 6;
+wait(trail, () => 0);
+const laid = groundAt(trail, crawler.x, crawler.y);
+const ordinary = createRoom(OPEN, { monsterKind: "7" });
+ordinary.monster.cooldowns.swing = 99;
+ordinary.monster.x = 9;
+ordinary.ground[6 * ordinary.room.w + 2] = { kind: "poison", stacks: 1, turns: ELEMENTS.puddleTurns };
+wait(ordinary, () => 0);
+assert.equal(laid?.kind, "poison");
+assert.equal(laid?.stacks, groundAt(ordinary, 2, 6)?.stacks);
+assert.equal(laid?.turns, groundAt(ordinary, 2, 6)?.turns);
+
 const soaked = createRoom(OPEN, { monsterKind: "6" });
 const wander = soaked.monsters[0]!;
 soaked.hero.x = 9;
@@ -797,5 +849,14 @@ for (let y = 0; y < soaked.room.h; y += 1) {
 }
 wait(soaked, () => 0);
 assert.equal(wander.x === soakedAt.x && wander.y === soakedAt.y, false);
+
+const stacked = createRoom(OPEN, { monsterKind: "7" });
+stacked.monster.cooldowns.swing = 99;
+stacked.monster.x = 9;
+stacked.hero.poison = 3;
+stacked.hero.poisonWindow = ELEMENTS.poisonWindow;
+const beforeStacks = stacked.hero.hp;
+wait(stacked, () => 0);
+assert.equal(stacked.hero.hp, beforeStacks - 3);
 
 console.log("sim ok");

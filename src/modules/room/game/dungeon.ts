@@ -863,6 +863,10 @@ export function drawBarrel(ctx: CanvasRenderingContext2D, box: Box, sprites: Spr
   drawPropSprite(ctx, box, sprites.barrel, x, y, PROP_SCALE.barrel, true, true);
 }
 
+export function drawKeg(ctx: CanvasRenderingContext2D, box: Box, sprite: HTMLCanvasElement, x: number, y: number): void {
+  drawPropSprite(ctx, box, sprite, x, y, PROP_SCALE.barrel, true, true);
+}
+
 export function drawChair(ctx: CanvasRenderingContext2D, box: Box, sprites: Sprites, x: number, y: number): void {
   drawPropSprite(ctx, box, sprites.chair, x, y, 0.86, true, true);
 }

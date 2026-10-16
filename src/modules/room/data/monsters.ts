@@ -45,7 +45,8 @@ export type MonsterRole =
   | "gargoyle"
   | "drowned"
   | "whisper"
-  | "spore";
+  | "spore"
+  | "automaton";
 
 /** Строка таблицы монстров. MaxHp — точная дробь колонки U, у рарных 800. */
 export interface MonsterDef {
@@ -72,7 +73,7 @@ export interface MonsterDef {
 export const KIT = {
   dog: { dash: 4, damage: 30, cooldown: 4, delay: 1 },
   spider: { range: 4, stacks: 1, cooldown: 3, delay: 1 },
-  corpse: { reach: 6, delay: 2, radius: 1, stacks: 1 },
+  corpse: { reach: 6, delay: 2, radius: 1, stacks: 1, damage: 30 },
   golem: { delay: 1, damage: 25, cooldown: 3 },
   bat: { cooldown: 3, sleepBelow: 0.5, heal: 0.2 },
   slime: { steps: 2, stacks: 1 },
@@ -90,6 +91,8 @@ export const KIT = {
   gargoyle: { stones: 4, delay: 1, stone: 35, stonePush: 1, landDelay: 1, radius: 1, land: 90, landPush: 1, rest: 5 },
   drowned: { rings: 4, geyser: 40, geyserCooldown: 8, throwDelay: 1, radius: 1, throwDamage: 30, throwStun: 1, throwCooldown: 2 },
   whisper: { charmCooldown: 2, radius: 1, shards: 10, rings: 4, hail: 15, hailCooldown: 8, beamRange: 10, beamDelay: 1, beam: 60 },
+  /** Бочка: КД 3, взрыв 80. Обмен: КД 4, задержка 1. Резист огня и яда 50% после брони. */
+  automaton: { swapCooldown: 4, swapDelay: 1, kegCooldown: 3, blast: 80, resist: 0.5 },
 } as const;
 
 const BASE_HP = 400;
@@ -135,6 +138,15 @@ export const MONSTERS: readonly MonsterDef[] = [
   row("17", "gargoyle", "Gargoyle", "Small gargoyle", "stone", RARE_HP, RARE_BITE),
   row("18", "drowned", "Drowned", "Bloated drowned one tangled in weeds", "flesh", RARE_HP, RARE_BITE),
   row("19", "whisper", "Bone Whisper", "Skeleton with a staff", "bone", BASE_HP / 1.5, 0),
+  row(
+    "21",
+    "automaton",
+    "Riveted Automaton",
+    "Small riveted robot of brass and iron, a glass eye, a barrel rack on its back",
+    "iron",
+    BASE_HP,
+    0,
+  ),
 ];
 
 /** Mushroom spore — существо: 200 HP, щита и укуса нет. */
@@ -182,6 +194,7 @@ const STRIKE: Record<MonsterRole, DamageType | null> = {
   drowned: "water",
   whisper: "ice",
   spore: "poison",
+  automaton: null,
 };
 
 export function strikeElement(role: MonsterRole): DamageType | null {

@@ -38,7 +38,7 @@ const POISON: AuraRow = {
   id: "poison",
   tone: "debuff",
   name: "Poison",
-  text: "Stacks. At the end of the round, 1 poison damage. A stack drops once every 2 turns. A new dose and a poison cell add stacks and open the window again. At the end of the window the stacks burn away.",
+  text: "Stacks. At the end of the round, poison damage equal to the number of stacks. A stack drops once every 2 turns. A new dose and a poison cell add stacks and open the window again. At the end of the window the stacks burn away.",
 };
 const OIL: AuraRow = {
   id: "oil",
@@ -92,7 +92,7 @@ const VAMP: AuraRow = {
   id: "vamp",
   tone: "buff",
   name: "Vampirism",
-  text: "Heals for a share of the damage just dealt. One stack from each acolyte whose aura covers the attacker. While an acolyte is placing spires, its aura is not counted.",
+  text: "Heals for a share of the damage just dealt. One stack from each acolyte who is casting the aura over the attacker. Stun, silence, or another cast drops that aura.",
 };
 
 function row(spec: AuraRow, counts: number[] = [], mark = ""): Aura {

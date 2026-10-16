@@ -1,7 +1,7 @@
 /** Шанс лишней вещи с последней комнаты за один уровень. Пять уровней закрывают шанс в гарантию. */
 export const DROP_STEP = 0.2;
-/** Прибавка HP и урона монстров за один уровень. Уровень 0 — числа гайда. */
-export const THREAT_STEP = 0.1;
+/** Прибавка HP и урона монстров за один уровень. Уровень 0 — числа гайда. Было 10%, дизайнер поставил 20%. */
+export const THREAT_STEP = 0.2;
 
 const BEST_KEY = "dungeon-best";
 
@@ -27,13 +27,16 @@ export function rollDropCount(level: number, rng: () => number): number {
   return offer.guaranteed + (rng() < offer.chance ? 1 : 0);
 }
 
-export function adventureBlurb(level: number): string {
+/** Три строки справа от выбранного уровня. */
+export function adventureSummary(level: number): { title: string; loot: string; threat: string } {
   const offer = dropOffer(level);
-  const items = offer.guaranteed === 1 ? "1 item" : `${offer.guaranteed} items`;
-  const extra = offer.chance > 0 ? `, ${Math.round(offer.chance * 100)}% chance of another` : "";
-  const threat = Math.round((threatFactor(level) - 1) * 100);
-  const monsters = threat === 0 ? "Monsters at normal strength." : `Monsters +${threat}% HP and damage.`;
-  return `${items} from the last room${extra}. ${monsters}`;
+  const chance = Math.round(offer.chance * 100);
+  const modifier = Math.round((threatFactor(level) - 1) * 100);
+  return {
+    title: `Level ${Math.max(0, Math.floor(level))}`,
+    loot: `${offer.guaranteed} items + 1 item with ${chance}% chance`,
+    threat: `+${modifier}% HP & Damage modifier`,
+  };
 }
 
 /** Самый высокий зачищенный уровень. Пусто, пока портал в хаб ни разу не открывали. */

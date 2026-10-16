@@ -10,7 +10,7 @@ interface Cue {
   tone: OscillatorType | null;
 }
 
-const CUE: Record<AbilityAct, Cue> = {
+const CUE: Record<Exclude<AbilityAct, "keg" | "swap">, Cue> = {
   dash: { f0: 420, f1: 1600, dur: 0.22, loud: 0.34, tone: null },
   spit: { f0: 1800, f1: 500, dur: 0.12, loud: 0.3, tone: null },
   leap: { f0: 220, f1: 780, dur: 0.2, loud: 0.32, tone: "triangle" },
@@ -55,6 +55,7 @@ function noise(ctx: AudioContext, seconds: number): AudioBuffer {
 
 /** Короткий звук сработавшей способности. */
 export function playAbility(act: AbilityAct): void {
+  if (act === "keg" || act === "swap") return;
   if (typeof AudioContext === "undefined") return;
   const cue = CUE[act];
   const ctx = soundContext();

@@ -70,8 +70,16 @@ assert.ok(spec);
 const acolyte = monsterFighter(spec, { x: 8, y: 7, facing: "left" }, true);
 state.monsters.push(acolyte);
 assert.equal(monsterAuras(state, monster).find((aura) => aura.id === "vamp")?.counts[0], vampirism(state, monster));
+acolyte.stun = 2;
+assert.equal(vampirism(state, monster), 0);
+acolyte.stun = 0;
+acolyte.silence = 2;
+assert.equal(vampirism(state, monster), 0);
+acolyte.silence = 0;
 acolyte.windup = { kind: "spires", turns: 1, cells: [], center: { x: 8, y: 7 }, target: null };
 assert.equal(monsterAuras(state, monster).some((aura) => aura.id === "vamp"), false);
+acolyte.windup = null;
+assert.equal(vampirism(state, monster) > 0, true);
 
 const batSpec = monsterById("5");
 assert.ok(batSpec);

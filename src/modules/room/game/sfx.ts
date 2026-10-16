@@ -26,6 +26,13 @@ import weaponGlovesUrl from "../../../../assets/sfx/weapon-gloves.mp3";
 import weaponPistolUrl from "../../../../assets/sfx/weapon-pistol.mp3";
 import weaponRifleUrl from "../../../../assets/sfx/weapon-rifle.mp3";
 import weaponShotgunUrl from "../../../../assets/sfx/weapon-shotgun.mp3";
+import automatonSwapUrl from "../../../../assets/sfx/automaton-swap.mp3";
+import automatonDeathUrl from "../../../../assets/sfx/automaton-death.mp3";
+import barrelFireUrl from "../../../../assets/sfx/barrel-fire.mp3";
+import barrelWaterUrl from "../../../../assets/sfx/barrel-water.mp3";
+import barrelIceUrl from "../../../../assets/sfx/barrel-ice.mp3";
+import barrelPoisonUrl from "../../../../assets/sfx/barrel-poison.mp3";
+import barrelOilUrl from "../../../../assets/sfx/barrel-oil.mp3";
 
 const SWING_SECONDS = 0.28;
 
@@ -332,6 +339,11 @@ export function preloadSwordBlows(): void {
   HERO_DEATHS.forEach((url) => {
     void loadUrl(url);
   });
+  [automatonSwapUrl, automatonDeathUrl, barrelFireUrl, barrelWaterUrl, barrelIceUrl, barrelPoisonUrl, barrelOilUrl].forEach(
+    (url) => {
+      void loadUrl(url);
+    },
+  );
 }
 
 function loadUrl(url: string): Promise<AudioBuffer> {
@@ -377,6 +389,10 @@ function startClip(buffer: AudioBuffer, facing: Dir, delay = 0): void {
 
 export function playMonsterCue(kind: string, cue: MonsterCue, facing: Dir): void {
   if (typeof AudioContext === "undefined") return;
+  if (kind === "21" && cue === "death") {
+    playAutomatonDeath(facing);
+    return;
+  }
   playMonsterVoice(audio(), kind, cue, PAN[facing] * 0.35);
 }
 
@@ -570,4 +586,43 @@ function startBreak(buffer: AudioBuffer, facing: Dir): void {
   pan.connect(sfxOutput(ctx));
 
   source.start(t);
+}
+
+function playStored(url: string, facing: Dir): void {
+  if (typeof AudioContext === "undefined") return;
+  audio();
+  void loadUrl(url)
+    .then((buffer) => startClip(buffer, facing))
+    .catch(() => undefined);
+}
+
+/** Механический телепорт автоматона: щелчок и сдвиг металла. */
+export function playAutomatonSwap(facing: Dir): void {
+  playStored(automatonSwapUrl, facing);
+}
+
+/** Смерть автоматона: гаснет питание, лязг пластин, падение железа. */
+export function playAutomatonDeath(facing: Dir): void {
+  playStored(automatonDeathUrl, facing);
+}
+
+/** Взрывы бочек. Одна и та же громкость, тембр в записи. */
+export function playBarrelFire(facing: Dir): void {
+  playStored(barrelFireUrl, facing);
+}
+
+export function playBarrelWater(facing: Dir): void {
+  playStored(barrelWaterUrl, facing);
+}
+
+export function playBarrelIce(facing: Dir): void {
+  playStored(barrelIceUrl, facing);
+}
+
+export function playBarrelPoison(facing: Dir): void {
+  playStored(barrelPoisonUrl, facing);
+}
+
+export function playBarrelOil(facing: Dir): void {
+  playStored(barrelOilUrl, facing);
 }

@@ -122,6 +122,7 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
   };
 
   const openLesson = (step: LessonStep): void => {
+    keepRun();
     lesson = step;
     room?.destroy();
     room = new RoomController(host, showMenu, "sword", EMPTY_GEAR, {
@@ -136,15 +137,18 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
     if (wantRun) room.setRunning(true);
   };
 
+  const keepRun = (): void => {
+    if (!room || room.isLesson) return;
+    kit.gold += room.carriedGold;
+    for (const drop of room.spoils) addInstance(loadout, drop.kind, drop.catalogId);
+    syncKit(kit, loadout);
+    if (room.floorCleared) recordAdventure(room.pickedLevel);
+    saveLoadout(loadout);
+  };
+
   const showMenu = (): void => {
     if (!alive) return;
-    if (room && !room.isLesson) {
-      kit.gold += room.carriedGold;
-      for (const drop of room.spoils) addInstance(loadout, drop.kind, drop.catalogId);
-      syncKit(kit, loadout);
-      if (room.floorCleared) recordAdventure(room.pickedLevel);
-      saveLoadout(loadout);
-    }
+    keepRun();
     room?.destroy();
     room = null;
     hideTip();
@@ -182,6 +186,7 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
             paintGuild(host, shown, showMenu, "Showing this browser until the server answers.");
           });
         },
+        onTutorial: () => openLesson("move"),
       },
       lesson === "hub" ? endLesson : undefined,
     );
@@ -198,6 +203,7 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
       equippedWeaponHit(loadout),
       wornAbilities(loadout),
       picked,
+      () => openLesson("move"),
     );
     if (import.meta.env.DEV) {
       (globalThis as typeof globalThis & { roomController?: RoomController }).roomController = room;
@@ -233,7 +239,7 @@ function paintShell(host: HTMLElement): void {
 
 function paintMenu(
   host: HTMLElement,
-  actions: { onPlay: () => void; onInventory: () => void; onAuction: () => void; onGuild: () => void },
+  actions: { onPlay: () => void; onInventory: () => void; onAuction: () => void; onGuild: () => void; onTutorial: () => void },
   skipLesson?: () => void,
 ): void {
   paintShell(host);
@@ -250,7 +256,7 @@ function paintMenu(
   map.setAttribute("preserveAspectRatio", "none");
   map.classList.add("dungeon-hotmap");
   const quiet = (): void => {};
-  const play = hotShape("Adventure", actions.onPlay, "70,0 71,8 76,30 76,50 76,65 78,78 87,95 93,99 100,99 100,40 100,0");
+  const play = hotShape("Delve", actions.onPlay, "70,0 71,8 76,30 76,50 76,65 78,78 87,95 93,99 100,99 100,40 100,0");
   map.append(menuGlow(),
     ...(skipLesson ? [lessonGlow(play)] : []), 
     hotShape("Auction", skipLesson ? quiet : actions.onAuction, "8,1 6,10 5,20 4,32 6,48 6,64 27,66 28,74 31,78 36,78 46,77 50,70 50,48 48,25 45,18 42,12 38,4 22,0 8,1"),
@@ -263,7 +269,7 @@ function paintMenu(
     map,
     hotLabel("Auction", "38%", "62%"),
     hotLabel("Guild", "61%", "42%"),
-    hotLabel("Adventure", "86%", "68%"),
+    hotLabel("Delve", "86%", "68%"),
     hotLabel("Inventory", "8%", "84%"),
   );
   scene.append(frame);
@@ -273,7 +279,7 @@ function paintMenu(
   gear.setAttribute("aria-label", "Settings");
   gear.innerHTML =
     '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.22-1.14.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.49.4 1.04.72 1.63.94l.36 2.54c.05.24.26.42.5.42h3.84c.24 0 .45-.18.5-.42l.36-2.54c.59-.22 1.14-.54 1.63-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>';
-  gear.addEventListener("click", () => openSettings(scene));
+  gear.addEventListener("click", () => openSettings(scene, actions.onTutorial));
   scene.append(gear);
   if (skipLesson) scene.append(lessonCard(hubCopy(coarsePointer()), skipLesson));
   host.append(scene);
@@ -604,7 +610,7 @@ function paintInventory(
   abilities: Readonly<Record<string, HTMLCanvasElement>>,
 ): void {
   paintShell(host);
-  host.style.overflow = "hidden";
+  host.style.overflow = "auto";
   const page = document.createElement("div");
   page.className = "dungeon-inventory";
   const note = document.createElement("div");
