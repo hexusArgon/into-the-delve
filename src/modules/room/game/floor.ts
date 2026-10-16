@@ -14,7 +14,6 @@ import {
   OPPOSITE,
   SIDE_FACING,
   buildLayout,
-  claimFloorLoot,
   createRoom,
   onBoard,
   type CarryLoot,
@@ -438,8 +437,6 @@ function enter(
     scatterMonsters(state, seeded((run.seed + 1) * 1000 + index * 17));
   }
   state.carried = carried;
-  const prize = claimFloorLoot(state);
-  if (prize) state.note = `${state.note} ${prize}.`.trim();
   if (room.role === "fight") seedGround(state);
   if (room.role === "start" && !via) state.note = "";
   else if (!cleared) state.note = "The doors slammed shut. Defeat the monsters to leave.";
@@ -498,8 +495,6 @@ export function syncRun(run: Run): void {
     const portal = exitCell(run.state);
     run.exit = { room: run.current, cell: portal };
     run.state.note = `${run.state.note} The hub portal is open.`.trim();
-    const prize = claimFloorLoot(run.state);
-    if (prize) run.state.note = `${run.state.note} ${prize}.`.trim();
     run.goods[run.current]!.loot = run.state.loot.map((item) => ({ ...item }));
   }
   run.abilityCd = {};
@@ -509,10 +504,15 @@ export function syncRun(run: Run): void {
   }
 }
 
-/** Ближайшая свободная клетка, не дверь и не та, где стоит герой. */
+/** Ближайшая свободная клетка: не дверь, не герой и не клетка, где уже стоит вещь. */
 function exitCell(state: RoomState): Cell {
   const skip = new Set<string>([`${state.hero.x},${state.hero.y}`]);
   for (const door of state.exits) skip.add(`${door.x},${door.y}`);
+  for (const chest of state.chests) skip.add(`${chest.x},${chest.y}`);
+  for (const barrel of state.barrels) skip.add(`${barrel.x},${barrel.y}`);
+  for (const chair of state.chairs) skip.add(`${chair.x},${chair.y}`);
+  for (const keg of state.kegs) skip.add(`${keg.x},${keg.y}`);
+  for (const drop of state.loot) skip.add(`${drop.x},${drop.y}`);
   const pool: Cell[] = [];
   for (let y = 0; y < state.room.h; y += 1) {
     for (let x = 0; x < state.room.w; x += 1) {

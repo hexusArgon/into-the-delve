@@ -16,7 +16,6 @@ export type LessonStep =
   | "dual"
   | "spear"
   | "staff"
-  | "gloves"
   | "pistol"
   | "reload"
   | "rifle"
@@ -33,7 +32,7 @@ export type LessonEvent = "step" | "face" | "attack" | "blink" | "wait" | "reloa
 const STATIC_COPY: Partial<Record<LessonStep, string>> = {
   move: "Hold WASD or the arrows. Let go to stop. After a step, the monster moves.",
   turn: "Shift with WASD or the arrows. Turning is not a turn, and the monster does not move.",
-  reload: "R reloads. The pistol is not full, so this spends the turn. A later empty pistol also reloads on left-click. The rifle and shotgun do not.",
+  reload: "R reloads. The pistol is not full, so this spends the turn. An empty gun also reloads on left-click.",
   blink: "Right-click to pick a cell. Only legal cells are lit. Left-click one. Right-click again cancels and does not spend a charge.",
   wait: "X skips your action. The world still moves.",
   finish: "A skeleton's bite is not drawn ahead of time. It hits the orthogonal neighbor, not a diagonal. Finish it.",
@@ -44,7 +43,9 @@ const STATIC_COPY: Partial<Record<LessonStep, string>> = {
 function swingChain(): LessonStep[] {
   const steps: LessonStep[] = [];
   for (const weapon of WEAPONS) {
-    steps.push(weapon.id === "sword" ? "attack" : (weapon.id as LessonStep));
+    if (weapon.id.startsWith("staff-") && weapon.id !== "staff-fire") continue;
+    const step: LessonStep = weapon.id === "sword" ? "attack" : weapon.id === "staff-fire" ? "staff" : (weapon.id as LessonStep);
+    steps.push(step);
     if (weapon.id === "pistol") steps.push("reload");
   }
   return steps;
@@ -77,12 +78,13 @@ export function tutorialWeapon(): WeaponId {
 }
 
 export function isSwingStep(step: LessonStep): boolean {
-  return step === "attack" || WEAPONS.some((weapon) => weapon.id === step);
+  return step === "attack" || step === "staff" || WEAPONS.some((weapon) => weapon.id === step);
 }
 
 export function lessonWeapon(step: LessonStep): WeaponId {
   if (step === "attack") return "sword";
   if (step === "reload") return "pistol";
+  if (step === "staff") return "staff-fire";
   if (WEAPONS.some((weapon) => weapon.id === step)) return step as WeaponId;
   if (step === "blink" || step === "wait" || step === "finish" || step === "pick") return "shotgun";
   return "sword";
@@ -91,7 +93,7 @@ export function lessonWeapon(step: LessonStep): WeaponId {
 const PHONE_COPY: Partial<Record<LessonStep, string>> = {
   move: "Tap an arrow. The hero steps one tile that way. After a step, the monster moves.",
   turn: "Tap Turn. The hero turns 90 degrees clockwise. Turning is not a turn, and the monster does not move.",
-  reload: "The pistol is not full. Tap the weapon to reload. This spends the turn. An empty pistol reloads when you confirm an attack. The rifle and shotgun do not.",
+  reload: "The pistol is not full. Tap the weapon to reload. This spends the turn. An empty gun reloads when you confirm an attack.",
   blink: "Tap Blink, then tap a lit tile. Tap Blink again to cancel. A cancel does not spend a charge.",
   wait: "Tap Wait. The world still moves.",
   pick: "Pick a weapon to try it. The doors open when the enemy is dead. Tap the minimap to open the floor map, and × to close it. This lesson is one room.",

@@ -1,6 +1,6 @@
 import { RoomRenderer } from "./view.ts";
 import { loadSprites, type Sprites } from "./sprites.ts";
-import { abilityAim, arrowBeam, attack, blink, blinkCells, castHeroAbility, face, interactTarget, livingMonsters, nearestAim, onBoard, reload, roomMonsters, step, useChest, usePortal, wait, type Dir, type RoomState } from "./sim.ts";
+import { abilityAim, arrowBeam, attack, blink, blinkCells, castHeroAbility, face, interactTarget, livingMonsters, nearestAim, onBoard, reload, roomMonsters, step, useChest, usePickup, usePortal, wait, weaponAim, type Dir, type RoomState } from "./sim.ts";
 import { heroAuras, monsterAuras, type Aura } from "./statuses.ts";
 import { monsterById, strikeElement, type DamageType } from "../data/monsters.ts";
 import { abilityView } from "../data/hero-abilities.ts";
@@ -20,7 +20,7 @@ import { openSettings } from "./settings-view.ts";
 import { openCharacter } from "./character-view.ts";
 import { coarsePointer, isSwingStep, lessonAdvance, lessonAllows, lessonText, lessonWeapon, tutorialRun, type LessonEvent, type LessonHooks, type LessonStep } from "./tutorial.ts";
 import { paintWeaponIcon } from "./hub.ts";
-import loadingUrl from "../../../../assets/loading-castle.jpg";
+import { loadingVeil } from "./loading-view.ts";
 import "./ui.css";
 
 /** Повтор шага, пока зажаты WASD или стрелки. */
@@ -124,7 +124,7 @@ export class RoomController {
   private run: Run;
   private running = false;
   private ready = false;
-  private loadFill: HTMLElement | null = null;
+  private paintLoad: ((ratio: number) => void) | null = null;
   private swinging = false;
   private heroRattled = false;
   private diedByFall = false;
@@ -132,11 +132,13 @@ export class RoomController {
   private aimingWeapon = false;
   private weaponSlot: HTMLElement | null = null;
   private mapClose: HTMLButtonElement | null = null;
+  private readonly reloadPrompt: HTMLButtonElement;
   private readonly coarse = coarsePointer();
   private mapOpen = false;
   private swing: number | null = null;
   private readonly heldMoves = new Map<string, Dir>();
   private arrowPointer: number | null = null;
+  private fullscreenButtonEl: HTMLButtonElement | null = null;
   private shiftHeld = false;
   private lastMoveAt = 0;
   private moveTimer = 0;
@@ -266,9 +268,16 @@ export class RoomController {
     center.className = "dungeon-hud-center";
     const prompts = document.createElement("div");
     prompts.className = this.coarse ? "dungeon-prompts dungeon-touch-actions" : "dungeon-prompts";
+    const reload = document.createElement("button");
+    reload.type = "button";
+    reload.className = "dungeon-prompt";
+    reload.append(...prompt("R", "Reload").childNodes);
+    reload.addEventListener("click", () => this.doReload());
+    this.reloadPrompt = reload;
     prompts.append(
       this.coarse ? this.phoneAction("Turn", () => this.turnClockwise()) : prompt("Shift", "Turn"),
       this.coarse ? this.phoneAction("Wait", () => this.wait()) : prompt("X", "Wait"),
+      reload,
     );
     center.append(prompts);
 
@@ -305,6 +314,7 @@ export class RoomController {
     if (lesson) this.mountLesson();
 
     this.canvas.addEventListener("pointerdown", (event) => this.onPointer(event));
+    document.addEventListener("pointerdown", this.onAimPointer, true);
     this.canvas.addEventListener("pointermove", (event) => this.onHover(event));
     this.canvas.addEventListener("pointerleave", (event) => {
       if (this.coarse) return;
@@ -329,7 +339,7 @@ export class RoomController {
     window.addEventListener("blur", this.onBlur);
     window.addEventListener("resize", this.onResize);
     this.resize();
-    host.append(this.loadingVeil());
+    host.append(this.loadingScreen());
     installDungeonMusic();
     this.refresh();
     void this.finishBoot();
@@ -495,6 +505,8 @@ export class RoomController {
     window.removeEventListener("blur", this.onBlur);
     window.removeEventListener("resize", this.onResize);
     this.resolutionQuery?.removeEventListener("change", this.onResize);
+    document.removeEventListener("fullscreenchange", this.onFullscreen);
+    document.removeEventListener("pointerdown", this.onAimPointer, true);
   }
 
   private dropAbilityAim(): void {
@@ -521,7 +533,7 @@ export class RoomController {
     if (this.lesson && !lessonAllows(this.lessonStep, "attack")) return;
     this.dropAbilityAim();
     const worn = weaponById(this.state.weapon);
-    if (worn.id === "pistol" && (this.state.ammo ?? worn.magazine ?? 0) === 0) {
+    if (worn.magazine !== null && (this.state.ammo ?? worn.magazine) === 0) {
       this.choosingBlink = false;
       const places = this.places();
       if (reload(this.state)) {
@@ -529,11 +541,6 @@ export class RoomController {
         this.playMoves(places);
       }
       this.commit();
-      this.refresh();
-      return;
-    }
-    if (worn.magazine !== null && (this.state.ammo ?? worn.magazine) === 0) {
-      attack(this.state);
       this.refresh();
       return;
     }
@@ -595,23 +602,10 @@ export class RoomController {
     return !this.ready || this.character !== null || this.swinging || this.renderer.moving();
   }
 
-  private loadingVeil(): HTMLElement {
-    const veil = document.createElement("div");
-    veil.className = "dungeon-loading";
-    const img = document.createElement("img");
-    img.src = loadingUrl;
-    img.alt = "";
-    const bar = document.createElement("div");
-    bar.className = "dungeon-load-bar";
-    const track = document.createElement("div");
-    track.className = "dungeon-load-track";
-    const fill = document.createElement("div");
-    fill.className = "dungeon-load-fill";
-    this.loadFill = fill;
-    track.append(fill);
-    bar.append(track);
-    veil.append(img, bar);
-    return veil;
+  private loadingScreen(): HTMLElement {
+    const veil = loadingVeil();
+    this.paintLoad = veil.setRatio;
+    return veil.root;
   }
 
   private toggleCharacter(): void {
@@ -632,8 +626,7 @@ export class RoomController {
   }
 
   private setLoad(ratio: number): void {
-    if (!this.loadFill) return;
-    this.loadFill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
+    this.paintLoad?.(ratio);
   }
 
   /** Спрайты, музыка и звуки. Ввод закрыт, пока полоса не дойдёт до конца и кадр не нарисован. */
@@ -681,7 +674,7 @@ export class RoomController {
     } finally {
       this.ready = true;
       veil?.remove();
-      this.loadFill = null;
+      this.paintLoad = null;
     }
   }
 
@@ -760,7 +753,7 @@ export class RoomController {
     panel.style.display = "none";
     panel.style.position = "absolute";
     panel.style.inset = "0";
-    panel.style.zIndex = "8";
+    panel.style.zIndex = "20";
     panel.style.alignItems = "center";
     panel.style.justifyContent = "center";
     const card = document.createElement("div");
@@ -833,7 +826,7 @@ export class RoomController {
       this.paintAuras();
     }
     if (this.coarse) return;
-    const look = cell ? nearestAim(this.state.hero, cell) : null;
+    const look = cell ? weaponAim(this.state.hero, cell) : null;
     const prev = this.state.look;
     if (look?.x === prev?.x && look?.y === prev?.y) return;
     this.state.look = look;
@@ -929,7 +922,7 @@ export class RoomController {
       return;
     }
     this.choosingBlink = false;
-    if (cell) this.state.look = nearestAim(this.state.hero, cell);
+    if (cell) this.state.look = weaponAim(this.state.hero, cell);
     const dir = cell ? this.dirToward(cell.x, cell.y) : null;
     if (dir) face(this.state, dir);
     this.attack();
@@ -962,6 +955,7 @@ export class RoomController {
       return;
     }
     const cell = this.renderer.cellAt(point.x, point.y);
+    if (this.abilitySlot !== null || this.choosingBlink || this.aimingWeapon) hideTip();
     if (this.abilitySlot !== null) {
       this.confirmAbility(cell);
       return;
@@ -1074,12 +1068,20 @@ export class RoomController {
       if (!this.lesson) this.leaveByPortal();
       return true;
     }
+    const loot = this.state.loot.find((item) => item.x === cell.x && item.y === cell.y);
+    if (loot) {
+      if (usePickup(this.state, cell.x, cell.y)) {
+        this.commit();
+        this.refresh();
+      }
+      return true;
+    }
     return false;
   }
 
   private confirmWeapon(cell: { x: number; y: number } | null): void {
     if (!cell) return;
-    const aim = nearestAim(this.state.hero, cell);
+    const aim = weaponAim(this.state.hero, cell);
     if (!aim) return;
     this.state.look = aim;
     const dir = this.dirToward(cell.x, cell.y);
@@ -1212,11 +1214,60 @@ export class RoomController {
       pause.addEventListener("click", () => this.togglePause());
       corner.append(pause);
     }
+    if (this.coarse) corner.append(this.fullscreenButton());
     const purse = document.createElement("div");
     purse.className = "dungeon-corner-gold";
     purse.append(this.goldIcon, this.goldText);
     corner.append(purse);
     return corner;
+  }
+
+  private fullscreenButton(): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "dungeon-corner-pause";
+    button.textContent = "Full";
+    button.setAttribute("aria-label", "Fullscreen");
+    button.addEventListener("click", () => void this.toggleFullscreen());
+    this.fullscreenButtonEl = button;
+    document.addEventListener("fullscreenchange", this.onFullscreen);
+    return button;
+  }
+
+  private readonly onAimPointer = (event: PointerEvent): void => {
+    if (!this.coarse || event.button !== 0) return;
+    if (this.abilitySlot === null && !this.aimingWeapon && !this.choosingBlink) return;
+    if (this.character || this.pause || this.mapOpen) return;
+    const rect = this.canvas.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX >= rect.right || event.clientY < rect.top || event.clientY >= rect.bottom) return;
+    const target = event.target;
+    if (target === this.canvas) return;
+    if (target instanceof Element && target.closest("button, .dungeon-corner, .dungeon-focus, .dungeon-hud, .dungeon-lesson, .dungeon-map-close")) return;
+    this.onCoarsePointer(event);
+  };
+
+  private readonly onFullscreen = (): void => {
+    const on = document.fullscreenElement !== null;
+    if (!this.fullscreenButtonEl) return;
+    this.fullscreenButtonEl.textContent = on ? "Exit" : "Full";
+    this.fullscreenButtonEl.setAttribute("aria-pressed", on ? "true" : "false");
+  };
+
+  private async toggleFullscreen(): Promise<void> {
+    const node = this.host as HTMLElement & { webkitRequestFullscreen?: () => void };
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+      if (typeof node.requestFullscreen === "function") {
+        await node.requestFullscreen({ navigationUI: "hide" });
+        return;
+      }
+      node.webkitRequestFullscreen?.();
+    } catch {
+      // The page around the game can refuse fullscreen. The address bar stays.
+    }
   }
 
   private paintGold(gold: HTMLCanvasElement): void {
@@ -1292,7 +1343,11 @@ export class RoomController {
     if (weapon instanceof HTMLButtonElement) {
       weapon.type = "button";
       weapon.classList.add("dungeon-weapon-aim");
-      weapon.addEventListener("click", () => this.pressWeapon());
+      weapon.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        this.pressWeapon();
+      });
     }
     this.weaponSlot = weapon;
     const weaponIcon = document.createElement("canvas");
@@ -1310,7 +1365,7 @@ export class RoomController {
       () => weaponById(this.state.weapon).name,
       () => {
         const worn = weaponById(this.state.weapon);
-        const ammo = worn.magazine === null ? "" : `\n${this.state.ammo ?? worn.magazine}/${worn.magazine}. R reloads.`;
+        const ammo = worn.magazine === null ? "" : `\n${this.state.ammo ?? worn.magazine}/${worn.magazine}. R reloads. Left-click reloads an empty magazine.`;
         return `${worn.figure} Left-click a tile to attack.${ammo}`;
       },
       undefined,
@@ -1330,7 +1385,13 @@ export class RoomController {
     const blinkBadge = document.createElement("span");
     blinkBadge.className = "dungeon-slot-count";
     blinkButton.append(blinkIcon, blinkKey, blinkBadge);
-    blinkButton.addEventListener("click", () => this.toggleBlink());
+    if (this.coarse) {
+      blinkButton.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        this.toggleBlink();
+      });
+    } else blinkButton.addEventListener("click", () => this.toggleBlink());
     bindTip(
       blinkButton,
       "Blink",
@@ -1359,7 +1420,13 @@ export class RoomController {
       const cd = document.createElement("span");
       cd.className = "dungeon-ability-cd";
       button.append(icon, key, cd);
-      button.addEventListener("click", () => this.pressAbility(slot));
+      if (this.coarse) {
+        button.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          this.pressAbility(slot);
+        });
+      } else button.addEventListener("click", () => this.pressAbility(slot));
       bindAbilityTip(button, () => {
         const ability = this.state.abilities[slot];
         if (!ability) return null;
@@ -1584,6 +1651,13 @@ export class RoomController {
       this.leaveByPortal();
       return;
     }
+    if (target.kind === "loot") {
+      if (usePickup(this.state, target.cell.x, target.cell.y)) {
+        this.commit();
+        this.refresh();
+      }
+      return;
+    }
     if (useChest(this.state, target.cell.x, target.cell.y)) {
       this.commit();
       this.refresh();
@@ -1644,6 +1718,7 @@ export class RoomController {
   }
 
   private refresh(): void {
+    this.reloadPrompt.hidden = weaponById(this.state.weapon).magazine === null;
     this.hpText.textContent = `${shownHp(this.state.hero.hp)}/${shownHp(this.state.hero.maxHp)}`;
     this.hpFill.style.width = `${Math.max(0, this.state.hero.hp / this.state.hero.maxHp) * 100}%`;
     this.mpText.textContent = `${this.state.mp}/${this.state.maxMp}`;
@@ -1845,6 +1920,19 @@ export class RoomController {
     );
   }
 
+  private sealDeath(): void {
+    if (this.state.hero.hp > 0 && this.state.outcome !== "lost") return;
+    if (this.state.outcome !== "lost") {
+      this.state.hero.hp = 0;
+      this.state.outcome = "lost";
+      this.state.note = "The run is over.";
+    }
+    if (!this.heroRattled) {
+      this.heroRattled = true;
+      playHeroDeath(this.state.hero.facing, this.diedByFall);
+    }
+  }
+
   private loop = (): void => {
     if (!this.running) return;
     if (this.sprites) {
@@ -1852,7 +1940,12 @@ export class RoomController {
       this.draw();
       this.noteFrame(performance.now() - started);
     } else this.draw();
-    if (this.lostPanel) this.lostPanel.style.display = this.showLost() ? "flex" : "none";
+    this.sealDeath();
+    if (this.lostPanel) {
+      const show = this.showLost();
+      if (show && this.host.lastElementChild !== this.lostPanel) this.host.append(this.lostPanel);
+      this.lostPanel.style.display = show ? "flex" : "none";
+    }
     requestAnimationFrame(this.loop);
   };
 

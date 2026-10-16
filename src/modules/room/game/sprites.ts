@@ -344,6 +344,11 @@ async function loadWeaponSprites(): Promise<Partial<Record<WeaponId, HTMLCanvasE
   await Promise.all(
     Object.entries(weaponFiles).map(async ([path, url]) => {
       const id = /\/([a-z]+)\.jpg$/.exec(path)?.[1];
+      if (id === "staff") {
+        const image = trimmed(keyed(await loadImage(url)));
+        for (const weapon of WEAPONS) if (weapon.id.startsWith("staff")) weapons[weapon.id] = image;
+        return;
+      }
       if (!id || !WEAPONS.some((weapon) => weapon.id === id)) return;
       weapons[id as WeaponId] = trimmed(keyed(await loadImage(url)));
     }),

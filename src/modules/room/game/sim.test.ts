@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { MONSTER_DOOR_GAP, ROOM_SIZES, ROOMS, STAMP_SIZES, type RoomPattern } from "../data/rooms.ts";
 import { HERO_HP } from "./rules.ts";
 import { ELEMENTS, KIT, monsterById } from "../data/monsters.ts";
+import { weaponById } from "../data/weapons.ts";
 import {
   nearestAim,
   attack,
   interactTarget,
   useChest,
+  usePickup,
   usePortal,
   attackCells,
   blink,
@@ -250,6 +252,17 @@ assert.equal(lethal.hero.y, 2);
 assert.equal(step(lethal, "left", () => 0), false);
 assert.equal(lethal.hero.x, 3);
 
+const bitten = createRoom(OPEN);
+bitten.hero.x = 8;
+bitten.hero.y = 6;
+bitten.hero.hp = 1;
+bitten.monster.x = 9;
+bitten.monster.y = 6;
+bitten.monster.cooldowns.swing = 99;
+wait(bitten, () => 0);
+assert.equal(bitten.hero.hp, 0);
+assert.equal(bitten.outcome, "lost");
+
 const clearedPit = createRoom({
   ...OPEN,
   hero: { x: 2, y: 2, facing: "right" },
@@ -328,17 +341,14 @@ reach.hero.facing = "right";
 reach.weapon = "axe";
 const axe = attackCells(reach).map((cell) => `${cell.x},${cell.y}`);
 assert.equal(axe.includes("5,4"), true);
+assert.equal(axe.includes("4,5"), true);
 assert.equal(axe.includes("5,5"), true);
+assert.equal(axe.includes("3,3"), true);
 assert.equal(axe.includes("6,6"), false);
 reach.weapon = "spear";
 assert.deepEqual(
   attackCells(reach).map((cell) => `${cell.x},${cell.y}`),
   ["5,4", "6,4"],
-);
-reach.weapon = "gloves";
-assert.deepEqual(
-  attackCells(reach).map((cell) => `${cell.x},${cell.y}`),
-  ["5,4", "6,4", "7,4"],
 );
 reach.weapon = "pistol";
 assert.deepEqual(
@@ -357,9 +367,10 @@ assert.deepEqual(
   ["3,3", "3,4", "3,5"],
 );
 reach.look = { x: 1, y: 1 };
+reach.weapon = "sword";
 assert.deepEqual(
   attackCells(reach).map((cell) => `${cell.x},${cell.y}`).sort(),
-  ["4,5", "5,4", "5,5"],
+  ["5,3", "5,4", "5,5"],
 );
 reach.look = null;
 assert.equal(nearestAim({ x: 4, y: 4 }, { x: 9, y: 5 })?.x, 1);
@@ -368,8 +379,8 @@ assert.equal(nearestAim({ x: 4, y: 4 }, { x: 7, y: 6 })?.x, 1);
 assert.equal(nearestAim({ x: 4, y: 4 }, { x: 7, y: 6 })?.y, 1);
 reach.weapon = "shotgun";
 assert.deepEqual(
-  attackCells(reach).map((cell) => `${cell.x},${cell.y}`).sort(),
-  ["5,3", "5,4", "5,5", "6,3", "6,4", "6,5", "7,3", "7,4", "7,5"],
+  attackCells(reach).map((cell) => `${cell.x},${cell.y}`),
+  ["5,4", "6,3", "6,4", "6,5"],
 );
 
 const dual = createRoom(OPEN);
@@ -405,14 +416,154 @@ attack(diagonal, () => 0);
 assert.equal(diagonal.monster.hp, diagonal.monster.maxHp);
 assert.match(diagonal.note, /Sword/);
 
+const axeOne = createRoom(OPEN);
+axeOne.hero.x = 8;
+axeOne.hero.y = 5;
+axeOne.monster.x = 9;
+axeOne.monster.y = 6;
+axeOne.weapon = "axe";
+axeOne.monster.cooldowns.swing = 99;
+attack(axeOne, () => 0);
+assert.equal(axeOne.monster.hp, axeOne.monster.maxHp - 100);
+assert.equal(axeOne.monster.shield, 2);
+
 const axeHit = createRoom(OPEN);
 axeHit.hero.x = 8;
 axeHit.hero.y = 5;
+axeHit.monster.x = 8;
+axeHit.monster.y = 6;
 axeHit.weapon = "axe";
 axeHit.monster.cooldowns.swing = 99;
 attack(axeHit, () => 0);
-assert.equal(axeHit.monster.hp < axeHit.monster.maxHp, true);
+assert.equal(axeHit.monster.hp, axeHit.monster.maxHp - 100);
 assert.equal(axeHit.monster.shield, 2);
+
+const axeEight = createRoom(OPEN, { weapon: "axe" });
+axeEight.hero.x = 6;
+axeEight.hero.y = 6;
+const ring = [
+  [7, 6],
+  [5, 6],
+  [6, 7],
+  [6, 5],
+  [7, 7],
+  [5, 7],
+  [7, 5],
+  [5, 5],
+] as const;
+axeEight.monster.x = ring[0][0];
+axeEight.monster.y = ring[0][1];
+axeEight.monster.cooldowns.swing = 99;
+for (const [x, y] of ring.slice(1)) {
+  const foe = monsterFighter(monsterById("7"), { x, y, facing: "left" }, true);
+  foe.cooldowns.swing = 99;
+  axeEight.monsters.push(foe);
+}
+attack(axeEight, () => 0);
+assert.equal(axeEight.monsters.length, 8);
+for (const foe of axeEight.monsters) assert.equal(foe.hp, foe.maxHp - 30);
+
+const spearBoth = createRoom(OPEN, { weapon: "spear" });
+spearBoth.hero.x = 4;
+spearBoth.hero.y = 6;
+spearBoth.hero.facing = "right";
+spearBoth.monster.x = 5;
+spearBoth.monster.y = 6;
+spearBoth.monster.cooldowns.swing = 99;
+const spearFar = monsterFighter(monsterById("7"), { x: 6, y: 6, facing: "left" }, true);
+spearFar.cooldowns.swing = 99;
+spearBoth.monsters.push(spearFar);
+attack(spearBoth, () => 0);
+assert.equal(spearBoth.monster.hp, spearBoth.monster.maxHp - 60);
+assert.equal(spearFar.hp, spearFar.maxHp - 100);
+
+const staffFire = createRoom(OPEN, { weapon: "staff-fire" });
+staffFire.hero.x = 4;
+staffFire.hero.y = 6;
+staffFire.hero.facing = "right";
+staffFire.monster.x = 5;
+staffFire.monster.y = 6;
+staffFire.monster.cooldowns.swing = 99;
+const staffBehind = monsterFighter(monsterById("7"), { x: 7, y: 6, facing: "left" }, true);
+staffBehind.stun = 1;
+staffFire.monsters.push(staffBehind);
+attack(staffFire, () => 0);
+assert.equal(staffFire.hits.some((hit) => hit.type === "fire" && hit.amount === 80 && hit.x === 5 && hit.y === 6), true);
+assert.equal(staffFire.hits.some((hit) => hit.type === "physical" && hit.x === 5), false);
+assert.equal(staffFire.monster.hp, staffFire.monster.maxHp - 80 - ELEMENTS.fireTick);
+assert.equal(staffBehind.hp, staffBehind.maxHp);
+assert.equal(groundAt(staffFire, 5, 6)?.kind, "fire");
+assert.equal(groundAt(staffFire, 6, 6)?.kind, "fire");
+
+const staffIce = createRoom(OPEN, { weapon: "staff-ice" });
+staffIce.hero.x = 4;
+staffIce.hero.y = 6;
+staffIce.hero.facing = "right";
+staffIce.monster.x = 5;
+staffIce.monster.y = 6;
+staffIce.monster.cooldowns.swing = 99;
+attack(staffIce, () => 0);
+assert.equal(staffIce.hits.some((hit) => hit.type === "ice" && hit.amount === 80), true);
+assert.equal(staffIce.monster.hp, staffIce.monster.maxHp - 80);
+assert.equal(groundAt(staffIce, 5, 6)?.kind, "ice");
+
+const staffEarth = createRoom(OPEN, { weapon: "staff-earth" });
+staffEarth.hero.x = 4;
+staffEarth.hero.y = 6;
+staffEarth.hero.facing = "right";
+staffEarth.monster.x = 5;
+staffEarth.monster.y = 6;
+staffEarth.monster.cooldowns.swing = 99;
+attack(staffEarth, () => 0);
+assert.equal(groundAt(staffEarth, 5, 6)?.kind, "oil");
+assert.equal(groundAt(staffEarth, 6, 6)?.kind, "oil");
+assert.equal(staffEarth.monster.hp, staffEarth.monster.maxHp - 80);
+
+const staffPoison = createRoom(OPEN, { weapon: "staff-poison" });
+staffPoison.hero.x = 4;
+staffPoison.hero.y = 6;
+staffPoison.hero.facing = "right";
+staffPoison.monster.x = 5;
+staffPoison.monster.y = 6;
+staffPoison.monster.cooldowns.swing = 99;
+attack(staffPoison, () => 0);
+assert.equal(staffPoison.hits.some((hit) => hit.type === "poison" && hit.amount === 80), true);
+assert.equal(staffPoison.monster.poison > 0 && staffPoison.monster.poison < 80, true);
+assert.equal(groundAt(staffPoison, 5, 6)?.stacks, 1);
+
+const shotgunClose = createRoom(OPEN, { weapon: "shotgun" });
+shotgunClose.hero.x = 4;
+shotgunClose.hero.y = 6;
+shotgunClose.hero.facing = "right";
+shotgunClose.monster.x = 5;
+shotgunClose.monster.y = 6;
+shotgunClose.monster.cooldowns.swing = 99;
+attack(shotgunClose, () => 0);
+assert.equal(shotgunClose.monster.hp, shotgunClose.monster.maxHp - 180);
+
+const shotgunFar = createRoom(OPEN, { weapon: "shotgun" });
+shotgunFar.hero.x = 4;
+shotgunFar.hero.y = 6;
+shotgunFar.hero.facing = "right";
+shotgunFar.monster.x = 6;
+shotgunFar.monster.y = 6;
+shotgunFar.monster.cooldowns.swing = 99;
+attack(shotgunFar, () => 0);
+assert.equal(shotgunFar.monster.hp, shotgunFar.monster.maxHp - 80);
+
+const pistolLine = createRoom(OPEN, { weapon: "pistol" });
+pistolLine.hero.x = 4;
+pistolLine.hero.y = 6;
+pistolLine.hero.facing = "right";
+pistolLine.monster.x = 5;
+pistolLine.monster.y = 6;
+pistolLine.monster.cooldowns.swing = 99;
+const pistolBehind = monsterFighter(monsterById("7"), { x: 6, y: 6, facing: "left" }, true);
+pistolBehind.stun = 1;
+pistolLine.monsters.push(pistolBehind);
+attack(pistolLine, () => 0);
+assert.equal(pistolLine.monster.hp, pistolLine.monster.maxHp - 100);
+assert.equal(pistolBehind.hp, pistolBehind.maxHp);
 
 const farSpear = createRoom(OPEN, { weapon: "spear", monsterKind: "7" });
 farSpear.hero.x = 7;
@@ -475,9 +626,13 @@ assert.equal(gun.ammo, 3);
 assert.match(gun.note, /Reload/);
 const rifle = createRoom(OPEN, { weapon: "rifle" });
 rifle.ammo = 0;
-assert.equal(attack(rifle, () => 0), false);
-assert.equal(rifle.ammo, 0);
-assert.equal(rifle.note, "Magazine empty.");
+assert.equal(attack(rifle, () => 0), true);
+assert.equal(rifle.ammo, weaponById("rifle").magazine);
+assert.match(rifle.note, /Reload/);
+const shotgun = createRoom(OPEN, { weapon: "shotgun" });
+shotgun.ammo = 0;
+assert.equal(attack(shotgun, () => 0), true);
+assert.equal(shotgun.ammo, weaponById("shotgun").magazine);
 assert.equal(reload(gun, () => 0), false);
 assert.equal(gun.note, "Magazine full.");
 
@@ -593,6 +748,26 @@ portal.monster.y = 6;
 portal.monster.cooldowns.dash = 99;
 assert.equal(usePortal(portal, () => 0), true);
 assert.equal(portal.monster.x, 8);
+const drop = createRoom(OPEN, { monsterKind: "1" });
+drop.hero.x = 4;
+drop.hero.y = 6;
+drop.monster.x = 9;
+drop.monster.y = 6;
+drop.monster.cooldowns.dash = 99;
+drop.loot.push({ kind: "gear", catalogId: "belt", x: 5, y: 6 });
+assert.equal(step(drop, "right", () => 0), true);
+assert.equal(drop.hero.x, 5);
+assert.equal(drop.loot.length, 1);
+assert.equal(drop.found.length, 0);
+drop.hero.x = 4;
+drop.loot[0]!.x = 6;
+drop.loot[0]!.y = 8;
+assert.equal(usePickup(drop, 6, 8, () => 0), false);
+drop.loot[0]!.x = 5;
+drop.loot[0]!.y = 7;
+assert.equal(usePickup(drop, 5, 7, () => 0), true);
+assert.equal(drop.loot.length, 0);
+assert.equal(drop.found[0]?.catalogId, "belt");
 assert.equal(portal.hero.hp, HERO_HP);
 
 const shared = createRoom(OPEN, { monsterKind: "1" });

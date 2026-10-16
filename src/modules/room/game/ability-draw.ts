@@ -622,7 +622,10 @@ function pulse(time: number): number {
 export function drawWindupHint(ctx: CanvasRenderingContext2D, box: Box, monster: Fighter, cast: Windup, time: number): void {
   const a = pulse(time) * 0.55;
   if (cast.kind === "swing") drawSlash(ctx, box, cast.cells, 0.2 + a * 0.15);
-  else if (cast.kind === "stone") drawFall(ctx, box, cast.center, 0.35);
+  else if (cast.kind === "stone") {
+    drawLineGrow(ctx, box, monster, cast.center, 0.4 + a * 0.2, "#9a7434", 0.05, 1);
+    drawFall(ctx, box, cast.center, 0.35);
+  }
   else if (cast.kind === "jump" || cast.kind === "fuse") drawRings(ctx, box, cast.cells, a * 0.4, "#7ed34a", 0.2);
   else if (cast.kind === "tongue") drawLineGrow(ctx, box, monster, cast.center, 0.35 + a * 0.2, "#c45b62", 0.06, 1);
   else if (cast.kind === "spires") drawSpires(ctx, box, cast.cells, 0.25 + a * 0.2);

@@ -22,7 +22,6 @@ import weaponAxeUrl from "../../../../assets/sfx/weapon-axe.mp3";
 import weaponDualUrl from "../../../../assets/sfx/weapon-dual.mp3";
 import weaponSpearUrl from "../../../../assets/sfx/weapon-spear.mp3";
 import weaponStaffUrl from "../../../../assets/sfx/weapon-staff.mp3";
-import weaponGlovesUrl from "../../../../assets/sfx/weapon-gloves.mp3";
 import weaponPistolUrl from "../../../../assets/sfx/weapon-pistol.mp3";
 import weaponRifleUrl from "../../../../assets/sfx/weapon-rifle.mp3";
 import weaponShotgunUrl from "../../../../assets/sfx/weapon-shotgun.mp3";
@@ -205,8 +204,11 @@ const WEAPON_CLIP: Record<WeaponId, string> = {
   axe: weaponAxeUrl,
   dual: weaponDualUrl,
   spear: weaponSpearUrl,
-  staff: weaponStaffUrl,
-  gloves: weaponGlovesUrl,
+  "staff-fire": weaponStaffUrl,
+  "staff-earth": weaponStaffUrl,
+  "staff-poison": weaponStaffUrl,
+  "staff-water": weaponStaffUrl,
+  "staff-ice": weaponStaffUrl,
   pistol: weaponPistolUrl,
   rifle: weaponRifleUrl,
   shotgun: weaponShotgunUrl,

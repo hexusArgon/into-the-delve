@@ -7,7 +7,7 @@ import { EMPTY_GEAR, critFactor, itemById, type GearBonus } from "../data/items.
 import { heroAbilityById, type RunAbility } from "../data/hero-abilities.ts";
 import type { InstanceKind } from "../data/instances.ts";
 import { pointChance } from "../data/instances.ts";
-import { weaponById, weaponName, type WeaponId } from "../data/weapons.ts";
+import { weaponById, weaponName, type WeaponDef, type WeaponId } from "../data/weapons.ts";
 import {
   BLINK_CHARGES,
   HERO_MP,
@@ -482,6 +482,23 @@ export function nearestAim(from: Cell, to: Cell): AimStep | null {
   return steps[oct] ?? null;
 }
 
+/** Прицел оружия: только вверх, вниз, влево или вправо. Диагональ берёт более близкую сторону. */
+export function weaponAim(from: Cell, to: Cell): AimStep | null {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (dx === 0 && dy === 0) return null;
+  if (Math.abs(dx) >= Math.abs(dy)) return { x: dx > 0 ? 1 : -1, y: 0 };
+  return { x: 0, y: dy > 0 ? 1 : -1 };
+}
+
+function cardinalStep(step: Cell): Cell {
+  if (step.x !== 0 && step.y !== 0) {
+    if (Math.abs(step.x) >= Math.abs(step.y)) return { x: Math.sign(step.x), y: 0 };
+    return { x: 0, y: Math.sign(step.y) };
+  }
+  return { x: Math.sign(step.x), y: Math.sign(step.y) };
+}
+
 /** Сколько выстрелов осталось. Empty — это не огнестрел. */
 export function shotsLeft(state: RoomState): number | null {
   const magazine = weaponById(state.weapon).magazine;
@@ -491,35 +508,59 @@ export function shotsLeft(state: RoomState): number | null {
 
 /** Клетки удара надетого оружия. Курсор, если он есть, важнее поворота. */
 export function attackCells(state: RoomState): Cell[] {
+  const cells = patternCells(state);
+  const weapon = weaponById(state.weapon);
+  if (!stopsOnFirst(weapon)) return cells;
+  const cut: Cell[] = [];
+  for (const cell of cells) {
+    cut.push(cell);
+    if (monsterAt(state, cell)) break;
+  }
+  return cut;
+}
+
+function patternCells(state: RoomState): Cell[] {
   if (shotsLeft(state) === 0) return [];
   const weapon = weaponById(state.weapon);
-  const step = state.look ?? DIRS[state.hero.facing];
+  const step = attackStep(state);
+  if (weapon.id === "shotgun") return shotgunCells(state, step);
   if (weapon.shape === "fan") return fanCells(state, weapon.range, step);
   if (weapon.shape === "around") return aroundCells(state);
   return lineCells(state, weapon.range, step);
 }
 
-/** Веер шириной 3. Прямое направление — три параллельных луча. Диагональ — клин из трёх. */
+/** Посох и пистолет не проходят дальше первой цели. */
+function stopsOnFirst(weapon: WeaponDef): boolean {
+  return weapon.element !== undefined || weapon.id === "pistol";
+}
+
+function attackStep(state: RoomState): Cell {
+  return cardinalStep(state.look ?? DIRS[state.hero.facing]);
+}
+
+/** Пирамида: клетка прямо перед героем и три клетки на следующем шаге. */
+function shotgunCells(state: RoomState, step: Cell): Cell[] {
+  const hero = state.hero;
+  const left = { x: step.y, y: -step.x };
+  const marks = [
+    { f: 1, l: 0 },
+    { f: 2, l: 1 },
+    { f: 2, l: 0 },
+    { f: 2, l: -1 },
+  ];
+  const cells: Cell[] = [];
+  for (const mark of marks) {
+    const x = hero.x + step.x * mark.f + left.x * mark.l;
+    const y = hero.y + step.y * mark.f + left.y * mark.l;
+    if (isBlocked(state.room, x, y)) continue;
+    cells.push({ x, y });
+  }
+  return cells;
+}
+
+/** Веер шириной 3 вдоль одной стороны. Диагонального клина нет. */
 function fanCells(state: RoomState, depth: number, step: Cell): Cell[] {
   const hero = state.hero;
-  if (step.x !== 0 && step.y !== 0) {
-    const cells: Cell[] = [];
-    const rays = [
-      (i: number) => ({ x: step.x * i, y: step.y * i }),
-      (i: number) => ({ x: step.x * i, y: step.y * (i - 1) }),
-      (i: number) => ({ x: step.x * (i - 1), y: step.y * i }),
-    ];
-    for (const ray of rays) {
-      for (let i = 1; i <= depth; i += 1) {
-        const at = ray(i);
-        const x = hero.x + at.x;
-        const y = hero.y + at.y;
-        if (isBlocked(state.room, x, y)) break;
-        cells.push({ x, y });
-      }
-    }
-    return cells;
-  }
   const side = step.y === 0 ? { x: 0, y: 1 } : { x: 1, y: 0 };
   const cells: Cell[] = [];
   for (const offset of [-1, 0, 1]) {
@@ -538,8 +579,8 @@ function aroundCells(state: RoomState): Cell[] {
   for (const step of AROUND) {
     const x = state.hero.x + step.x;
     const y = state.hero.y + step.y;
-      if (isBlocked(state.room, x, y)) continue;
-      cells.push({ x, y });
+    if (isBlocked(state.room, x, y)) continue;
+    cells.push({ x, y });
   }
   return cells;
 }
@@ -824,10 +865,24 @@ function tickMeter(state: RoomState, refreshed: boolean): void {
   if (state.meterTurns === 0) state.meterLevel = 0;
 }
 
-function swordDamage(state: RoomState): number {
-  const base = state.weaponHit === null ? weaponById(state.weapon).hitDamage : state.weaponHit;
-  const hit = base + state.weaponPower + state.meterLevel * METER_STEP;
+/** Число пассивки до щита, крита, силы оружия и процента урона. */
+function passiveAmount(state: RoomState, target: Fighter, targets: readonly Fighter[]): number {
+  const weapon = weaponById(state.weapon);
+  const base = state.weaponHit === null ? weapon.hitDamage : state.weaponHit;
+  if (weapon.id === "axe") return base - 10 * (targets.length - 1);
+  if (weapon.id === "spear") return inFront(state, target) ? 60 : 100;
+  if (weapon.id === "shotgun") return inFront(state, target) ? 180 : 80;
+  return base;
+}
+
+function dealtHit(state: RoomState, passive: number): number {
+  const hit = passive + state.weaponPower + state.meterLevel * METER_STEP;
   return hit * critFactor(state.critChance, state.critShare);
+}
+
+function inFront(state: RoomState, target: Fighter): boolean {
+  const step = attackStep(state);
+  return target.x === state.hero.x + step.x && target.y === state.hero.y + step.y;
 }
 
 function faceToward(unit: Fighter, target: Cell): void {
@@ -1089,13 +1144,11 @@ function landed(state: RoomState, target: Fighter, dealt: number, source: Fighte
   if (target.hp <= 0) kill(state, target, rng);
 }
 
-/** Оружие. Способность всегда снимает 1, это решается в landed. Sword, топор, клинки, копьё и перчатки снимают 2. Staff и огнестрел — 1, и 2, если цель в клетке прямо перед героем. */
+/** Оружие. Способность всегда снимает 1. Меч, топор, клинки и копьё снимают 2. Посох и огнестрел — 1, и 2, если цель стоит в клетке прямо перед героем. */
 function heroShieldPoints(state: RoomState, target: Fighter): number {
   const id = state.weapon;
-  if (id === "sword" || id === "axe" || id === "dual" || id === "spear" || id === "gloves") return 2;
-  const step = DIRS[state.hero.facing];
-  const inFace = target.x === state.hero.x + step.x && target.y === state.hero.y + step.y;
-  return inFace ? 2 : 1;
+  if (id === "sword" || id === "axe" || id === "dual" || id === "spear") return 2;
+  return inFront(state, target) ? 2 : 1;
 }
 
 /** Damage монстра по монстру снимает 1. */
@@ -1129,7 +1182,10 @@ function cancelWindup(unit: Fighter): void {
 
 function kill(state: RoomState, unit: Fighter, rng: () => number): void {
   unit.hp = 0;
-  if (unit === state.hero) return;
+  if (unit === state.hero) {
+    finish(state);
+    return;
+  }
   cancelWindup(unit);
   if (unit.mode === "held") unit.mode = "ground";
   if (!state.bodies.some((body) => sameCell(body, unit))) state.bodies.push(spot(unit));
@@ -2087,8 +2143,11 @@ function resolveCast(state: RoomState, monster: Fighter, cast: Windup, rng: () =
       return target === hero ? "The tongue caught the hero." : "The tongue caught a monster.";
     }
     case "spires": {
-      for (const unit of unitsIn(state, cast.cells, monster)) unit.root = Math.max(unit.root, KIT.acolyte.root);
-      state.fx.push({ kind: "area", cells: cast.cells, tone: "control", act: "spires" });
+      for (const unit of unitsIn(state, cast.cells, monster)) {
+        hurt(state, unit, KIT.acolyte.damage, "physical", monster, rng);
+        if (unit.hp > 0) unit.root = Math.max(unit.root, KIT.acolyte.root);
+      }
+      state.fx.push({ kind: "area", cells: cast.cells, tone: "physical", act: "spires" });
       return "Spires locked the ground.";
     }
     case "beam": {
@@ -2467,13 +2526,13 @@ function openChest(state: RoomState, cell: Cell, rng: () => number): boolean {
   return true;
 }
 
-/** Рядом: клетка объекта или любая из восьми соседних. Ближе — важнее, при равенстве — клетка перед героем, затем портал. */
-export function interactTarget(state: RoomState, exit: Cell | null): { kind: "chest" | "portal"; cell: Cell } | null {
+/** Рядом: клетка объекта или любая из восьми соседних. Ближе — важнее, при равенстве — клетка перед героем, затем портал, сундук, вещь. */
+export function interactTarget(state: RoomState, exit: Cell | null): { kind: "chest" | "portal" | "loot"; cell: Cell } | null {
   if (state.hero.hp <= 0 || state.outcome === "lost") return null;
   const hero = state.hero;
   const face = DIRS[hero.facing];
-  const options: { kind: "chest" | "portal"; cell: Cell; cheb: number; man: number; front: number }[] = [];
-  const push = (kind: "chest" | "portal", cell: Cell): void => {
+  const options: { kind: "chest" | "portal" | "loot"; cell: Cell; cheb: number; man: number; front: number }[] = [];
+  const push = (kind: "chest" | "portal" | "loot", cell: Cell): void => {
     const dx = Math.abs(cell.x - hero.x);
     const dy = Math.abs(cell.y - hero.y);
     const cheb = Math.max(dx, dy);
@@ -2488,7 +2547,9 @@ export function interactTarget(state: RoomState, exit: Cell | null): { kind: "ch
   };
   if (exit) push("portal", exit);
   for (const chest of state.chests) if (!chest.open) push("chest", chest);
-  options.sort((a, b) => a.cheb - b.cheb || a.man - b.man || a.front - b.front || (a.kind === "portal" ? -1 : 1) - (b.kind === "portal" ? -1 : 1));
+  for (const loot of state.loot) push("loot", loot);
+  const rank = { portal: 0, chest: 1, loot: 2 };
+  options.sort((a, b) => a.cheb - b.cheb || a.man - b.man || a.front - b.front || rank[a.kind] - rank[b.kind]);
   const pick = options[0];
   return pick ? { kind: pick.kind, cell: pick.cell } : null;
 }
@@ -2501,6 +2562,23 @@ export function useChest(state: RoomState, x: number, y: number, rng: () => numb
   if (!openChest(state, { x, y }, rng)) return false;
   state.note = "The chest opens.";
   if (state.spoilNames.length > 0) state.note = `${state.note} ${state.spoilNames.splice(0).join(", ")} dropped.`.trim();
+  afterAction(state, false, rng);
+  return true;
+}
+
+/** Space у вещи в квадрате 3×3. Ход тратится. Шаг и Blink вещь не забирают. */
+export function usePickup(state: RoomState, x: number, y: number, rng: () => number = Math.random): boolean {
+  if (!canControl(state)) return false;
+  const dx = Math.abs(x - state.hero.x);
+  const dy = Math.abs(y - state.hero.y);
+  if (Math.max(dx, dy) > 1) return false;
+  const index = state.loot.findIndex((loot) => loot.x === x && loot.y === y);
+  if (index < 0) return false;
+  beginHeroTurn(state);
+  const [loot] = state.loot.splice(index, 1);
+  if (!loot) return false;
+  state.found.push({ kind: loot.kind, catalogId: loot.catalogId });
+  state.note = lootName(loot);
   afterAction(state, false, rng);
   return true;
 }
@@ -2591,16 +2669,6 @@ export function lootName(loot: CarryLoot): string {
   if (loot.kind === "weapon") return weaponName(loot.catalogId);
   if (loot.kind === "ability") return heroAbilityById(loot.catalogId)?.name ?? "Ability";
   return itemById(loot.catalogId)?.name ?? "Item";
-}
-
-/** Шаг на клетку шмотки забирает её. Пустая строка — на клетке ничего не лежало. */
-export function claimFloorLoot(state: RoomState): string {
-  const index = state.loot.findIndex((loot) => loot.x === state.hero.x && loot.y === state.hero.y);
-  if (index < 0) return "";
-  const [loot] = state.loot.splice(index, 1);
-  if (!loot) return "";
-  state.found.push({ kind: loot.kind, catalogId: loot.catalogId });
-  return lootName(loot);
 }
 
 function canControl(state: RoomState): boolean {
@@ -2720,11 +2788,9 @@ export function step(state: RoomState, dir: Dir, rng: () => number = Math.random
   const broke = breakObject(state, { x, y }, rng);
   const opened = openChest(state, { x, y }, rng);
   const got = takeGold(state);
-  const prize = claimFloorLoot(state);
   state.note = broke ? "Object broken." : "Step.";
   if (opened) state.note = `${state.note} The chest opens.`;
   if (got > 0) state.note = `${state.note} Gold.`;
-  if (prize) state.note = `${state.note} ${prize}.`;
   afterAction(state, false, rng);
   return true;
 }
@@ -2736,20 +2802,18 @@ function struck(state: RoomState): Fighter[] {
 
 export function swordWillKill(state: RoomState): boolean {
   if (state.outcome === "lost") return false;
-  const times = weaponById(state.weapon).twice ? 2 : 1;
-  const damage = swordDamage(state);
-  return struck(state).some((monster) => monster.hp - times * damage * damageFactor(monster, "physical") <= 0);
+  const weapon = weaponById(state.weapon);
+  const targets = struck(state);
+  const times = weapon.twice ? 2 : 1;
+  const type = weapon.element ?? "physical";
+  return targets.some((monster) => monster.hp - times * dealtHit(state, passiveAmount(state, monster, targets)) * damageFactor(monster, type) <= 0);
 }
 
 export function attack(state: RoomState, rng: () => number = Math.random): boolean {
   if (!canControl(state)) return false;
-  beginHeroTurn(state);
   const weapon = weaponById(state.weapon);
-  if (weapon.magazine !== null && shotsLeft(state) === 0) {
-    if (weapon.id === "pistol") return reload(state, rng);
-    state.note = "Magazine empty.";
-    return false;
-  }
+  if (weapon.magazine !== null && shotsLeft(state) === 0) return reload(state, rng);
+  beginHeroTurn(state);
   const swingCells = attackCells(state);
   const smashed = breakBarrels(state, swingCells, rng) + breakChairs(state, swingCells, rng);
   const opened = openChests(state, swingCells, rng);
@@ -2759,6 +2823,7 @@ export function attack(state: RoomState, rng: () => number = Math.random): boole
   if (weapon.magazine !== null) state.ammo = (shotsLeft(state) ?? weapon.magazine) - 1;
   const kegsBefore = state.kegs.length;
   if (times === 0) {
+    if (weapon.element) pour(state, lineCells(state, 2, attackStep(state)), weapon.element, weapon.element === "poison" ? 1 : 0, rng);
     touchKegs(state, swingCells, rng);
     const burst = state.kegs.length < kegsBefore ? " The barrel bursts." : "";
     state.note = `${weapon.name} hit nothing. The turn is still spent.${burst}${smashedNote}`;
@@ -2767,9 +2832,12 @@ export function attack(state: RoomState, rng: () => number = Math.random): boole
   }
   const shields = targets.map((target) => target.shield);
   const weaponCrit = critFactor(state.critChance, state.critShare) > 1;
+  const type = weapon.element ?? "physical";
   for (const target of targets) {
-    for (let hit = 0; hit < times; hit += 1) hurt(state, target, swordDamage(state), "physical", state.hero, rng, false, false, weaponCrit);
+    const amount = dealtHit(state, passiveAmount(state, target, targets));
+    for (let hit = 0; hit < times; hit += 1)     hurt(state, target, amount, type, state.hero, rng, false, type === "poison", weaponCrit);
   }
+  if (weapon.element) pour(state, lineCells(state, 2, attackStep(state)), weapon.element, weapon.element === "poison" ? 1 : 0, rng);
   touchKegs(state, swingCells, rng);
   const broke = targets.some((target, index) => (shields[index] ?? 0) > 0 && target.shield === 0);
   state.note = `${broke ? "Shield broken. The monster is stunned, and Blink is back." : "Hit."}${smashedNote}`;
@@ -2813,11 +2881,9 @@ export function blink(state: RoomState, x: number, y: number, rng: () => number 
   state.blink -= 1;
   const broke = breakObject(state, { x, y }, rng);
   const got = takeGold(state);
-  const prize = claimFloorLoot(state);
   const bits = ["Blink."];
   if (broke) bits.push("Object broken.");
   if (got > 0) bits.push("Gold.");
-  if (prize) bits.push(`${prize}.`);
   bits.push("The world did not move.");
   state.note = bits.join(" ");
   return true;

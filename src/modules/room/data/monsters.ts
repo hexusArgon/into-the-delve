@@ -85,7 +85,7 @@ export const KIT = {
   ember: { pause: 1, delay: 1, radius: 1, damage: 40, cooldown: 7 },
   worm: { delay: 2, radius: 1, damage: 70, push: 2, cooldown: 6 },
   /** Аура — квадрат 15×15 вокруг послушника: так решил дизайнер, лист пишет 8×8. */
-  acolyte: { delay: 2, radius: 1, root: 2, cooldown: 7, aura: 7, vampirism: 1 },
+  acolyte: { delay: 2, radius: 1, root: 2, damage: 10, cooldown: 7, aura: 7, vampirism: 1 },
   hound: { dash: 4, damage: 30, cooldown: 4, delay: 1 },
   chest: { reach: 4, delay: 1, radius: 1, stun: 3 },
   gargoyle: { stones: 4, delay: 1, stone: 35, stonePush: 1, landDelay: 1, radius: 1, land: 90, landPush: 1, rest: 5 },

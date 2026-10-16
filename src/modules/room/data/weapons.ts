@@ -6,14 +6,18 @@ export type WeaponId =
   | "sword"
   | "axe"
   | "dual"
-  | "gloves"
   | "spear"
-  | "staff"
+  | "staff-fire"
+  | "staff-earth"
+  | "staff-poison"
+  | "staff-water"
+  | "staff-ice"
   | "pistol"
   | "rifle"
   | "shotgun";
 
 export type WeaponShape = "fan" | "around" | "line";
+export type StaffElement = "fire" | "earth" | "poison" | "water" | "ice";
 
 export interface WeaponDef {
   id: WeaponId;
@@ -26,20 +30,100 @@ export interface WeaponDef {
   twice: boolean;
   /** Выстрелов до перезарядки. Нет числа — не огнестрел. */
   magazine: number | null;
-  /** Damage одного попадания. Колонка листа «Damage попадания». */
+  /** Damage одного попадания, если у оружия одно число. */
   hitDamage: number;
+  /** Строка урона в карточке. Пусто — показать hitDamage. */
+  damageText?: string;
+  /** Стихия посоха. Удар и две клетки перед героем. */
+  element?: StaffElement;
 }
 
 export const WEAPONS: readonly WeaponDef[] = [
-  { id: "sword", name: "Sword", figure: "Three cells straight ahead.", range: 1, shape: "fan", twice: false, magazine: null, hitDamage: 100 },
-  { id: "axe", name: "Axe", figure: "All eight neighboring cells, diagonals included.", range: 1, shape: "around", twice: false, magazine: null, hitDamage: 100 },
-  { id: "dual", name: "Dual Blades", figure: "One adjacent cell, two hits.", range: 1, shape: "line", twice: true, magazine: null, hitDamage: 50 },
-  { id: "spear", name: "Spear", figure: "A line ahead. It pierces two.", range: 2, shape: "line", twice: false, magazine: null, hitDamage: 80 },
-  { id: "staff", name: "Staff", figure: "The same line as the spear.", range: 2, shape: "line", twice: false, magazine: null, hitDamage: 80 },
-  { id: "gloves", name: "Gloves", figure: "One line ahead.", range: 3, shape: "line", twice: false, magazine: null, hitDamage: 80 },
-  { id: "pistol", name: "Pistol", figure: "One line ahead. Magazine 3, then reload.", range: 3, shape: "line", twice: false, magazine: 3, hitDamage: 100 },
-  { id: "rifle", name: "Rifle", figure: "One line ahead, one cell farther than the pistol. Magazine 3.", range: 4, shape: "line", twice: false, magazine: 3, hitDamage: 80 },
-  { id: "shotgun", name: "Shotgun", figure: "A fan of three cells ahead. Magazine 2.", range: 3, shape: "fan", twice: false, magazine: 2, hitDamage: 100 },
+  {
+    id: "sword",
+    name: "Sword",
+    figure: "Three cells straight ahead. Every monster standing there is hit.",
+    range: 1,
+    shape: "fan",
+    twice: false,
+    magazine: null,
+    hitDamage: 100,
+  },
+  {
+    id: "axe",
+    name: "Axe",
+    figure: "All eight neighboring cells, diagonals included. One target takes 100. Each extra target lowers that hit by 10. Eight targets take 30 each.",
+    range: 1,
+    shape: "around",
+    twice: false,
+    magazine: null,
+    hitDamage: 100,
+    damageText: "100 to 30",
+  },
+  {
+    id: "dual",
+    name: "Dual Blades",
+    figure: "One cell in front. Both blades strike that one target. Two hits of 50.",
+    range: 1,
+    shape: "line",
+    twice: true,
+    magazine: null,
+    hitDamage: 50,
+    damageText: "50, twice",
+  },
+  {
+    id: "spear",
+    name: "Spear",
+    figure: "Two cells in a line. Every monster on them is hit. The near cell takes 60. The far cell takes 100.",
+    range: 2,
+    shape: "line",
+    twice: false,
+    magazine: null,
+    hitDamage: 80,
+    damageText: "60 near, 100 far",
+  },
+  ...(["fire", "earth", "poison", "water", "ice"] as const).map((element) => ({
+    id: `staff-${element}` as const,
+    name: `${element[0]!.toUpperCase()}${element.slice(1)} Staff`,
+    figure: `One target: the first monster on the line, up to 2 cells. The hit is 80 ${element}. The two cells in front of you become ${element === "earth" ? "oil" : element}.`,
+    range: 2,
+    shape: "line" as const,
+    twice: false,
+    magazine: null,
+    hitDamage: 80,
+    element,
+  })),
+  {
+    id: "pistol",
+    name: "Pistol",
+    figure: "One target: the first monster on the line, up to 3 cells. Magazine 3, then reload.",
+    range: 3,
+    shape: "line",
+    twice: false,
+    magazine: 3,
+    hitDamage: 100,
+  },
+  {
+    id: "rifle",
+    name: "Rifle",
+    figure: "Every monster on the line, up to 4 cells, takes 80. Magazine 3, then reload.",
+    range: 4,
+    shape: "line",
+    twice: false,
+    magazine: 3,
+    hitDamage: 80,
+  },
+  {
+    id: "shotgun",
+    name: "Shotgun",
+    figure: "The cell directly in front, and three cells across on the next step. The front cell takes 180. Each cell on the next step takes 80. Magazine 2, then reload.",
+    range: 2,
+    shape: "fan",
+    twice: false,
+    magazine: 2,
+    hitDamage: 100,
+    damageText: "180 in front, 80 beyond",
+  },
 ];
 
 export function weaponById(id: WeaponId): WeaponDef {
@@ -69,12 +153,9 @@ export const WEAPON_VERSIONS: readonly WeaponVersion[] = [
   { id: "spear-uncommon", base: "spear", rarity: "uncommon", bonus: { iceDmg: UNIT.iceDmg } },
   { id: "spear-rare", base: "spear", rarity: "rare", bonus: { maxHp: UNIT.maxHp, maxMp: UNIT.maxMp } },
   { id: "spear-epic", base: "spear", rarity: "epic", bonus: { weaponPower: UNIT.weaponPower, abilityPower: UNIT.abilityPower, phys: UNIT.phys } },
-  { id: "staff-uncommon", base: "staff", rarity: "uncommon", bonus: { fireRes: UNIT.fireRes } },
-  { id: "staff-rare", base: "staff", rarity: "rare", bonus: { earthRes: UNIT.earthRes, poisonRes: UNIT.poisonRes } },
-  { id: "staff-epic", base: "staff", rarity: "epic", bonus: { waterRes: UNIT.waterRes, iceRes: UNIT.iceRes, dodge: UNIT.dodge } },
-  { id: "gloves-uncommon", base: "gloves", rarity: "uncommon", bonus: { critChance: UNIT.critChance } },
-  { id: "gloves-rare", base: "gloves", rarity: "rare", bonus: { critShare: UNIT.critShare, physDmg: UNIT.physDmg } },
-  { id: "gloves-epic", base: "gloves", rarity: "epic", bonus: { fireDmg: UNIT.fireDmg, earthDmg: UNIT.earthDmg, poisonDmg: UNIT.poisonDmg } },
+  { id: "staff-uncommon", base: "staff-fire", rarity: "uncommon", bonus: { fireRes: UNIT.fireRes } },
+  { id: "staff-rare", base: "staff-fire", rarity: "rare", bonus: { earthRes: UNIT.earthRes, poisonRes: UNIT.poisonRes } },
+  { id: "staff-epic", base: "staff-fire", rarity: "epic", bonus: { waterRes: UNIT.waterRes, iceRes: UNIT.iceRes, dodge: UNIT.dodge } },
   { id: "pistol-uncommon", base: "pistol", rarity: "uncommon", bonus: { waterDmg: UNIT.waterDmg } },
   { id: "pistol-rare", base: "pistol", rarity: "rare", bonus: { maxHp: UNIT.maxHp, iceDmg: UNIT.iceDmg } },
   { id: "pistol-epic", base: "pistol", rarity: "epic", bonus: { maxMp: UNIT.maxMp, weaponPower: UNIT.weaponPower, abilityPower: UNIT.abilityPower } },

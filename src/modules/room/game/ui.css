@@ -579,9 +579,16 @@ button.dungeon-prompt {
   border: 0;
   background: none;
   color: inherit;
-  font: inherit;
+  font-family: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
   cursor: pointer;
   pointer-events: auto;
+}
+
+.dungeon-prompt[hidden] {
+  display: none;
 }
 
 .dungeon-portrait-stack {
@@ -741,6 +748,8 @@ button.dungeon-prompt {
 
 .dungeon-weapon-diagram {
   display: block;
+  align-self: center;
+  flex: none;
   border: calc(1 * var(--hud)) solid #3d3426;
   background: #100e0c;
 }
@@ -1558,10 +1567,16 @@ button.dungeon-prompt {
     font-size: 13px;
   }
 
+  .dungeon-tip.is-side,
+  .dungeon-tip.is-side * {
+    pointer-events: none !important;
+    touch-action: none;
+  }
+
   .dungeon-tip.is-side {
     max-width: min(230px, 46vw);
     max-height: 46vh;
-    overflow: auto;
+    overflow: hidden;
     font-size: 14px;
   }
 

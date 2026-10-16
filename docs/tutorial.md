@@ -59,7 +59,7 @@ R на полном магазине и на оружии без магазин�
 1. Хаб. Без изменений.
 2. `move`, `turn`. Без изменений.
 3. Девять ударов по порядку `WEAPONS`. Текст плашки — `weapon.name` и `weapon.figure`, плюс одна строка: «Left-click. A miss still spends the turn.» Зачёт: `attack` вернул `true`.
-4. `reload`, сразу после пистолета. «R reloads. The pistol is not full, so this spends the turn. A later empty pistol also reloads on left-click. The rifle and shotgun do not.» Зачёт: `reload` вернул `true`.
+4. `reload`, сразу после пистолета. «R reloads. The pistol is not full, so this spends the turn. An empty gun also reloads on left-click.» Зачёт: `reload` вернул `true`.
 5. `blink`, `wait`. Без изменений.
 6. `finish`. Текст про укус скелета оставить. Если исход уже `won` на входе в шаг — сразу `pick`.
 7. `pick`. Девять кнопок в порядке `WEAPONS`, подпись `weapon.name`. Спрайты — те же холсты, что инвентарь хаба уже рисует через `paintWeaponIcon`. Новые картинки не делать. Текст: «Pick the weapon you start with. The doors open when the enemy is dead. Tab opens the floor map. This lesson is one room.» Клик записывает id, ставит флаг урока и открывает хаб. Отдельная кнопка «To the hub» на этом шаге не нужна.

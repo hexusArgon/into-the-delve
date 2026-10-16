@@ -227,18 +227,14 @@ function attackPose(weapon: WeaponId, t: number): AttackPose {
     return { reach: 0.4 + poke * 0.72, along: 0.22, rot: -0.22, flash: poke };
   }
   if (weapon === "spear") return { reach: 0.48 + wave * 0.74, along: 0, rot: 0, flash: wave };
-  if (weapon === "staff") return { reach: 0.44 + wave * 0.5, along: 0, rot: -1.05 + wave * 1.45, flash: wave };
-  if (weapon === "gloves") {
-    const jab = t < 0.3 ? Math.sin((t / 0.3) * Math.PI * 0.5) : Math.max(0, Math.cos(((t - 0.3) / 0.7) * Math.PI * 0.5));
-    return { reach: 0.24 + jab * 0.5, along: 0, rot: 0, flash: jab };
-  }
+  if (weapon.startsWith("staff")) return { reach: 0.44 + wave * 0.5, along: 0, rot: -1.05 + wave * 1.45, flash: wave };
   const kick = t < 0.16 ? 0 : Math.sin(Math.min(1, (t - 0.16) / 0.22) * Math.PI);
   if (weapon === "rifle") return { reach: 0.74 - kick * 0.28, along: 0, rot: -kick * 0.42, flash: kick };
   if (weapon === "shotgun") return { reach: 0.58 - kick * 0.22, along: 0, rot: -kick * 0.5, flash: kick };
   return { reach: 0.5 - kick * 0.16, along: 0, rot: -kick * 0.28, flash: kick };
 }
 
-/** Патрон летит по линии удара. Shotgun — три дробины, по одной на каждый луч веера. */
+/** Патрон летит по линии удара. Дробовик — три дробины на два шага. */
 function drawFlyingRound(
   ctx: CanvasRenderingContext2D,
   box: Box,
@@ -255,7 +251,7 @@ function drawFlyingRound(
   const step = DIRS[facing];
   const side = facing === "up" || facing === "down" ? { x: 1, y: 0 } : { x: 0, y: 1 };
   const range = weaponById(weapon).range;
-  const lanes = weapon === "shotgun" ? [-1, 0, 1] : [0];
+  const lanes = [0];
   const hop = stepJump(pose, box.size);
   const ox = box.ox + (pose.x + 0.5) * box.size;
   const oy = box.oy + (pose.y + 0.5) * box.size - hop.lift;
@@ -320,10 +316,10 @@ function drawAttackFlash(ctx: CanvasRenderingContext2D, weapon: WeaponId, flash:
     ctx.moveTo(size * 0.32, 0);
     ctx.lineTo(size * (weapon === "rifle" ? 0.7 : 0.52), 0);
     ctx.stroke();
-  } else if (weapon === "spear" || weapon === "staff" || weapon === "gloves" || weapon === "dual") {
+  } else if (weapon === "spear" || weapon.startsWith("staff") || weapon === "dual") {
     ctx.beginPath();
     ctx.moveTo(size * 0.12, 0);
-    ctx.lineTo(size * (weapon === "gloves" ? 0.38 : 0.58), 0);
+    ctx.lineTo(size * 0.58, 0);
     ctx.stroke();
   } else {
     ctx.beginPath();
@@ -360,9 +356,8 @@ function drawWeapon(
     if (facing === "left") ctx.scale(-1, 1);
     if (facing === "up") ctx.rotate(-Math.PI / 2);
     if (facing === "down") ctx.rotate(Math.PI / 2);
-    if (weapon === "gloves") ctx.rotate(Math.PI / 2);
     ctx.rotate(rot);
-    const held = weapon === "pistol" ? 0.5 : weapon === "gloves" ? 0.45 : weapon === "dual" ? 0.82 : 1;
+    const held = weapon === "pistol" ? 0.5 : weapon === "dual" ? 0.82 : 1;
     const w = size * (pose ? 1.05 : 0.92) * held;
     const fit = w / Math.max(art.width, art.height);
     ctx.drawImage(art, (-art.width * fit) / 2, (-art.height * fit) / 2, art.width * fit, art.height * fit);
@@ -966,9 +961,9 @@ export class RoomRenderer {
     this.numbers = [];
   }
 
-  /** Плашка поражения появляется, когда кровь уже закрыла экран. */
+  /** Плашка поражения появляется, когда тело уже лежит. */
   lostReady(time = performance.now()): boolean {
-    return this.bloodAmount(time) >= 0.75;
+    return this.heroFall(time) >= 1;
   }
 
   moving(): boolean {

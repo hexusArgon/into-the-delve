@@ -62,7 +62,11 @@ export function bindTip(
     }
   };
   if (press) {
-    el.addEventListener("click", () => show(el, null));
+    el.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      show(el, null);
+    });
     return;
   }
   el.addEventListener("pointerenter", (event) => show(null, event));
@@ -95,10 +99,34 @@ export function tipBox(): HTMLElement {
 
 function placeTip(clientX: number, clientY: number): void {
   const node = tipBox();
-  const width = node.offsetWidth || 320;
-  const height = node.offsetHeight || 80;
-  const x = Math.min(Math.max(8, clientX + 14), window.innerWidth - width - 8);
-  const y = Math.min(Math.max(8, clientY + 16), window.innerHeight - height - 8);
+  const gap = 18;
+  const margin = 8;
+  const width = node.offsetWidth || 280;
+  const height = node.offsetHeight || 120;
+  const spots = [
+    { x: clientX + gap, y: clientY + gap },
+    { x: clientX - gap - width, y: clientY + gap },
+    { x: clientX + gap, y: clientY - gap - height },
+    { x: clientX - gap - width, y: clientY - gap - height },
+  ];
+  const onScreen = (spot: { x: number; y: number }): boolean =>
+    spot.x >= margin &&
+    spot.y >= margin &&
+    spot.x + width <= window.innerWidth - margin &&
+    spot.y + height <= window.innerHeight - margin;
+  const spot = spots.find(onScreen);
+  let x = spot?.x ?? clientX + gap;
+  let y = spot?.y ?? clientY + gap;
+  const clamp = (value: number, size: number, limit: number): number =>
+    Math.min(Math.max(margin, value), Math.max(margin, limit - size - margin));
+  x = clamp(x, width, window.innerWidth);
+  y = clamp(y, height, window.innerHeight);
+  const covers = clientX >= x && clientX <= x + width && clientY >= y && clientY <= y + height;
+  if (covers) {
+    const left = clientX - gap - width;
+    x = left >= margin ? left : clientX + gap;
+    x = clamp(x, width, window.innerWidth);
+  }
   node.style.left = `${x}px`;
   node.style.top = `${y}px`;
 }
@@ -145,7 +173,7 @@ export function bindCardTip(el: HTMLElement, render: () => HTMLElement, press = 
     window.clearTimeout(hideTimer);
     const node = tipBox();
     node.replaceChildren(render());
-    node.style.pointerEvents = press ? "none" : "auto";
+    node.style.pointerEvents = "none";
     node.style.display = "block";
     if (press && anchor) placeTouchTip(anchor);
     else if (event) {
@@ -155,10 +183,18 @@ export function bindCardTip(el: HTMLElement, render: () => HTMLElement, press = 
     }
   };
   if (press) {
-    el.addEventListener("click", () => show(el, null));
+    el.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      show(el, null);
+    });
     return;
   }
   el.addEventListener("pointerenter", (event) => show(null, event));
+  el.addEventListener("pointermove", (event) => {
+    if (tipBox().style.display === "none") return;
+    placeTip(event.clientX, event.clientY);
+  });
   el.addEventListener("pointerleave", () => scheduleHide());
 }
 

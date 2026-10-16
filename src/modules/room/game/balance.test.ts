@@ -395,4 +395,26 @@ attack(roomBarrel, () => 0);
 assert.equal(roomBarrel.barrels.length, 0);
 assert.equal(roomBarrel.hero.hp, HERO_HP);
 
+const spires = room("14");
+spires.hero.x = 4;
+spires.hero.y = 6;
+spires.monster.x = 9;
+spires.monster.y = 6;
+const bystander = monsterFighter(monsterById("14"), { x: 5, y: 6, facing: "left" }, true);
+bystander.cooldowns.spires = 99;
+spires.monsters.push(bystander);
+spires.monster.windup = {
+  kind: "spires",
+  turns: 1,
+  cells: [{ x: 4, y: 6 }, { x: 5, y: 6 }],
+  center: { x: 4, y: 6 },
+  target: null,
+};
+wait(spires, () => 0);
+assert.equal(spires.hero.hp, HERO_HP - KIT.acolyte.damage);
+assert.equal(bystander.hp, bystander.maxHp - KIT.acolyte.damage);
+assert.equal(spires.hero.root, KIT.acolyte.root);
+assert.equal(bystander.root, KIT.acolyte.root - 1);
+assert.equal(spires.monster.hp, spires.monster.maxHp);
+
 console.log("balance ok");

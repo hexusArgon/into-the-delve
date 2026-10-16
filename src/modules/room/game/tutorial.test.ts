@@ -33,8 +33,9 @@ assert.equal(lessonAdvance("finish", "attack"), "finish");
 assert.equal(lessonAdvance("finish", "won"), "pick");
 assert.equal(lessonAdvance("pick", "won"), "pick");
 
+const taught = WEAPONS.filter((weapon) => !(weapon.id.startsWith("staff-") && weapon.id !== "staff-fire"));
 let step: LessonStep = "attack";
-for (const weapon of WEAPONS) {
+for (const weapon of taught) {
   assert.equal(lessonWeapon(step), weapon.id);
   assert.equal(isSwingStep(step), true);
   assert.equal(lessonText(step).startsWith(`${weapon.name}. ${weapon.figure}`), true);
@@ -50,7 +51,7 @@ assert.equal(step, "blink");
 
 assert.equal(lessonText("move"), "Hold WASD or the arrows. Let go to stop. After a step, the monster moves.");
 assert.equal(lessonText("turn"), "Shift with WASD or the arrows. Turning is not a turn, and the monster does not move.");
-assert.equal(lessonText("reload"), "R reloads. The pistol is not full, so this spends the turn. A later empty pistol also reloads on left-click. The rifle and shotgun do not.");
+assert.equal(lessonText("reload"), "R reloads. The pistol is not full, so this spends the turn. An empty gun also reloads on left-click.");
 assert.equal(lessonText("blink"), "Right-click to pick a cell. Only legal cells are lit. Left-click one. Right-click again cancels and does not spend a charge.");
 assert.equal(lessonText("wait"), "X skips your action. The world still moves.");
 assert.equal(lessonText("finish"), "A skeleton's bite is not drawn ahead of time. It hits the orthogonal neighbor, not a diagonal. Finish it.");
@@ -58,14 +59,14 @@ assert.equal(lessonText("pick"), "Pick a weapon to try it. The doors open when t
 assert.equal(lessonText("finish", true), lessonText("finish"));
 assert.equal(lessonText("move", true), "Tap an arrow. The hero steps one tile that way. After a step, the monster moves.");
 assert.equal(lessonText("turn", true), "Tap Turn. The hero turns 90 degrees clockwise. Turning is not a turn, and the monster does not move.");
-assert.equal(lessonText("reload", true), "The pistol is not full. Tap the weapon to reload. This spends the turn. An empty pistol reloads when you confirm an attack. The rifle and shotgun do not.");
+assert.equal(lessonText("reload", true), "The pistol is not full. Tap the weapon to reload. This spends the turn. An empty gun reloads when you confirm an attack.");
 assert.equal(lessonText("blink", true), "Tap Blink, then tap a lit tile. Tap Blink again to cancel. A cancel does not spend a charge.");
 assert.equal(lessonText("wait", true), "Tap Wait. The world still moves.");
 assert.equal(lessonText("pick", true), "Pick a weapon to try it. The doors open when the enemy is dead. Tap the minimap to open the floor map, and × to close it. This lesson is one room.");
 assert.equal(hubCopy(false), HUB_COPY);
 assert.equal(hubCopy(true), "Tap the path on the right. That starts a run.");
-for (const weapon of WEAPONS) {
-  const phoneStep = weapon.id === "sword" ? "attack" : weapon.id;
+for (const weapon of taught) {
+  const phoneStep = weapon.id === "sword" ? "attack" : weapon.id === "staff-fire" ? "staff" : weapon.id;
   assert.equal(
     lessonText(phoneStep as LessonStep, true),
     `${weapon.name}. ${weapon.figure} Tap the weapon, then tap a tile. Tap the weapon again to cancel. A miss still spends the turn.`,

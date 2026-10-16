@@ -36,13 +36,31 @@ import { installDungeonMusic } from "./music.ts";
 import { openSettings } from "./settings-view.ts";
 import { HERO_CRIT_CHANCE, HERO_HP } from "./rules.ts";
 import { coarsePointer, hubCopy, tutorialMark, tutorialPending, tutorialWeapon, type LessonStep } from "./tutorial.ts";
-import { loadSprites } from "./sprites.ts";
+import { loadSprites, type Sprites } from "./sprites.ts";
+import { loadingVeil } from "./loading-view.ts";
 import { freshShelf, shelfBar, shelfMatch, shelfOrder, type ShelfBar, type ShelfKind } from "./shelf-bar.ts";
 import { bindAbilityTip, bindCardTip, bindTip, hideTip } from "./tip.ts";
 import menuUrl from "../../../../assets/menu-depart.jpg";
 import "./ui.css";
 
-const spritesReady = loadSprites();
+let spritesReady: Promise<Sprites> | null = null;
+let readySprites: Sprites | null = null;
+
+function ensureSprites(onProgress?: (ratio: number) => void): Promise<Sprites> {
+  if (!spritesReady) {
+    spritesReady = loadSprites(onProgress).then((sprites) => {
+      readySprites = sprites;
+      return sprites;
+    });
+  } else if (onProgress) void spritesReady.then(() => onProgress(1));
+  return spritesReady;
+}
+
+function decodeMenu(): Promise<void> {
+  const picture = new Image();
+  picture.src = menuUrl;
+  return picture.decode().catch(() => undefined);
+}
 
 function wornAbilities(loadout: Loadout): (RunAbility | null)[] {
   return loadout.wornAbilities.map((id) => {
@@ -144,12 +162,12 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
           else paintAdventure(host, bestAdventure(), (picked) => showRoom(picked), showMenu);
         },
         onInventory: () => {
-          void spritesReady.then((sprites) => {
+          void ensureSprites().then((sprites) => {
             if (alive) paintInventory(host, kit, loadout, shelf, hone, showMenu, sprites.gold, sprites.weapons, sprites.items, sprites.abilities);
           });
         },
         onAuction: () => {
-          void spritesReady.then((sprites) => {
+          void ensureSprites().then((sprites) => {
             if (alive) paintAuction(host, kit, loadout, house, showMenu, sprites);
           });
         },
@@ -194,7 +212,22 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
     if (wantRun) room.setRunning(true);
   };
 
-  showMenu();
+  const boot = loadingVeil();
+  host.replaceChildren(boot.root);
+  host.className = "dungeon";
+  host.style.display = "flex";
+  host.style.flexDirection = "column";
+  host.style.height = "100%";
+  host.style.position = "relative";
+  host.style.overflow = "hidden";
+  void Promise.all([
+    ensureSprites((ratio) => boot.setRatio(ratio * 0.9)),
+    decodeMenu(),
+  ]).then(() => {
+    if (!alive) return;
+    boot.setRatio(1);
+    showMenu();
+  });
   installDungeonMusic();
 
   return {
@@ -1041,7 +1074,7 @@ function weaponCard(weapon: WeaponDef, catalogId: string, level: number): HTMLEl
   const stats = document.createElement("div");
   stats.className = "dungeon-ability-stats";
   stats.append(
-    weaponChip("Damage", String(weapon.hitDamage), "#e7c98a"),
+    weaponChip("Damage", weapon.damageText ?? String(weapon.hitDamage), "#e7c98a"),
     weaponChip("Range", String(weapon.range), "#f4efe4"),
     weaponChip("Magazine", weapon.magazine === null ? "None" : String(weapon.magazine), "#d4bc82"),
   );
@@ -1056,11 +1089,11 @@ function weaponCard(weapon: WeaponDef, catalogId: string, level: number): HTMLEl
     }
   }
   const diagram = document.createElement("canvas");
-  const cell = 14;
-  const gap = 3;
-  diagram.width = 3 * cell + 2 * gap;
-  diagram.height = 6 * cell + 5 * gap;
+  diagram.width = Math.ceil(3 * STRIKE_CELL + 2 * STRIKE_GAP);
+  diagram.height = Math.ceil(6 * STRIKE_CELL + 5 * STRIKE_GAP);
   diagram.className = "dungeon-weapon-diagram";
+  diagram.style.width = `${diagram.width}px`;
+  diagram.style.height = `${diagram.height}px`;
   paintStrike(diagram, weapon);
   const rules = document.createElement("div");
   rules.className = "dungeon-ability-rules";
@@ -1088,11 +1121,14 @@ function weaponChip(label: string, value: string, color: string): HTMLElement {
 }
 
 /** Схема удара: герой смотрит вверх, подсвечены клетки попадания. */
+const STRIKE_CELL = 14;
+const STRIKE_GAP = 3;
+
 function paintStrike(canvas: HTMLCanvasElement, weapon: WeaponDef): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  const cell = 14;
-  const gap = 3;
+  const cell = STRIKE_CELL;
+  const gap = STRIKE_GAP;
   const hero = { x: 1, y: 4 };
   const hit = new Set<string>();
   if (weapon.shape === "around") {
@@ -1102,6 +1138,9 @@ function paintStrike(canvas: HTMLCanvasElement, weapon: WeaponDef): void {
         hit.add(`${hero.x + dx},${hero.y + dy}`);
       }
     }
+  } else if (weapon.id === "shotgun") {
+    hit.add(`${hero.x},${hero.y - 1}`);
+    for (const offset of [-1, 0, 1]) hit.add(`${hero.x + offset},${hero.y - 2}`);
   } else if (weapon.shape === "fan") {
     for (const offset of [-1, 0, 1]) {
       for (let i = 1; i <= weapon.range; i += 1) hit.add(`${hero.x + offset},${hero.y - i}`);
@@ -1246,10 +1285,12 @@ function heroCard(bonus: GearBonus): HTMLElement {
   sheet.append(...groups);
   row.append(portrait, sheet);
   box.append(row);
-  void loadSprites().then((sprites) => {
+  const drawFace = (sprites: Sprites): void => {
     const ctx = portrait.getContext("2d");
     ctx?.drawImage(sprites.hero, 8, 4, 80, 88);
-  });
+  };
+  if (readySprites) drawFace(readySprites);
+  else void ensureSprites().then(drawFace);
   return box;
 }
 
