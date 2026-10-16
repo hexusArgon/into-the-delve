@@ -200,7 +200,7 @@ export function placeBid(house: House, lotId: string, bidderId: string, amount: 
   if (lot.bid !== null && amount < lot.bid + 1) return fail("The bid must beat the current one.");
   if (lot.price !== null && amount >= lot.price) return fail("That amount already matches the buyout.");
   const escrow = lot.bidderId === bidderId ? (lot.bid ?? 0) : 0;
-  if (purse + escrow < amount) return fail("Not enough gold.");
+  if (purse + escrow < amount) return fail("Not enough tokens.");
   const gold: GoldMove[] = [];
   if (lot.bidderId && lot.bid !== null && lot.bidderId !== bidderId) {
     gold.push({ id: lot.bidderId, delta: lot.bid });
@@ -219,7 +219,7 @@ export function buyout(house: House, lotId: string, buyerId: string, purse: numb
   if (lot.goods.kind !== "unique") return fail("A stack is bought by quantity.");
   if (lot.price === null) return fail("There is no buyout.");
   if (buyerId === lot.sellerId) return fail("You cannot buy out your own lot.");
-  if (purse < lot.price) return fail("Not enough gold.");
+  if (purse < lot.price) return fail("Not enough tokens.");
   const gold: GoldMove[] = [
     { id: buyerId, delta: -lot.price },
     { id: lot.sellerId, delta: lot.price },
@@ -236,7 +236,7 @@ export function buyStack(house: House, lotId: string, buyerId: string, count: nu
   if (buyerId === lot.sellerId) return fail("You cannot buy your own lot.");
   if (!Number.isInteger(count) || count < 1 || count > lot.goods.count) return fail("That quantity is not available.");
   const cost = count * lot.price;
-  if (purse < cost) return fail("Not enough gold.");
+  if (purse < cost) return fail("Not enough tokens.");
   const goods: StackGoods = { ...lot.goods, count };
   lot.goods.count -= count;
   if (lot.goods.count === 0) dropLot(house, lot.id);

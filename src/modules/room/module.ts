@@ -9,7 +9,7 @@ export const roomModule = defineModule({
     ctx.registerScene({
       surface: "fullbleed-canvas",
       mount(scene) {
-        game = mountGame(scene.host);
+        game = mountGame(scene.host, ctx.client);
       },
       activate() {
         game?.setRunning(true);

@@ -28,7 +28,8 @@ import { paintAuction, type AuctionKit } from "./auction-view.ts";
 import { paintGuild } from "./guild-view.ts";
 import { paintAdventure } from "./adventure-view.ts";
 import { bestAdventure, recordAdventure } from "./adventure.ts";
-import { loadBoard, openCloud } from "./cloud.ts";
+import type { IDosGamesClient } from "@idosgames/core";
+import { bindAccount, loadBoard, openCloud, refreshTokenBalance, tokenBalance } from "./cloud.ts";
 import { grantPersonalGear, keepPersonalGear } from "./personal-gear.ts";
 import { storageLayout, storageScroll } from "./storage.ts";
 import { RoomController } from "./controller.ts";
@@ -83,12 +84,13 @@ function wornAbilities(loadout: Loadout): (RunAbility | null)[] {
 const SLOTS = 4;
 
 /** Классическое меню: забег, инвентарь, аукцион. Weapons и слоты — окно инвентаря. */
-export function mountGame(host: HTMLElement): { setRunning: (running: boolean) => void; destroy: () => void } {
+export function mountGame(host: HTMLElement, account?: IDosGamesClient): { setRunning: (running: boolean) => void; destroy: () => void } {
+  if (account) bindAccount(account);
   let room: RoomController | null = null;
   let wantRun = false;
   let alive = true;
   const startWeapon = tutorialWeapon();
-  const kit: AuctionKit = { weapon: startWeapon, gold: 0, owned: [startWeapon] };
+  const kit: AuctionKit = { weapon: startWeapon, gold: 0, tokens: 0, tokensKnown: false, owned: [startWeapon] };
   const loadout = storedLoadout(startWeapon);
   grantBaseWeapons(loadout);
   grantHeroAbilities(loadout);
@@ -104,6 +106,13 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
     if (coarsePointer()) fillEmptyWear(loadout);
     syncKit(kit, loadout);
     saveLoadout(loadout);
+    if (!kit.tokensKnown) {
+      const held = tokenBalance();
+      if (held !== null) {
+        kit.tokens = held;
+        kit.tokensKnown = true;
+      }
+    }
   });
   const shelf = freshShelf();
   const hone = { target: null as string | null, copy: null as string | null, made: null as string | null, result: "" };
@@ -167,7 +176,15 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
           });
         },
         onAuction: () => {
-          void ensureSprites().then((sprites) => {
+          void ensureSprites().then(async (sprites) => {
+            if (!alive) return;
+            if (!kit.tokensKnown) {
+              const held = await refreshTokenBalance();
+              if (held !== null) {
+                kit.tokens = held;
+                kit.tokensKnown = true;
+              }
+            }
             if (alive) paintAuction(host, kit, loadout, house, showMenu, sprites);
           });
         },

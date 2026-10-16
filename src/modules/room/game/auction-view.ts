@@ -1,4 +1,5 @@
 import { weaponBaseId, weaponName, weaponOf, weaponVersion, WEAPONS, type WeaponId } from "../data/weapons.ts";
+import { tokenBalance } from "./cloud.ts";
 import { describeStats, itemById } from "../data/items.ts";
 import { addInstance, abilityAmount, abilitySplash, instanceById, saveLoadout, scaled, unworn, type Loadout } from "../data/instances.ts";
 import { abilityView, heroAbilityById } from "../data/hero-abilities.ts";
@@ -26,7 +27,27 @@ const ME = "you";
 export interface AuctionKit {
   weapon: WeaponId;
   gold: number;
+  /** Баланс токена Into the Delve. Им оплачиваются ставка и выкуп. */
+  tokens: number;
+  /** Баланс уже прочитан со счёта. Повторный вход в аукцион не затирает трату этой сессии. */
+  tokensKnown: boolean;
   owned: string[];
+}
+
+const TOKEN_ICON = "https://cloud.idosgames.com/drive/img/H406PWM7/hard-token.png";
+
+function formatToken(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  const rounded = Math.round(value * 1_000_000) / 1_000_000;
+  return String(rounded);
+}
+
+function readTokens(kit: AuctionKit): void {
+  if (kit.tokensKnown) return;
+  const held = tokenBalance();
+  if (held === null) return;
+  kit.tokens = held;
+  kit.tokensKnown = true;
 }
 
 type Tab = "browse" | "sell" | "bids" | "mine";
@@ -66,6 +87,7 @@ export function paintAuction(
   };
 
   const paint = (): void => {
+    readTokens(kit);
     hideTip();
     host.replaceChildren();
     host.className = "dungeon";
@@ -85,13 +107,13 @@ export function paintAuction(
     title.style.margin = "0";
     const purse = document.createElement("div");
     purse.className = "dungeon-purse";
-    const coin = document.createElement("canvas");
-    coin.width = 28;
-    coin.height = 28;
+    const coin = document.createElement("img");
     coin.className = "dungeon-purse-coin";
-    drawArt(coin, art.gold);
+    coin.src = TOKEN_ICON;
+    coin.alt = "Into the Delve";
     const gold = document.createElement("b");
-    gold.textContent = String(kit.gold);
+    gold.textContent = formatToken(kit.tokens);
+    purse.title = "Into the Delve";
     purse.append(coin, gold);
     const tabs = document.createElement("div");
     tabs.className = "dungeon-auction-tabs";
@@ -183,7 +205,7 @@ export function paintAuction(
         box.append(
           count,
           button("Buy", () => {
-            const step = buyStack(house, lot.id, ME, Number(count.value), kit.gold);
+            const step = buyStack(house, lot.id, ME, Number(count.value), kit.tokens);
             note = apply(kit, loadout, step) ?? "Bought.";
             redraw();
           }, true),
@@ -200,7 +222,7 @@ export function paintAuction(
         box.append(
           amount,
           button("Place bid", () => {
-            const step = placeBid(house, lot.id, ME, Number(amount.value), kit.gold);
+            const step = placeBid(house, lot.id, ME, Number(amount.value), kit.tokens);
             note = apply(kit, loadout, step) ?? "Bid placed.";
             redraw();
           }, true),
@@ -212,7 +234,7 @@ export function paintAuction(
     if (lot.sellerId !== ME && lot.price !== null) {
       box.append(
         button("Buy out", () => {
-          const step = buyout(house, lot.id, ME, kit.gold);
+          const step = buyout(house, lot.id, ME, kit.tokens);
           note = apply(kit, loadout, step) ?? "Bought out.";
           selectedId = null;
           redraw();
@@ -582,7 +604,10 @@ function sellerName(id: string): string {
 function apply(kit: AuctionKit, loadout: Loadout, step: AuctionStep): string | null {
   if (step.error) return step.error;
   for (const move of step.gold) {
-    if (move.id === ME) kit.gold += move.delta;
+    if (move.id === ME) {
+      kit.tokens += move.delta;
+      kit.tokensKnown = true;
+    }
   }
   for (const item of step.items) {
     if (item.to !== ME) continue;

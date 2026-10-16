@@ -1249,6 +1249,7 @@ button.dungeon-prompt {
 .dungeon-purse-coin {
   width: calc(28 * var(--hud));
   height: calc(28 * var(--hud));
+  object-fit: contain;
 }
 
 .dungeon-auction-note {

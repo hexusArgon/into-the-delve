@@ -15,6 +15,7 @@ export interface GuildRow {
 }
 
 let client: IDosGamesClient | null = null;
+let account: IDosGamesClient | null = null;
 let userID = "";
 let heldLoadout: Loadout | null = null;
 let heldBest: number | null = null;
@@ -94,6 +95,35 @@ async function connect(loadout: Loadout, weapon: WeaponId): Promise<void> {
   });
   armed = true;
   await push();
+}
+
+const TOKEN_ID = "Main";
+
+/** Сессия входа (кошелёк или гость). Аукцион читает токен с неё, не с отдельного входа. */
+export function bindAccount(next: IDosGamesClient): void {
+  account = next;
+}
+
+function session(): IDosGamesClient | null {
+  return account ?? client;
+}
+
+/** Баланс токена Into the Delve. null — сессии ещё нет, аукцион не подменяет его нулём. */
+export function tokenBalance(): number | null {
+  const current = session();
+  if (!current) return null;
+  const raw = current.data.user.getCryptoCurrencyAmount(TOKEN_ID);
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : 0;
+}
+
+/** Подтянуть баланс токена со счёта, если игрок только что внёс или вывел. */
+export async function refreshTokenBalance(): Promise<number | null> {
+  const current = session();
+  if (!current) return null;
+  const state = await current.blockchain.getUserState();
+  if (isOk(state)) current.data.user.applyBlockchainState(state.data.State ?? null, state.data.CryptoBalances ?? null);
+  return tokenBalance();
 }
 
 /** Вход с устройства и сверка локального мешка с сервером. Без тайтла остаётся браузер. */
