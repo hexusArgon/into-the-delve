@@ -1,6 +1,6 @@
-import { itemById, EQUIPMENT_SLOTS, type GearBonus, EMPTY_GEAR } from "./items.ts";
+import { itemById, EQUIPMENT_SLOTS, type GearBonus, EMPTY_GEAR, addStats, grantBonus } from "./items.ts";
 import { HERO_ABILITIES, heroAbilityById } from "./hero-abilities.ts";
-import { WEAPONS, weaponById, type WeaponId } from "./weapons.ts";
+import { WEAPONS, weaponOf, weaponVersion, type WeaponId } from "./weapons.ts";
 import { armorFactor } from "../game/rules.ts";
 
 /** Успех одной попытки. Провал — остаток. Накопления нет. */
@@ -31,10 +31,10 @@ export function levelFactor(level: number): number {
   return LEVEL_STEP ** level;
 }
 
-/** Положительный бонус каталога. Ноль остаётся нулём. */
+/** Положительный бонус каталога, не точнее сотых. Ноль остаётся нулём. */
 export function scaled(base: number | undefined, level: number): number {
   if (base === undefined || base <= 0) return 0;
-  return base * levelFactor(level);
+  return grantBonus(base * levelFactor(level));
 }
 
 /** Шанс из очков: 1 − множитель брони Warcraft 3. Процент на 1,2 не умножается. */
@@ -133,7 +133,7 @@ export function freshLoadout(weapon: WeaponId = "sword"): Loadout {
 const LOADOUT_KEY = "dungeon-loadout";
 
 function catalogOk(kind: InstanceKind, catalogId: string): boolean {
-  if (kind === "weapon") return WEAPONS.some((weapon) => weapon.id === catalogId);
+  if (kind === "weapon") return WEAPONS.some((weapon) => weapon.id === catalogId) || weaponVersion(catalogId) !== undefined;
   if (kind === "gear") return itemById(catalogId) !== undefined;
   return heroAbilityById(catalogId) !== undefined;
 }
@@ -226,28 +226,25 @@ export function wornGearBonus(loadout: Loadout): GearBonus {
     const inst = instanceById(loadout, id);
     const row = inst?.kind === "gear" ? itemById(inst.catalogId) : undefined;
     if (!inst || !row) continue;
-    bonus.maxHp += scaled(row.maxHp, inst.level);
-    bonus.weaponPower += scaled(row.weaponPower, inst.level);
-    bonus.phys += scaled(row.phys, inst.level);
-    bonus.elem += scaled(row.elem, inst.level);
-    bonus.dodge += scaled(row.dodge, inst.level);
-    bonus.critChance += scaled(row.critChance, inst.level);
-    bonus.critShare += scaled(row.critShare, inst.level);
+    addStats(bonus, row, (base) => scaled(base, inst.level));
   }
+  const weapon = instanceById(loadout, loadout.weapon);
+  const version = weapon?.kind === "weapon" ? weaponVersion(weapon.catalogId) : undefined;
+  if (weapon && version) addStats(bonus, version.bonus, (base) => scaled(base, weapon.level));
   return bonus;
 }
 
-/** Damage попадания надетого оружия. Пустые руки — 0, запасной меч не выдаётся. */
+/** Damage попадания надетого оружия. Заточка множит атрибуты, не урон попадания. */
 export function equippedWeaponHit(loadout: Loadout): number {
   const inst = instanceById(loadout, loadout.weapon);
   if (!inst || inst.kind !== "weapon") return 0;
-  return scaled(weaponById(inst.catalogId as WeaponId).hitDamage, inst.level);
+  return weaponOf(inst.catalogId).hitDamage;
 }
 
 export function equippedWeaponId(loadout: Loadout): WeaponId | null {
   const inst = instanceById(loadout, loadout.weapon);
   if (!inst || inst.kind !== "weapon") return null;
-  return inst.catalogId as WeaponId;
+  return weaponOf(inst.catalogId).id;
 }
 
 /** Пустые слоты способностей и снаряжения заполняются из мешка. Занятый слот не меняется. */
@@ -263,6 +260,15 @@ export function fillEmptyWear(loadout: Loadout): void {
     const index = loadout.worn.indexOf(null);
     if (index < 0) break;
     placeInstance(loadout, item.id, { kind: "gear", index });
+  }
+}
+
+/** По экземпляру каждого обычного оружия. Надетое не меняется. */
+export function grantBaseWeapons(loadout: Loadout): void {
+  for (const weapon of WEAPONS) {
+    if (loadout.items.some((item) => item.kind === "weapon" && item.catalogId === weapon.id)) continue;
+    const inst = addInstance(loadout, "weapon", weapon.id);
+    if (!loadout.weapon) loadout.weapon = inst.id;
   }
 }
 

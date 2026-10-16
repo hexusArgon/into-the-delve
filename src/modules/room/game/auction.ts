@@ -1,4 +1,4 @@
-import { itemById } from "../data/items.ts";
+import { describeStats, itemById } from "../data/items.ts";
 import { MONSTER_GOLD, RARE_GOLD } from "../data/monsters.ts";
 import { weaponById } from "../data/weapons.ts";
 
@@ -82,12 +82,12 @@ export function createHouse(): House {
 /** Чужие лоты, чтобы ставку и покупку было на что нажать. Хаб свои вещи не продаёт. */
 export function stockHouse(house: House, now: number): void {
   const belt = itemById("belt");
-  const fang = itemById("fang");
+  const vial = itemById("vial");
   const axe = weaponById("axe");
-  if (!belt || !fang) return;
+  if (!belt || !vial) return;
   listUnique(house, {
     sellerId: TRADER,
-    goods: { kind: "unique", key: belt.id, name: belt.name, text: belt.name, level: 0 },
+    goods: { kind: "unique", key: belt.id, name: belt.name, text: describeStats(belt) || belt.name, level: 0 },
     buyoutOnly: false,
     minBid: MONSTER_GOLD,
     buyout: RARE_GOLD,
@@ -105,7 +105,7 @@ export function stockHouse(house: House, now: number): void {
   });
   listStack(house, {
     sellerId: TRADER,
-    goods: { kind: "stack", key: fang.id, name: fang.name, text: fang.name },
+    goods: { kind: "stack", key: vial.id, name: vial.name, text: describeStats(vial) || vial.name },
     count: 3,
     unitPrice: MONSTER_GOLD,
   });

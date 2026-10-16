@@ -90,9 +90,9 @@ export const KIT = {
   chest: { reach: 4, delay: 1, radius: 1, stun: 3 },
   gargoyle: { stones: 4, delay: 1, stone: 35, stonePush: 1, landDelay: 1, radius: 1, land: 90, landPush: 1, rest: 5 },
   drowned: { rings: 4, geyser: 40, geyserCooldown: 8, throwDelay: 1, radius: 1, throwDamage: 30, throwStun: 1, throwCooldown: 2 },
-  whisper: { charmCooldown: 2, radius: 1, shards: 10, rings: 4, hail: 15, hailCooldown: 8, beamRange: 10, beamDelay: 1, beam: 60 },
-  /** Бочка: КД 3, взрыв 80. Обмен: КД 4, задержка 1. Резист огня и яда 50% после брони. */
-  automaton: { swapCooldown: 4, swapDelay: 1, kegCooldown: 3, blast: 80, resist: 0.5 },
+  whisper: { charmCooldown: 2, radius: 1, shards: 10, rings: 4, hail: 15, hailCooldown: 8, beamRange: 10, beamDelay: 1, beamCooldown: 2, beam: 60 },
+  /** Бочка: КД 3, взрыв 80, после взрыва лужа своей стихии. Обмен: КД 4, задержка 1, 10 урона тому, с кем меняется. Резист огня и яда 50% после брони. */
+  automaton: { swapCooldown: 4, swapDelay: 1, swapDamage: 10, kegCooldown: 3, blast: 80, resist: 0.5 },
 } as const;
 
 const BASE_HP = 400;

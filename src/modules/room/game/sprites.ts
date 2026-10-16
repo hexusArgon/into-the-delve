@@ -133,11 +133,16 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   const src = assetOnPage(url);
   return new Promise((resolve, reject) => {
     const image = new Image();
-    image.onload = () => resolve(image);
+    image.onload = () => {
+      spriteProgress?.();
+      resolve(image);
+    };
     image.onerror = () => reject(new Error(`sprite ${src}`));
     image.src = src;
   });
 }
+
+let spriteProgress: (() => void) | null = null;
 
 /** Убирает фон по цвету угла картинки, края смягчает и снимает с них розовый отлив. */
 function keyed(source: HTMLImageElement): HTMLCanvasElement {
@@ -199,8 +204,23 @@ function trimmed(source: HTMLCanvasElement): HTMLCanvasElement {
   return out;
 }
 
-export async function loadSprites(): Promise<Sprites> {
-  const [core, monsters, weapons, props, status, kegs] = await Promise.all([
+export async function loadSprites(onProgress?: (ratio: number) => void): Promise<Sprites> {
+  const total =
+    20 +
+    Object.keys(monsterFiles).length +
+    Object.keys(weaponFiles).length +
+    Object.keys(propFiles).length +
+    Object.keys(statusFiles).length +
+    Object.keys(kegFiles).length +
+    Object.keys(itemFiles).length +
+    Object.keys(abilityFiles).length;
+  let done = 0;
+  spriteProgress = () => {
+    done += 1;
+    onProgress?.(Math.min(1, done / total));
+  };
+  try {
+    const [core, monsters, weapons, props, status, kegs] = await Promise.all([
     Promise.all(
       [
         heroUrl,
@@ -261,10 +281,14 @@ export async function loadSprites(): Promise<Sprites> {
     abilities: {},
     status,
   };
-  // Иконки инвентаря не держат первый кадр комнаты: их очередь на том же хосте оставляла урок чёрным.
-  void loadItemIcons().then((items) => Object.assign(sprites.items, items));
-  void loadAbilityIcons().then((abilities) => Object.assign(sprites.abilities, abilities));
-  return sprites;
+  const [items, abilities] = await Promise.all([loadItemIcons(), loadAbilityIcons()]);
+    sprites.items = items;
+    sprites.abilities = abilities;
+    onProgress?.(1);
+    return sprites;
+  } finally {
+    spriteProgress = null;
+  }
 }
 
 async function loadStatusIcons(): Promise<Record<string, HTMLCanvasElement>> {

@@ -118,14 +118,25 @@ export function minimapPanel(map: MapView): { width: number; height: number } | 
   };
 }
 
+function backingScale(canvas: HTMLCanvasElement): number {
+  const css = canvas.clientWidth;
+  if (css <= 0) return 1;
+  const ratio = canvas.width / css;
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+}
+
 function minimapScale(ctx: CanvasRenderingContext2D): number {
-  return hudScale(ctx.canvas);
+  return canvasScale(ctx.canvas);
 }
 
 export function hudScale(node: Element | null): number {
   const host = node?.closest(".dungeon") ?? node;
   const parsed = host ? Number.parseFloat(getComputedStyle(host).getPropertyValue("--hud")) : Number.NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+export function canvasScale(canvas: HTMLCanvasElement): number {
+  return hudScale(canvas) * backingScale(canvas);
 }
 
 /** Прямоугольник миникарты в координатах холста. Тот же расчёт, что у рисунка. */

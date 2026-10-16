@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import type { RoomPattern } from "../data/rooms.ts";
-import { EMPTY_GEAR, GEAR, UNIT, critFactor, gearBonus } from "../data/items.ts";
+import { EMPTY_GEAR, GEAR, UNIT, bonusPlaces, critFactor, gearBonus, itemById, statKeysOf, type GearItem } from "../data/items.ts";
 import { pointChance } from "../data/instances.ts";
 import { ELEMENTS, KIT, MONSTER_GOLD, RARE_GOLD, MONSTERS, SPORE, monsterById } from "../data/monsters.ts";
 import { buildFloor } from "./floor.ts";
 import { BLINK_CHARGES, HERO_HP, armorFactor } from "./rules.ts";
 import { attack, createRoom, groundAt, monsterFighter, step, wait, type RoomState } from "./sim.ts";
+import { weaponOf, weaponVersion } from "../data/weapons.ts";
 
 const OPEN: RoomPattern = {
   id: "check",
@@ -224,12 +225,14 @@ for (let seed = 1; seed <= 200; seed += 1) {
 }
 
 const rarityCount: Record<GearItem["rarity"], number> = { common: 0, uncommon: 1, rare: 2, epic: 3 };
-assert.equal(GEAR.length, 50);
+assert.equal(GEAR.filter((item) => item.rarity === "common").length, 12);
+assert.equal(GEAR.filter((item) => item.rarity === "uncommon").length, 31);
+assert.equal(GEAR.filter((item) => item.rarity === "rare").length, 34);
+assert.equal(GEAR.filter((item) => item.rarity === "epic").length, 28);
+assert.equal(GEAR.length, 105);
 for (const item of GEAR) {
-  const filled = [item.maxHp, item.weaponPower, item.phys, item.elem, item.dodge, item.critChance, item.critShare].filter(
-    (value) => value !== undefined,
-  ).length;
-  assert.equal(filled, rarityCount[item.rarity], item.name);
+  assert.equal(statKeysOf(item).length, rarityCount[item.rarity], item.name);
+  for (const key of statKeysOf(item)) assert.ok(bonusPlaces(item[key] ?? 0) <= 2, item.name);
 }
 
 const powered = room("7");
@@ -242,15 +245,15 @@ assert.equal(powered.monster.hp, powered.monster.maxHp - (100 + UNIT.weaponPower
 const mirrored = room("7");
 mirrored.monster.cooldowns.swing = 99;
 mirrored.monster.x = 3;
-mirrored.critChance = UNIT.critChance;
+mirrored.critChance = pointChance(UNIT.critChance);
 mirrored.critShare = UNIT.critShare;
 attack(mirrored, () => 0);
-assert.equal(mirrored.monster.hp, mirrored.monster.maxHp - 100 * critFactor(UNIT.critChance, UNIT.critShare));
+assert.equal(mirrored.monster.hp, mirrored.monster.maxHp - 100 * critFactor(pointChance(UNIT.critChance), UNIT.critShare));
 
 const chanceOnly = room("7");
 chanceOnly.monster.cooldowns.swing = 99;
 chanceOnly.monster.x = 3;
-chanceOnly.critChance = UNIT.critChance;
+chanceOnly.critChance = pointChance(UNIT.critChance);
 attack(chanceOnly, () => 0);
 assert.equal(chanceOnly.monster.hp, chanceOnly.monster.maxHp - 100);
 
@@ -268,7 +271,13 @@ dodging.dodge = UNIT.dodge;
 attack(dodging, () => 0);
 assert.equal(dodging.hero.hp, HERO_HP);
 
-const pair = gearBonus(["whisper-mirror", "whisper-mirror"]);
+assert.equal(itemById("belt")?.maxHp, 10);
+assert.equal(itemById("vial")?.phys, 5.44);
+assert.equal(itemById("whisper-mirror")?.critChance, 1.85);
+assert.equal(itemById("whisper-mirror")?.critShare, 0.5);
+assert.equal(weaponOf("sword-rare").hitDamage, 100);
+assert.deepEqual(weaponVersion("sword-rare")?.bonus, { maxMp: 4, weaponPower: 2.5 });
+const pair = gearBonus(["crit-odds", "crit-share"]);
 const pairChance = pointChance(pair.critChance);
 assert.equal(critFactor(pairChance, pair.critShare), 1 + pairChance * pair.critShare);
 assert.equal(gearBonus([null]).maxHp, EMPTY_GEAR.maxHp);
@@ -307,6 +316,9 @@ assert.equal(blast.hits.some((hit) => hit.amount === KIT.automaton.blast && hit.
 assert.equal(blast.hero.hp, HERO_HP - KIT.automaton.blast - ELEMENTS.fireTick);
 assert.equal(blast.monster.hp, blast.monster.maxHp - KIT.automaton.blast * KIT.automaton.resist - ELEMENTS.fireTick * KIT.automaton.resist);
 assert.equal(blast.monster.shield, 3);
+assert.equal(groundAt(blast, 3, 6)?.kind, "fire");
+assert.equal(groundAt(blast, 2, 7)?.kind, "fire");
+assert.equal(groundAt(blast, 5, 6), null);
 
 const venom = room("21");
 venom.monster.cooldowns.swap = 99;
@@ -318,10 +330,14 @@ venom.monster.x = 4;
 venom.monster.y = 6;
 venom.kegs.push({ x: 3, y: 6, element: "poison", owner: venom.monster });
 attack(venom, () => 0);
-assert.equal(venom.hero.poison, 1);
-assert.equal(venom.monster.poison, 1);
+assert.equal(venom.hero.poison, 2);
+assert.equal(venom.monster.poison, 2);
 assert.equal(venom.hits.some((hit) => hit.amount === KIT.automaton.blast && hit.type === "poison"), true);
 assert.equal(venom.hits.some((hit) => hit.amount === KIT.automaton.blast * KIT.automaton.resist && hit.type === "poison"), true);
+assert.equal(groundAt(venom, 3, 6)?.kind, "poison");
+assert.equal(groundAt(venom, 3, 6)?.stacks, 1);
+assert.equal(groundAt(venom, 2, 7)?.kind, "poison");
+assert.equal(groundAt(venom, 5, 6), null);
 
 const traded = room("21");
 traded.monster.cooldowns.keg = 99;
@@ -338,7 +354,7 @@ assert.equal(traded.hero.x, 5);
 assert.equal(traded.hero.y, 6);
 assert.equal(traded.monster.x, 2);
 assert.equal(traded.monster.y, 6);
-assert.equal(traded.hero.hp, HERO_HP);
+assert.equal(traded.hero.hp, HERO_HP - KIT.automaton.swapDamage);
 
 const emptyMark = room("21");
 emptyMark.monster.cooldowns.keg = 99;
@@ -351,8 +367,22 @@ wait(emptyMark, () => 0);
 step(emptyMark, "up", () => 0);
 assert.equal(emptyMark.hero.x, 2);
 assert.equal(emptyMark.hero.y, 5);
-assert.equal(emptyMark.monster.x, 2);
+assert.equal(emptyMark.monster.x, 5);
 assert.equal(emptyMark.monster.y, 6);
+
+const blocked = room("21");
+blocked.monster.cooldowns.swap = 99;
+blocked.monster.cooldowns.keg = 99;
+blocked.hero.x = 2;
+blocked.hero.y = 6;
+blocked.hero.facing = "right";
+blocked.monster.x = 9;
+blocked.monster.y = 6;
+blocked.kegs.push({ x: 3, y: 6, element: "fire", owner: blocked.monster });
+step(blocked, "right", () => 0);
+assert.equal(blocked.hero.x, 2);
+assert.equal(blocked.hero.y, 6);
+assert.equal(blocked.kegs.length, 1);
 
 const roomBarrel = room("7");
 roomBarrel.monster.cooldowns.swing = 99;

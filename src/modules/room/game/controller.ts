@@ -4,19 +4,23 @@ import { abilityAim, arrowBeam, attack, blink, blinkCells, castHeroAbility, face
 import { heroAuras, monsterAuras, type Aura } from "./statuses.ts";
 import { monsterById, strikeElement, type DamageType } from "../data/monsters.ts";
 import { abilityView } from "../data/hero-abilities.ts";
-import { bindAbilityTip, bindTip } from "./tip.ts";
+import { bitmapSize, nextPixelScale, pixelCeiling } from "./pixel-scale.ts";
+import { bindAbilityTip, bindTip, dismissTipsOnPress, hideTip } from "./tip.ts";
 import { EMPTY_GEAR, type GearBonus } from "../data/items.ts";
+import type { Loadout } from "../data/instances.ts";
 import type { RunAbility } from "../data/hero-abilities.ts";
 import type { WeaponId } from "../data/weapons.ts";
 import { WEAPONS, weaponById } from "../data/weapons.ts";
 import { createRun, syncRun, teleport, travel, type Run } from "./floor.ts";
-import { MINIMAP_MARGIN, hudScale, minimapFrame, minimapPanel } from "./map.ts";
+import { MINIMAP_MARGIN, canvasScale, minimapFrame, minimapPanel } from "./map.ts";
 import { playAbility } from "./ability-sfx.ts";
-import { playAutomatonSwap, playAutomatonDeath, playBarrelFire, playBarrelIce, playBarrelOil, playBarrelPoison, playBarrelWater, playFootstep, playHeroDeath, playMonsterCue, playReload, playShieldBreak, playWeaponSound, preloadSwordBlows } from "./sfx.ts";
-import { installDungeonMusic } from "./music.ts";
+import { playAutomatonSwap, playAutomatonDeath, playBarrelFire, playBarrelIce, playBarrelOil, playBarrelPoison, playBarrelWater, playFootstep, playHeroDeath, playMonsterCue, playReload, playShieldBreak, playWeaponSound, preloadSwordBlows, soundContext } from "./sfx.ts";
+import { installDungeonMusic, preloadTracks } from "./music.ts";
 import { openSettings } from "./settings-view.ts";
+import { openCharacter } from "./character-view.ts";
 import { coarsePointer, isSwingStep, lessonAdvance, lessonAllows, lessonText, lessonWeapon, tutorialRun, type LessonEvent, type LessonHooks, type LessonStep } from "./tutorial.ts";
 import { paintWeaponIcon } from "./hub.ts";
+import loadingUrl from "../../../../assets/loading-castle.jpg";
 import "./ui.css";
 
 /** Повтор шага, пока зажаты WASD или стрелки. */
@@ -24,6 +28,12 @@ const HOLD_STEP_MS = 200;
 
 function shownHp(value: number): string {
   return String(Math.trunc(value));
+}
+
+function sharpSquare(canvas: HTMLCanvasElement, css: number): void {
+  const size = bitmapSize(css, window.devicePixelRatio || 1);
+  canvas.width = size;
+  canvas.height = size;
 }
 
 const MOVE_KEYS: Record<string, Dir> = {
@@ -113,6 +123,8 @@ export class RoomController {
   private abilitySlot: number | null = null;
   private run: Run;
   private running = false;
+  private ready = false;
+  private loadFill: HTMLElement | null = null;
   private swinging = false;
   private heroRattled = false;
   private diedByFall = false;
@@ -125,7 +137,6 @@ export class RoomController {
   private swing: number | null = null;
   private readonly heldMoves = new Map<string, Dir>();
   private arrowPointer: number | null = null;
-  private fullscreenButtonEl: HTMLButtonElement | null = null;
   private shiftHeld = false;
   private lastMoveAt = 0;
   private moveTimer = 0;
@@ -133,6 +144,7 @@ export class RoomController {
   private readonly heroAurasRow: HTMLElement;
   private readonly focusAuras: HTMLElement;
   private hover: { x: number; y: number } | null = null;
+  private pinnedMonster: RoomState["monsters"][number] | null = null;
   private readonly hpFill: HTMLElement;
   private readonly hpText: HTMLElement;
   private readonly mpFill: HTMLElement;
@@ -147,10 +159,18 @@ export class RoomController {
   private readonly onKeyUp: (event: KeyboardEvent) => void;
   private readonly onBlur: () => void;
   private readonly onResize: () => void;
+  private resolutionQuery: MediaQueryList | null = null;
+  private pixelScale = 1;
+  private pixelCeiling = 0;
+  private blockedScale = Number.POSITIVE_INFINITY;
+  private frameSamples: number[] = [];
+  private settleFrames = 0;
+  private cssArea = 0;
   private readonly onHub?: () => void;
   private readonly host: HTMLElement;
   private floorsCleared = 0;
   private pause: HTMLElement | null = null;
+  private character: HTMLElement | null = null;
   private readonly lesson: LessonHooks | null;
   private lessonStep: LessonStep = "move";
   private lessonCard: HTMLElement | null = null;
@@ -167,7 +187,7 @@ export class RoomController {
     weaponHit: number | null = null,
     abilities: (RunAbility | null)[] = [],
     private readonly adventure = 0,
-    private readonly onTutorial?: () => void,
+    private readonly loadout: Loadout | null = null,
   ) {
     this.onHub = onHub;
     this.host = host;
@@ -191,7 +211,7 @@ export class RoomController {
     this.canvas.style.minHeight = "0";
     this.canvas.style.touchAction = "none";
     this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
-    const ctx = this.canvas.getContext("2d");
+    const ctx = this.canvas.getContext("2d", { alpha: false });
     if (!ctx) throw new Error("canvas");
     this.ctx = ctx;
 
@@ -201,9 +221,21 @@ export class RoomController {
     const left = document.createElement("div");
     left.className = "dungeon-hud-left";
     this.portrait = document.createElement("canvas");
-    this.portrait.width = 192;
-    this.portrait.height = 192;
+    sharpSquare(this.portrait, 192);
     this.portrait.className = "dungeon-portrait-face";
+    const portraitWrap = document.createElement("div");
+    portraitWrap.className = "dungeon-portrait";
+    const characterKey = document.createElement("button");
+    characterKey.type = "button";
+    characterKey.className = "dungeon-portrait-key";
+    characterKey.textContent = "I";
+    characterKey.setAttribute("aria-label", "Character");
+    characterKey.addEventListener("click", () => this.toggleCharacter());
+    portraitWrap.append(this.portrait, characterKey);
+    const portraitStack = document.createElement("div");
+    portraitStack.className = "dungeon-portrait-stack";
+    if (this.coarse) portraitStack.append(this.movePad());
+    portraitStack.append(portraitWrap);
     this.heroAurasRow = document.createElement("div");
     this.heroAurasRow.className = "dungeon-auras";
     this.focusAuras = document.createElement("div");
@@ -238,7 +270,6 @@ export class RoomController {
       this.coarse ? this.phoneAction("Turn", () => this.turnClockwise()) : prompt("Shift", "Turn"),
       this.coarse ? this.phoneAction("Wait", () => this.wait()) : prompt("X", "Wait"),
     );
-    if (this.coarse) center.append(this.movePad());
     center.append(prompts);
 
     const hands = this.mountGear();
@@ -247,14 +278,14 @@ export class RoomController {
     this.blinkButton = hands.blinkButton;
     this.blinkBadge = hands.blinkBadge;
 
-    left.append(this.portrait, bars, this.mountAbilityBar());
+    left.append(portraitStack, bars, this.mountAbilityBar());
     bar.append(left, center, hands.row);
     this.goldIcon = document.createElement("canvas");
-    this.goldIcon.width = 64;
-    this.goldIcon.height = 64;
+    sharpSquare(this.goldIcon, 64);
     this.goldIcon.className = "dungeon-corner-coin";
     this.goldText = document.createElement("span");
     host.append(this.canvas, this.focusAuras, bar, this.mountCorner());
+    dismissTipsOnPress(host, this.canvas);
     if (this.coarse) {
       const closeMap = document.createElement("button");
       closeMap.type = "button";
@@ -276,12 +307,14 @@ export class RoomController {
     this.canvas.addEventListener("pointerdown", (event) => this.onPointer(event));
     this.canvas.addEventListener("pointermove", (event) => this.onHover(event));
     this.canvas.addEventListener("pointerleave", (event) => {
+      if (this.coarse) return;
       const next = event.relatedTarget;
       if (next instanceof Node && this.focusAuras.contains(next)) return;
       this.hover = null;
       this.paintAuras();
     });
     this.focusAuras.addEventListener("pointerleave", (event) => {
+      if (this.coarse) return;
       const next = event.relatedTarget;
       if (next instanceof Node && (this.canvas === next || this.canvas.contains(next))) return;
       this.hover = null;
@@ -296,24 +329,10 @@ export class RoomController {
     window.addEventListener("blur", this.onBlur);
     window.addEventListener("resize", this.onResize);
     this.resize();
-    void loadSprites().then((sprites) => {
-      this.sprites = sprites;
-      const portrait = this.portrait.getContext("2d");
-      if (portrait) {
-        portrait.clearRect(0, 0, this.portrait.width, this.portrait.height);
-        const art = sprites.hero;
-        const crop = Math.min(art.width, art.height * 0.62);
-        portrait.drawImage(art, (art.width - crop) / 2, 0, crop, crop, 0, 0, this.portrait.width, this.portrait.height);
-      }
-      this.paintLoadout();
-      this.paintAbilityBar();
-      this.paintLessonWeapons();
-      this.paintGold(sprites.gold);
-      this.draw();
-    });
-    preloadSwordBlows();
+    host.append(this.loadingVeil());
     installDungeonMusic();
     this.refresh();
+    void this.finishBoot();
   }
 
   subscribe(listener: () => void): () => void {
@@ -384,8 +403,7 @@ export class RoomController {
       button.style.gap = "calc(4 * var(--hud))";
       button.style.width = "calc(88 * var(--hud))";
       const canvas = document.createElement("canvas");
-      canvas.width = 48;
-      canvas.height = 48;
+      sharpSquare(canvas, 48);
       canvas.style.width = "calc(48 * var(--hud))";
       canvas.style.height = "calc(48 * var(--hud))";
       const label = document.createElement("span");
@@ -471,11 +489,12 @@ export class RoomController {
   destroy(): void {
     this.running = false;
     this.releaseMoves();
+    hideTip();
     window.removeEventListener("keydown", this.onKey);
     window.removeEventListener("keyup", this.onKeyUp);
     window.removeEventListener("blur", this.onBlur);
     window.removeEventListener("resize", this.onResize);
-    document.removeEventListener("fullscreenchange", this.onFullscreen);
+    this.resolutionQuery?.removeEventListener("change", this.onResize);
   }
 
   private dropAbilityAim(): void {
@@ -573,7 +592,97 @@ export class RoomController {
   }
 
   private locked(): boolean {
-    return this.swinging || this.renderer.moving();
+    return !this.ready || this.character !== null || this.swinging || this.renderer.moving();
+  }
+
+  private loadingVeil(): HTMLElement {
+    const veil = document.createElement("div");
+    veil.className = "dungeon-loading";
+    const img = document.createElement("img");
+    img.src = loadingUrl;
+    img.alt = "";
+    const bar = document.createElement("div");
+    bar.className = "dungeon-load-bar";
+    const track = document.createElement("div");
+    track.className = "dungeon-load-track";
+    const fill = document.createElement("div");
+    fill.className = "dungeon-load-fill";
+    this.loadFill = fill;
+    track.append(fill);
+    bar.append(track);
+    veil.append(img, bar);
+    return veil;
+  }
+
+  private toggleCharacter(): void {
+    if (this.character) {
+      this.closeCharacter();
+      return;
+    }
+    if (!this.ready || this.pause) return;
+    this.releaseMoves();
+    const veil = openCharacter(this.host, this.gear, this.weapon, this.loadout, this.sprites, () => this.closeCharacter());
+    this.character = veil;
+    this.host.append(veil);
+  }
+
+  private closeCharacter(): void {
+    this.character?.remove();
+    this.character = null;
+  }
+
+  private setLoad(ratio: number): void {
+    if (!this.loadFill) return;
+    this.loadFill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
+  }
+
+  /** Спрайты, музыка и звуки. Ввод закрыт, пока полоса не дойдёт до конца и кадр не нарисован. */
+  private async finishBoot(): Promise<void> {
+    const ctx = soundContext();
+    void ctx.resume();
+    let sprites = 0;
+    let tracks = 0;
+    let sounds = 0;
+    const paint = (): void => this.setLoad(sprites * 0.62 + tracks * 0.2 + sounds * 0.13);
+    const veil = this.host.querySelector(".dungeon-loading");
+    try {
+      const art = await Promise.all([
+        loadSprites((ratio) => {
+          sprites = ratio;
+          paint();
+        }),
+        preloadTracks((ratio) => {
+          tracks = ratio;
+          paint();
+        }),
+        preloadSwordBlows((ratio) => {
+          sounds = ratio;
+          paint();
+        }),
+      ]).then(([sprites]) => sprites);
+      this.setLoad(0.97);
+      this.sprites = art;
+      const portrait = this.portrait.getContext("2d");
+      if (portrait) {
+        portrait.clearRect(0, 0, this.portrait.width, this.portrait.height);
+        const face = art.hero;
+        const crop = Math.min(face.width, face.height * 0.62);
+        portrait.drawImage(face, (face.width - crop) / 2, 0, crop, crop, 0, 0, this.portrait.width, this.portrait.height);
+      }
+      this.paintLoadout();
+      this.paintAbilityBar();
+      this.paintLessonWeapons();
+      this.paintGold(art.gold);
+      this.draw();
+      this.setLoad(1);
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+    } finally {
+      this.ready = true;
+      veil?.remove();
+      this.loadFill = null;
+    }
   }
 
   private handleKeyUp(event: KeyboardEvent): void {
@@ -709,6 +818,7 @@ export class RoomController {
   }
 
   private onHover(event: PointerEvent): void {
+    if (this.coarse) return;
     if (this.pause || this.mapOpen || this.state.outcome === "lost") {
       if (this.hover) {
         this.hover = null;
@@ -731,6 +841,7 @@ export class RoomController {
   }
 
   private onPointer(event: PointerEvent): void {
+    if (this.character) return;
     if (this.pause) return;
     if (this.coarse && event.button === 0) {
       this.onCoarsePointer(event);
@@ -863,11 +974,19 @@ export class RoomController {
       this.confirmWeapon(cell);
       return;
     }
-    if (cell) this.phoneUseTile(cell);
+    if (cell) {
+      const monster = this.state.monsters.find((unit) => onBoard(unit) && unit.x === cell.x && unit.y === cell.y) ?? null;
+      if (monster) {
+        this.pinnedMonster = monster;
+        hideTip();
+        this.paintAuras();
+      }
+      this.phoneUseTile(cell);
+    }
   }
 
   private minimapContains(point: { x: number; y: number }): boolean {
-    const frame = minimapFrame(this.canvas.width, this.mapView(), hudScale(this.host));
+    const frame = minimapFrame(this.canvas.width, this.mapView(), canvasScale(this.canvas));
     if (!frame) return false;
     return point.x >= frame.x && point.x < frame.x + frame.w && point.y >= frame.y && point.y < frame.y + frame.h;
   }
@@ -916,6 +1035,7 @@ export class RoomController {
   }
 
   private arrowDown(dir: Dir, event: PointerEvent): void {
+    if (this.character || !this.ready) return;
     if (event.button !== 0) return;
     event.preventDefault();
     const button = event.currentTarget;
@@ -1092,48 +1212,11 @@ export class RoomController {
       pause.addEventListener("click", () => this.togglePause());
       corner.append(pause);
     }
-    if (this.coarse) corner.append(this.fullscreenButton());
     const purse = document.createElement("div");
     purse.className = "dungeon-corner-gold";
     purse.append(this.goldIcon, this.goldText);
     corner.append(purse);
     return corner;
-  }
-
-  private fullscreenButton(): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "dungeon-corner-pause";
-    button.textContent = "Full";
-    button.setAttribute("aria-label", "Fullscreen");
-    button.addEventListener("click", () => void this.toggleFullscreen());
-    this.fullscreenButtonEl = button;
-    document.addEventListener("fullscreenchange", this.onFullscreen);
-    return button;
-  }
-
-  private readonly onFullscreen = (): void => {
-    const on = document.fullscreenElement !== null;
-    if (!this.fullscreenButtonEl) return;
-    this.fullscreenButtonEl.textContent = on ? "Exit" : "Full";
-    this.fullscreenButtonEl.setAttribute("aria-pressed", on ? "true" : "false");
-  };
-
-  private async toggleFullscreen(): Promise<void> {
-    const node = this.host as HTMLElement & { webkitRequestFullscreen?: () => void };
-    try {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen();
-        return;
-      }
-      if (typeof node.requestFullscreen === "function") {
-        await node.requestFullscreen({ navigationUI: "hide" });
-        return;
-      }
-      node.webkitRequestFullscreen?.();
-    } catch {
-      // The page around the game can refuse fullscreen. The address bar stays.
-    }
   }
 
   private paintGold(gold: HTMLCanvasElement): void {
@@ -1166,7 +1249,7 @@ export class RoomController {
     title.style.margin = "0";
     title.textContent = "Menu";
     const resume = this.pauseButton("Resume", true, () => this.closePause());
-    const settings = this.pauseButton("Settings", false, () => openSettings(this.host, this.onTutorial));
+    const settings = this.pauseButton("Settings", false, () => openSettings(this.host));
     const giveUp = this.pauseButton("Surrender", false, () => {
       this.closePause();
       this.onHub?.();
@@ -1213,8 +1296,7 @@ export class RoomController {
     }
     this.weaponSlot = weapon;
     const weaponIcon = document.createElement("canvas");
-    weaponIcon.width = 96;
-    weaponIcon.height = 96;
+    sharpSquare(weaponIcon, 96);
     weaponIcon.className = "dungeon-ability-icon";
     const weaponKey = document.createElement("span");
     weaponKey.className = "dungeon-ability-key";
@@ -1231,14 +1313,15 @@ export class RoomController {
         const ammo = worn.magazine === null ? "" : `\n${this.state.ammo ?? worn.magazine}/${worn.magazine}. R reloads.`;
         return `${worn.figure} Left-click a tile to attack.${ammo}`;
       },
+      undefined,
+      this.coarse,
     );
 
     const blinkButton = document.createElement("button");
     blinkButton.type = "button";
     blinkButton.className = "dungeon-slot dungeon-gear-slot";
     const blinkIcon = document.createElement("canvas");
-    blinkIcon.width = 96;
-    blinkIcon.height = 96;
+    sharpSquare(blinkIcon, 96);
     blinkIcon.className = "dungeon-ability-icon";
     paintBlinkIcon(blinkIcon);
     const blinkKey = document.createElement("span");
@@ -1252,6 +1335,8 @@ export class RoomController {
       blinkButton,
       "Blink",
       () => `${this.state.blink} charges. Right-click, then left-click a lit cell. Right-click again cancels.`,
+      undefined,
+      this.coarse,
     );
 
     row.append(weapon, blinkButton);
@@ -1266,8 +1351,7 @@ export class RoomController {
       button.type = "button";
       button.className = "dungeon-slot dungeon-ability";
       const icon = document.createElement("canvas");
-      icon.width = 96;
-      icon.height = 96;
+      sharpSquare(icon, 96);
       icon.className = "dungeon-ability-icon";
       const key = document.createElement("span");
       key.className = "dungeon-ability-key";
@@ -1280,7 +1364,7 @@ export class RoomController {
         const ability = this.state.abilities[slot];
         if (!ability) return null;
         return abilityView(ability.id, ability.damage, null, ability.splash);
-      });
+      }, this.coarse);
       this.abilityButtons.push(button);
       bar.append(button);
     }
@@ -1414,6 +1498,19 @@ export class RoomController {
   }
 
   private handleKey(event: KeyboardEvent): void {
+    if (!this.ready) return;
+    if (event.code === "KeyI") {
+      event.preventDefault();
+      if (!event.repeat) this.toggleCharacter();
+      return;
+    }
+    if (this.character) {
+      if (event.code === "Escape") {
+        event.preventDefault();
+        if (!event.repeat) this.closeCharacter();
+      }
+      return;
+    }
     if (event.key === "Shift") this.shiftHeld = true;
     if (event.code === "Escape") {
       event.preventDefault();
@@ -1495,12 +1592,54 @@ export class RoomController {
 
   private resize(): void {
     const rect = this.canvas.getBoundingClientRect();
-    const width = Math.max(1, Math.floor(rect.width));
-    const height = Math.max(1, Math.floor(rect.height));
+    const area = rect.width * rect.height;
+    const ceiling = pixelCeiling(window.devicePixelRatio || 1);
+    const areaShift = this.cssArea > 0 && (area > this.cssArea * 1.35 || area < this.cssArea * 0.75);
+    this.cssArea = area;
+    if (ceiling !== this.pixelCeiling || areaShift) {
+      this.pixelCeiling = ceiling;
+      this.pixelScale = ceiling;
+      this.blockedScale = Number.POSITIVE_INFINITY;
+      this.frameSamples = [];
+      this.settleFrames = 12;
+      this.watchResolution();
+    }
+    this.applyPixelScale();
+    this.draw();
+  }
+
+  private applyPixelScale(): void {
+    const rect = this.canvas.getBoundingClientRect();
+    const width = Math.max(1, Math.floor(rect.width * this.pixelScale));
+    const height = Math.max(1, Math.floor(rect.height * this.pixelScale));
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width;
       this.canvas.height = height;
     }
+  }
+
+  private watchResolution(): void {
+    this.resolutionQuery?.removeEventListener("change", this.onResize);
+    this.resolutionQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    this.resolutionQuery.addEventListener("change", this.onResize);
+  }
+
+  private noteFrame(ms: number): void {
+    if (this.settleFrames > 0) {
+      this.settleFrames -= 1;
+      return;
+    }
+    this.frameSamples.push(ms);
+    if (this.frameSamples.length < 12) return;
+    const samples = [...this.frameSamples].sort((a, b) => a - b);
+    this.frameSamples = [];
+    const p90 = samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.9))] ?? 0;
+    const next = nextPixelScale(this.pixelScale, this.pixelCeiling, this.blockedScale, p90);
+    if (Math.abs(next - this.pixelScale) < 1e-6) return;
+    if (next < this.pixelScale) this.blockedScale = this.pixelScale;
+    this.pixelScale = next;
+    this.settleFrames = 12;
+    this.applyPixelScale();
     this.draw();
   }
 
@@ -1535,6 +1674,10 @@ export class RoomController {
   }
 
   private fitFocus(): void {
+    if (this.coarse) {
+      this.focusAuras.style.right = "auto";
+      return;
+    }
     const panel = this.mapOpen ? null : minimapPanel(this.mapView());
     const gap = 12;
     const inset = panel ? panel.width + MINIMAP_MARGIN + gap : MINIMAP_MARGIN;
@@ -1543,9 +1686,12 @@ export class RoomController {
 
   private paintAuras(): void {
     this.fillAuras(this.heroAurasRow, heroAuras(this.state));
-    const monster = this.hover
-      ? this.state.monsters.find((unit) => onBoard(unit) && unit.x === this.hover?.x && unit.y === this.hover?.y) ?? null
-      : null;
+    if (this.coarse && this.pinnedMonster && !onBoard(this.pinnedMonster)) this.pinnedMonster = null;
+    const monster = this.coarse
+      ? this.pinnedMonster
+      : this.hover
+        ? this.state.monsters.find((unit) => onBoard(unit) && unit.x === this.hover?.x && unit.y === this.hover?.y) ?? null
+        : null;
     this.paintFocus(monster);
   }
 
@@ -1575,8 +1721,7 @@ export class RoomController {
       slot.className = `dungeon-aura dungeon-slot dungeon-aura-${aura.tone}`;
       slot.dataset.aura = aura.id;
       const canvas = document.createElement("canvas");
-      canvas.width = 64;
-      canvas.height = 64;
+      sharpSquare(canvas, 64);
       canvas.className = "dungeon-aura-icon";
       const icon = art?.[aura.id];
       const ctx = canvas.getContext("2d");
@@ -1594,6 +1739,7 @@ export class RoomController {
       title.textContent = `${aura.name}: `;
       copy.append(title, aura.text);
       row.append(slot, copy);
+      if (this.coarse) bindTip(slot, aura.name, aura.text, undefined, true);
       list.append(row);
     }
     this.focusAuras.append(head, list);
@@ -1603,8 +1749,7 @@ export class RoomController {
     const chip = document.createElement("span");
     chip.className = "dungeon-focus-chip";
     const canvas = document.createElement("canvas");
-    canvas.width = 48;
-    canvas.height = 48;
+    sharpSquare(canvas, 48);
     canvas.className = "dungeon-focus-mark";
     paintElementMark(canvas, type);
     const text = document.createElement("span");
@@ -1621,8 +1766,7 @@ export class RoomController {
       slot.className = `dungeon-aura dungeon-slot dungeon-aura-${aura.tone}`;
       slot.dataset.aura = aura.id;
       const canvas = document.createElement("canvas");
-      canvas.width = 64;
-      canvas.height = 64;
+      sharpSquare(canvas, 64);
       canvas.className = "dungeon-aura-icon";
       const icon = art?.[aura.id];
       const ctx = canvas.getContext("2d");
@@ -1634,7 +1778,7 @@ export class RoomController {
         count.textContent = aura.mark || aura.counts.join("\n");
         slot.append(count);
       }
-      bindTip(slot, aura.name, aura.text);
+      bindTip(slot, aura.name, aura.text, undefined, this.coarse);
       host.append(slot);
     }
   }
@@ -1703,7 +1847,11 @@ export class RoomController {
 
   private loop = (): void => {
     if (!this.running) return;
-    this.draw();
+    if (this.sprites) {
+      const started = performance.now();
+      this.draw();
+      this.noteFrame(performance.now() - started);
+    } else this.draw();
     if (this.lostPanel) this.lostPanel.style.display = this.showLost() ? "flex" : "none";
     requestAnimationFrame(this.loop);
   };

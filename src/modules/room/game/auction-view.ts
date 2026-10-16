@@ -1,6 +1,6 @@
-import { weaponById, WEAPONS, type WeaponId } from "../data/weapons.ts";
-import { itemById } from "../data/items.ts";
-import { addInstance, abilityAmount, abilitySplash, instanceById, saveLoadout, unworn, type Loadout } from "../data/instances.ts";
+import { weaponBaseId, weaponName, weaponOf, weaponVersion, WEAPONS, type WeaponId } from "../data/weapons.ts";
+import { describeStats, itemById } from "../data/items.ts";
+import { addInstance, abilityAmount, abilitySplash, instanceById, saveLoadout, scaled, unworn, type Loadout } from "../data/instances.ts";
 import { abilityView, heroAbilityById } from "../data/hero-abilities.ts";
 import { bindAbilityTip, hideTip } from "./tip.ts";
 import { freshShelf, shelfBar, shelfMatch, shelfOrder, type ShelfKind } from "./shelf-bar.ts";
@@ -26,7 +26,7 @@ const ME = "you";
 export interface AuctionKit {
   weapon: WeaponId;
   gold: number;
-  owned: WeaponId[];
+  owned: string[];
 }
 
 type Tab = "browse" | "sell" | "bids" | "mine";
@@ -257,8 +257,8 @@ export function paintAuction(
           redraw();
         });
       } else if (item?.kind === "weapon") {
-        const weapon = weaponById(item.id);
-        drawArt(canvas, art.weapons[item.id]);
+        const weapon = weaponOf(item.id);
+        drawArt(canvas, art.weapons[weaponBaseId(item.id)]);
         stampLevel(canvas, item.level);
         slot.title = weapon.name;
         slot.addEventListener("click", () => {
@@ -527,7 +527,7 @@ export function paintAuction(
 
   function paintLot(canvas: HTMLCanvasElement, lot: PublicLot): void {
     const key = lot.goods.key;
-    if (WEAPONS.some((weapon) => weapon.id === key)) drawArt(canvas, art.weapons[key as WeaponId]);
+    if (WEAPONS.some((weapon) => weapon.id === key) || weaponVersion(key)) drawArt(canvas, art.weapons[weaponBaseId(key)]);
     else if (itemById(key)) drawArt(canvas, art.items[key]);
     else drawArt(canvas, art.abilities?.[key]);
     if (lot.goods.kind === "stack" && lot.goods.count > 1) stampCount(canvas, lot.goods.count);
@@ -561,14 +561,14 @@ export function paintAuction(
 
 function lotKind(lot: PublicLot): ShelfKind {
   if (lot.goods.kind === "stack") return "stack";
-  if (WEAPONS.some((weapon) => weapon.id === lot.goods.key)) return "weapon";
+  if (WEAPONS.some((weapon) => weapon.id === lot.goods.key) || weaponVersion(lot.goods.key)) return "weapon";
   if (itemById(lot.goods.key)) return "gear";
   return "ability";
 }
 
 function storedName(item: StoredCell): string {
   if (item.kind === "gold") return "Gold";
-  if (item.kind === "weapon") return weaponById(item.id).name;
+  if (item.kind === "weapon") return weaponName(item.id);
   if (item.kind === "gear") return itemById(item.id)?.name ?? "Item";
   return "Ability";
 }
@@ -592,14 +592,15 @@ function apply(kit: AuctionKit, loadout: Loadout, step: AuctionStep): string | n
     }
     grantUnique(kit, loadout, item.goods.key, item.goods.level ?? 0);
   }
-  if (!kit.owned.includes(kit.weapon)) kit.weapon = kit.owned[0] ?? kit.weapon;
+  const held = kit.owned.map((id) => weaponBaseId(id));
+  if (!held.includes(kit.weapon)) kit.weapon = held[0] ?? kit.weapon;
   saveLoadout(loadout);
   return null;
 }
 
 type StoredCell =
   | { kind: "gold"; count: number }
-  | { kind: "weapon"; id: WeaponId; instanceId: string; level: number }
+  | { kind: "weapon"; id: string; instanceId: string; level: number }
   | { kind: "gear"; id: string; instanceId: string; level: number }
   | { kind: "ability"; id: string; instanceId: string; level: number };
 
@@ -607,7 +608,7 @@ function storageCells(kit: AuctionKit, loadout: Loadout): StoredCell[] {
   const stored: StoredCell[] = [];
   if (kit.gold > 0) stored.push({ kind: "gold", count: kit.gold });
   for (const item of unworn(loadout)) {
-    if (item.kind === "weapon") stored.push({ kind: "weapon", id: item.catalogId as WeaponId, instanceId: item.id, level: item.level });
+    if (item.kind === "weapon") stored.push({ kind: "weapon", id: item.catalogId, instanceId: item.id, level: item.level });
     else if (item.kind === "gear") stored.push({ kind: "gear", id: item.catalogId, instanceId: item.id, level: item.level });
     else stored.push({ kind: "ability", id: item.catalogId, instanceId: item.id, level: item.level });
   }
@@ -619,10 +620,9 @@ function grantUnique(kit: AuctionKit, loadout: Loadout, key: string, level: numb
     kit.gold += 1;
     return;
   }
-  if (WEAPONS.some((weapon) => weapon.id === key)) {
-    const id = key as WeaponId;
-    addInstance(loadout, "weapon", id, level);
-    if (!kit.owned.includes(id)) kit.owned.push(id);
+  if (WEAPONS.some((weapon) => weapon.id === key) || weaponVersion(key)) {
+    addInstance(loadout, "weapon", key, level);
+    if (!kit.owned.includes(key)) kit.owned.push(key);
     return;
   }
   if (itemById(key)) {
@@ -653,12 +653,15 @@ function stillStored(kit: AuctionKit, loadout: Loadout, pick: SellPick): boolean
 function pickGoods(loadout: Loadout, pick: Exclude<SellPick, { kind: "gold" }>): { kind: "unique"; key: string; name: string; text: string; level: number } {
   const level = instanceById(loadout, pick.instanceId)?.level ?? 0;
   if (pick.kind === "weapon") {
-    const weapon = weaponById(pick.catalogId as WeaponId);
-    return { kind: "unique", key: pick.catalogId, name: weapon.name, text: weapon.figure, level };
+    const weapon = weaponOf(pick.catalogId);
+    const version = weaponVersion(pick.catalogId);
+    const stats = version ? describeStats(version.bonus, (base) => scaled(base, level)) : "";
+    return { kind: "unique", key: pick.catalogId, name: weaponName(pick.catalogId), text: [weapon.figure, stats].filter((line) => line.length > 0).join(" "), level };
   }
   if (pick.kind === "gear") {
     const gear = itemById(pick.catalogId);
-    return { kind: "unique", key: pick.catalogId, name: gear?.name ?? "Item", text: gear?.name ?? "", level };
+    const stats = gear ? describeStats(gear, (base) => scaled(base, level)) : "";
+    return { kind: "unique", key: pick.catalogId, name: gear?.name ?? "Item", text: stats || gear?.name || "", level };
   }
   const row = heroAbilityById(pick.catalogId);
   return { kind: "unique", key: pick.catalogId, name: row?.name ?? "Ability", text: row?.text ?? "", level };
@@ -670,7 +673,7 @@ function takeStored(kit: AuctionKit, loadout: Loadout, pick: Exclude<SellPick, {
   loadout.worn = loadout.worn.map((worn) => (worn === pick.instanceId ? null : worn));
   loadout.wornAbilities = loadout.wornAbilities.map((worn) => (worn === pick.instanceId ? null : worn));
   if (pick.kind === "weapon") {
-    const at = kit.owned.indexOf(pick.catalogId as WeaponId);
+    const at = kit.owned.indexOf(pick.catalogId);
     if (at >= 0) kit.owned.splice(at, 1);
     const left = equippedWeaponLeft(loadout);
     if (left) kit.weapon = left;
@@ -680,7 +683,7 @@ function takeStored(kit: AuctionKit, loadout: Loadout, pick: Exclude<SellPick, {
 
 function equippedWeaponLeft(loadout: Loadout): WeaponId | null {
   const worn = loadout.items.find((item) => item.id === loadout.weapon && item.kind === "weapon");
-  return worn ? (worn.catalogId as WeaponId) : null;
+  return worn ? weaponBaseId(worn.catalogId) : null;
 }
 
 function drawArt(canvas: HTMLCanvasElement, art: HTMLCanvasElement | undefined): void {

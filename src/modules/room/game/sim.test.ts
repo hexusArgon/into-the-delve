@@ -669,6 +669,25 @@ wait(whisperColumn, () => 0);
 assert.equal(whisperColumn.monster.windup?.kind, "beam");
 assert.ok(whisperColumn.monster.windup?.cells.every((cell) => cell.x === 4));
 
+const whisperBeam = createRoom(OPEN, { monsterKind: "19" });
+whisperBeam.hero.x = 2;
+whisperBeam.hero.y = 6;
+whisperBeam.monster.x = 6;
+whisperBeam.monster.y = 6;
+whisperBeam.monster.cooldowns.hail = 99;
+whisperBeam.monster.cooldowns.charm = 99;
+wait(whisperBeam, () => 0);
+assert.equal(whisperBeam.monster.windup?.kind, "beam");
+wait(whisperBeam, () => 0);
+assert.equal(whisperBeam.monster.windup, null);
+assert.equal(whisperBeam.monster.cooldowns.beam, KIT.whisper.beamCooldown + 1);
+wait(whisperBeam, () => 0);
+assert.equal(whisperBeam.monster.windup, null);
+wait(whisperBeam, () => 0);
+assert.equal(whisperBeam.monster.windup, null);
+wait(whisperBeam, () => 0);
+assert.equal(whisperBeam.monster.windup?.kind, "beam");
+
 const spirit = createRoom(OPEN, { monsterKind: "9" });
 spirit.hero.x = 2;
 spirit.hero.y = 6;

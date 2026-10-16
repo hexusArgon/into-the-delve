@@ -1,27 +1,20 @@
 import { attrText, heroAttributes } from "../data/attributes.ts";
-import {
-  EQUIPMENT_SLOTS,
-  itemById,
-  EMPTY_GEAR,
-  type GearBonus,
-  type GearItem,
-  type Rarity,
-} from "../data/items.ts";
+import { EMPTY_GEAR, EQUIPMENT_SLOTS, itemById, statKeysOf, type GearBonus, type GearItem, type Rarity, type StatKey } from "../data/items.ts";
 import { heroAbilityById, abilityView, type RunAbility } from "../data/hero-abilities.ts";
 import {
   abilityAmount,
   abilitySplash,
   addInstance,
-  removeInstance,
   equippedWeaponHit,
   equippedWeaponId,
   fillEmptyWear,
   grantHeroAbilities,
+  grantBaseWeapons,
+  pointChance,
   saveLoadout,
   storedLoadout,
   instanceById,
   placeInstance,
-  pointChance,
   scaled,
   sharpen,
   unworn,
@@ -29,7 +22,7 @@ import {
   type ItemInstance,
   type Loadout,
 } from "../data/instances.ts";
-import { WEAPONS, weaponById, type WeaponDef, type WeaponId } from "../data/weapons.ts";
+import { WEAPONS, weaponBaseId, weaponName, weaponOf, weaponVersion, type WeaponDef, type WeaponId } from "../data/weapons.ts";
 import { createHouse, stockHouse } from "./auction.ts";
 import { paintAuction, type AuctionKit } from "./auction-view.ts";
 import { paintGuild } from "./guild-view.ts";
@@ -41,8 +34,8 @@ import { storageLayout, storageScroll } from "./storage.ts";
 import { RoomController } from "./controller.ts";
 import { installDungeonMusic } from "./music.ts";
 import { openSettings } from "./settings-view.ts";
-import { HERO_HP } from "./rules.ts";
-import { coarsePointer, hubCopy, tutorialMark, tutorialPending, tutorialWeapon, WEAPON_KEY, type LessonStep } from "./tutorial.ts";
+import { HERO_CRIT_CHANCE, HERO_HP } from "./rules.ts";
+import { coarsePointer, hubCopy, tutorialMark, tutorialPending, tutorialWeapon, type LessonStep } from "./tutorial.ts";
 import { loadSprites } from "./sprites.ts";
 import { freshShelf, shelfBar, shelfMatch, shelfOrder, type ShelfBar, type ShelfKind } from "./shelf-bar.ts";
 import { bindAbilityTip, bindCardTip, bindTip, hideTip } from "./tip.ts";
@@ -79,6 +72,7 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
   const startWeapon = tutorialWeapon();
   const kit: AuctionKit = { weapon: startWeapon, gold: 0, owned: [startWeapon] };
   const loadout = storedLoadout(startWeapon);
+  grantBaseWeapons(loadout);
   grantHeroAbilities(loadout);
   grantPersonalGear(loadout);
   if (coarsePointer()) fillEmptyWear(loadout);
@@ -87,6 +81,7 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
   void openCloud(loadout, startWeapon).then(() => {
     if (!alive) return;
     keepPersonalGear(loadout);
+    grantBaseWeapons(loadout);
     grantHeroAbilities(loadout);
     if (coarsePointer()) fillEmptyWear(loadout);
     syncKit(kit, loadout);
@@ -110,19 +105,11 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
     showMenu();
   };
 
-  const chooseWeapon = (id: WeaponId): void => {
-    localStorage.setItem(WEAPON_KEY, id);
-    const held = loadout.weapon;
-    if (held) removeInstance(loadout, held);
-    loadout.weapon = addInstance(loadout, "weapon", id).id;
-    kit.weapon = id;
-    kit.owned = [id];
-    saveLoadout(loadout);
+  const chooseWeapon = (): void => {
     endLesson();
   };
 
   const openLesson = (step: LessonStep): void => {
-    keepRun();
     lesson = step;
     room?.destroy();
     room = new RoomController(host, showMenu, "sword", EMPTY_GEAR, {
@@ -137,18 +124,15 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
     if (wantRun) room.setRunning(true);
   };
 
-  const keepRun = (): void => {
-    if (!room || room.isLesson) return;
-    kit.gold += room.carriedGold;
-    for (const drop of room.spoils) addInstance(loadout, drop.kind, drop.catalogId);
-    syncKit(kit, loadout);
-    if (room.floorCleared) recordAdventure(room.pickedLevel);
-    saveLoadout(loadout);
-  };
-
   const showMenu = (): void => {
     if (!alive) return;
-    keepRun();
+    if (room && !room.isLesson) {
+      kit.gold += room.carriedGold;
+      for (const drop of room.spoils) addInstance(loadout, drop.kind, drop.catalogId);
+      syncKit(kit, loadout);
+      if (room.floorCleared) recordAdventure(room.pickedLevel);
+      saveLoadout(loadout);
+    }
     room?.destroy();
     room = null;
     hideTip();
@@ -186,7 +170,6 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
             paintGuild(host, shown, showMenu, "Showing this browser until the server answers.");
           });
         },
-        onTutorial: () => openLesson("move"),
       },
       lesson === "hub" ? endLesson : undefined,
     );
@@ -203,7 +186,7 @@ export function mountGame(host: HTMLElement): { setRunning: (running: boolean) =
       equippedWeaponHit(loadout),
       wornAbilities(loadout),
       picked,
-      () => openLesson("move"),
+      loadout,
     );
     if (import.meta.env.DEV) {
       (globalThis as typeof globalThis & { roomController?: RoomController }).roomController = room;
@@ -239,7 +222,7 @@ function paintShell(host: HTMLElement): void {
 
 function paintMenu(
   host: HTMLElement,
-  actions: { onPlay: () => void; onInventory: () => void; onAuction: () => void; onGuild: () => void; onTutorial: () => void },
+  actions: { onPlay: () => void; onInventory: () => void; onAuction: () => void; onGuild: () => void },
   skipLesson?: () => void,
 ): void {
   paintShell(host);
@@ -279,7 +262,7 @@ function paintMenu(
   gear.setAttribute("aria-label", "Settings");
   gear.innerHTML =
     '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.22-1.14.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.49.4 1.04.72 1.63.94l.36 2.54c.05.24.26.42.5.42h3.84c.24 0 .45-.18.5-.42l.36-2.54c.59-.22 1.14-.54 1.63-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>';
-  gear.addEventListener("click", () => openSettings(scene, actions.onTutorial));
+  gear.addEventListener("click", () => openSettings(scene));
   scene.append(gear);
   if (skipLesson) scene.append(lessonCard(hubCopy(coarsePointer()), skipLesson));
   host.append(scene);
@@ -563,7 +546,7 @@ function honeCell(
     paintInstanceIcon(canvas, item, weapons, items, abilities);
     stampLevel(canvas, item.level);
     slot.append(canvas);
-    if (item.kind === "weapon") bindWeaponTip(slot, weaponById(item.catalogId as WeaponId));
+    if (item.kind === "weapon") bindWeaponTip(slot, item.catalogId, item.level);
     else if (item.kind === "gear") {
       const gear = itemById(item.catalogId);
       if (gear) bindGearTip(slot, gear, item.level);
@@ -586,7 +569,7 @@ function paintInstanceIcon(
   items: Readonly<Record<string, HTMLCanvasElement>>,
   abilities: Readonly<Record<string, HTMLCanvasElement>>,
 ): void {
-  if (item.kind === "weapon") paintWeaponIcon(canvas, weapons[item.catalogId as WeaponId]);
+  if (item.kind === "weapon") paintWeaponIcon(canvas, weapons[weaponBaseId(item.catalogId)]);
   else if (item.kind === "gear") paintItemIcon(canvas, items[item.catalogId]);
   else paintItemIcon(canvas, abilities[item.catalogId]);
 }
@@ -610,7 +593,7 @@ function paintInventory(
   abilities: Readonly<Record<string, HTMLCanvasElement>>,
 ): void {
   paintShell(host);
-  host.style.overflow = "auto";
+  host.style.overflow = "hidden";
   const page = document.createElement("div");
   page.className = "dungeon-inventory";
   const note = document.createElement("div");
@@ -698,7 +681,6 @@ function equipmentRow(
   row.style.gap = "calc(10 * var(--hud))";
   row.style.flexWrap = "wrap";
   const weaponInst = instanceById(loadout, loadout.weapon);
-  const worn = weaponInst?.kind === "weapon" ? weaponById(weaponInst.catalogId as WeaponId) : weaponById(kit.weapon);
   const weaponSlot = document.createElement("button");
   weaponSlot.type = "button";
   weaponSlot.className = weaponInst && (hone.target === weaponInst.id || hone.copy === weaponInst.id)
@@ -716,9 +698,9 @@ function equipmentRow(
   icon.style.height = "calc(72 * var(--hud))";
   weaponSlot.append(icon);
   if (weaponInst) {
-    paintWeaponIcon(icon, weapons[weaponInst.catalogId as WeaponId]);
+    paintWeaponIcon(icon, weapons[weaponBaseId(weaponInst.catalogId)]);
     stampLevel(icon, weaponInst.level);
-    bindWeaponTip(weaponSlot, worn);
+    bindWeaponTip(weaponSlot, weaponInst.catalogId, weaponInst.level);
     armDrag(weaponSlot, weaponInst.id, "weapon");
   }
   row.append(weaponSlot);
@@ -846,10 +828,9 @@ function bankRow(
       if (item.count > 1) stampCount(slot.canvas, item.count);
       bindTip(slot.button, "Gold", "Coins carried out of the dungeon to the base.");
     } else if (item?.kind === "weapon") {
-      const weapon = weaponById(item.catalogId as WeaponId);
-      paintWeaponIcon(slot.canvas, weapons[item.catalogId as WeaponId]);
+      paintWeaponIcon(slot.canvas, weapons[weaponBaseId(item.catalogId)]);
       stampLevel(slot.canvas, item.level);
-      bindWeaponTip(slot.button, weapon);
+      bindWeaponTip(slot.button, item.catalogId, item.level);
     } else if (item?.kind === "gear") {
       const gear = itemById(item.catalogId);
       paintItemIcon(slot.canvas, items[item.catalogId]);
@@ -875,7 +856,7 @@ function bankRow(
 
 function cellName(item: { kind: ShelfKind; catalogId?: string }): string {
   if (item.kind === "gold") return "Gold";
-  if (item.kind === "weapon" && item.catalogId) return weaponById(item.catalogId as WeaponId).name;
+  if (item.kind === "weapon" && item.catalogId) return weaponName(item.catalogId);
   if (item.kind === "gear" && item.catalogId) return itemById(item.catalogId)?.name ?? "Item";
   if (item.kind === "ability" && item.catalogId) return heroAbilityName(item.catalogId);
   return "Ability";
@@ -926,6 +907,28 @@ function gearCard(gear: GearItem, level: number): HTMLElement {
   return root;
 }
 
+const CHIP_LABEL: Record<StatKey, [string, string]> = {
+  maxHp: ["Max HP", "#f4efe4"],
+  maxMp: ["Max MP", "#8eb7e8"],
+  weaponPower: ["Weapon Power", "#d4bc82"],
+  abilityPower: ["Ability Power", "#d4bc82"],
+  phys: ["Physical resist", "#f0e2c4"],
+  fireRes: ["Fire resist", "#e2582a"],
+  earthRes: ["Earth resist", "#9a7434"],
+  poisonRes: ["Poison resist", "#5fae3a"],
+  waterRes: ["Water resist", "#3a7fd4"],
+  iceRes: ["Ice resist", "#bfe6f5"],
+  dodge: ["Dodge", "#c9b3ef"],
+  critChance: ["Crit chance", "#e7c98a"],
+  critShare: ["Crit damage", "#e2582a"],
+  physDmg: ["Physical damage", "#f0e2c4"],
+  fireDmg: ["Fire damage", "#e2582a"],
+  earthDmg: ["Earth damage", "#9a7434"],
+  poisonDmg: ["Poison damage", "#5fae3a"],
+  waterDmg: ["Water damage", "#3a7fd4"],
+  iceDmg: ["Ice damage", "#bfe6f5"],
+};
+
 function gearChips(gear: GearItem, level: number): HTMLElement[] {
   const chips: HTMLElement[] = [];
   const add = (label: string, value: string, color: string): void => {
@@ -939,20 +942,13 @@ function gearChips(gear: GearItem, level: number): HTMLElement[] {
     chip.append(name, number);
     chips.push(chip);
   };
-  const maxHp = scaled(gear.maxHp, level);
-  const weaponPower = scaled(gear.weaponPower, level);
-  const phys = scaled(gear.phys, level);
-  const elem = scaled(gear.elem, level);
-  const dodge = scaled(gear.dodge, level);
-  const critChance = scaled(gear.critChance, level);
-  const critShare = scaled(gear.critShare, level);
-  if (maxHp) add("Max HP", `+${plain(maxHp)}`, "#f4efe4");
-  if (weaponPower) add("Weapon Power", `+${plain(weaponPower)}`, "#d4bc82");
-  if (phys) add("Physical resist", `+${plain(phys)}`, "#f0e2c4");
-  if (elem) add("Element resist", `+${plain(elem)}`, "#7eb6ee");
-  if (dodge) add("Dodge", percent(pointChance(dodge)), "#c9b3ef");
-  if (critChance) add("Crit chance", percent(pointChance(critChance)), "#e7c98a");
-  if (critShare) add("Crit damage", `+${percent(critShare)}`, "#e2582a");
+  for (const key of statKeysOf(gear)) {
+    const value = scaled(gear[key], level);
+    if (!value) continue;
+    const [label, color] = CHIP_LABEL[key];
+    if (key.endsWith("Dmg")) add(label, `+${plain(value)}%`, color);
+    else add(label, `+${plain(value)}`, color);
+  }
   return chips;
 }
 
@@ -960,8 +956,8 @@ function plain(value: number): string {
   return String(Math.round(value * 1e10) / 1e10);
 }
 
-function percent(value: number): string {
-  return `${plain(value * 100)}%`;
+function percent(fraction: number): string {
+  return `${Math.round(fraction * 1000) / 10}%`;
 }
 
 function iconButton(onClick: () => void, worn: boolean): { button: HTMLButtonElement; canvas: HTMLCanvasElement } {
@@ -1028,19 +1024,19 @@ function stampCount(canvas: HTMLCanvasElement, count: number): void {
   ctx.fillText(String(count), 42, 42);
 }
 
-function bindWeaponTip(el: HTMLElement, weapon: WeaponDef): void {
+function bindWeaponTip(el: HTMLElement, catalogId: string, level: number): void {
   el.style.cursor = "pointer";
-  bindCardTip(el, () => weaponCard(weapon));
+  bindCardTip(el, () => weaponCard(weaponOf(catalogId), catalogId, level));
 }
 
-function weaponCard(weapon: WeaponDef): HTMLElement {
+function weaponCard(weapon: WeaponDef, catalogId: string, level: number): HTMLElement {
   const root = document.createElement("div");
   root.className = "dungeon-ability-card";
   const head = document.createElement("div");
   head.className = "dungeon-ability-head";
     const title = document.createElement("div");
   title.className = "dungeon-ability-name";
-  title.textContent = weapon.name;
+  title.textContent = weaponName(catalogId);
   head.append(title);
   const stats = document.createElement("div");
   stats.className = "dungeon-ability-stats";
@@ -1050,6 +1046,15 @@ function weaponCard(weapon: WeaponDef): HTMLElement {
     weaponChip("Magazine", weapon.magazine === null ? "None" : String(weapon.magazine), "#d4bc82"),
   );
   if (weapon.twice) stats.append(weaponChip("Hits", "2", "#f0e2c4"));
+  const version = weaponVersion(catalogId);
+  if (version) {
+    for (const key of statKeysOf(version.bonus)) {
+      const value = scaled(version.bonus[key], level);
+      if (!value) continue;
+      const [label, color] = CHIP_LABEL[key];
+      stats.append(weaponChip(label, key.endsWith("Dmg") ? `+${plain(value)}%` : `+${plain(value)}`, color));
+    }
+  }
   const diagram = document.createElement("canvas");
   const cell = 14;
   const gap = 3;
@@ -1194,14 +1199,6 @@ function slotRow(
   return box;
 }
 
-const HERO_ELEMENTS: readonly { name: string; color: string }[] = [
-  { name: "Fire", color: "#e2582a" },
-  { name: "Earth", color: "#9a7434" },
-  { name: "Poison", color: "#5fae3a" },
-  { name: "Water", color: "#3a7fd4" },
-  { name: "Ice", color: "#bfe6f5" },
-];
-
 function heroCard(bonus: GearBonus): HTMLElement {
   const box = panel();
   box.classList.add("dungeon-hero-panel");
@@ -1215,29 +1212,38 @@ function heroCard(bonus: GearBonus): HTMLElement {
   const sheet = document.createElement("div");
   sheet.className = "dungeon-hero-sheet";
   const attrs = heroAttributes();
-  sheet.append(
+  const groups = [
     heroGroup("Body", [
       ["Max HP", String(HERO_HP + bonus.maxHp)],
-      ["Max MP", attrText(attrs, "MaxMp")],
+      ["Max MP", String(Number(attrText(attrs, "MaxMp")) + bonus.maxMp)],
     ]),
     heroGroup("Power", [
-      ["Weapon Power", withGear("100%", bonus.weaponPower)],
-      ["Ability Power", "100%"],
+      ["Weapon Power", plain(bonus.weaponPower)],
+      ["Ability Power", plain(bonus.abilityPower)],
     ]),
     heroGroup("Resistance", [
       ["Physical", plain(bonus.phys)],
-      ...HERO_ELEMENTS.map((element) => [element.name, withGear("0%", bonus.elem), element.color] as const),
+      ["Fire", plain(bonus.fireRes), "#e2582a"],
+      ["Earth", plain(bonus.earthRes), "#9a7434"],
+      ["Poison", plain(bonus.poisonRes), "#5fae3a"],
+      ["Water", plain(bonus.waterRes), "#3a7fd4"],
+      ["Ice", plain(bonus.iceRes), "#bfe6f5"],
     ]),
     heroGroup("Chance", [
-      ["Dodge", percent(pointChance(bonus.dodge))],
-      ["Crit chance", percent(pointChance(bonus.critChance))],
-      ["Crit damage", percent(2 + bonus.critShare)],
+      ["Dodge", plain(bonus.dodge)],
+      ["Crit chance", percent(Math.min(1, HERO_CRIT_CHANCE + pointChance(bonus.critChance)))],
+      ["Crit damage", plain(bonus.critShare)],
     ]),
-    heroGroup(
-      "Element damage",
-      HERO_ELEMENTS.map((element) => [element.name, "0%", element.color] as const),
-    ),
-  );
+    heroGroup("Bonus Damage", [
+      ["Physical", `${plain(bonus.physDmg)}%`, "#bcac94"],
+      ["Fire", `${plain(bonus.fireDmg)}%`, "#e2582a"],
+      ["Earth", `${plain(bonus.earthDmg)}%`, "#9a7434"],
+      ["Poison", `${plain(bonus.poisonDmg)}%`, "#5fae3a"],
+      ["Water", `${plain(bonus.waterDmg)}%`, "#3a7fd4"],
+      ["Ice", `${plain(bonus.iceDmg)}%`, "#bfe6f5"],
+    ]),
+  ].filter((group) => group !== null);
+  sheet.append(...groups);
   row.append(portrait, sheet);
   box.append(row);
   void loadSprites().then((sprites) => {
@@ -1247,11 +1253,8 @@ function heroCard(bonus: GearBonus): HTMLElement {
   return box;
 }
 
-function withGear(base: string, bonus: number): string {
-  return bonus > 0 ? `${base} + ${plain(bonus)}` : base;
-}
-
-function heroGroup(title: string, rows: readonly (readonly [string, string, string?])[]): HTMLElement {
+function heroGroup(title: string, rows: readonly (readonly [string, string, string?])[]): HTMLElement | null {
+  if (rows.length === 0) return null;
   const group = document.createElement("section");
   group.className = "dungeon-hero-group";
   const label = document.createElement("h3");

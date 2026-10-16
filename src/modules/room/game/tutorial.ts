@@ -37,7 +37,7 @@ const STATIC_COPY: Partial<Record<LessonStep, string>> = {
   blink: "Right-click to pick a cell. Only legal cells are lit. Left-click one. Right-click again cancels and does not spend a charge.",
   wait: "X skips your action. The world still moves.",
   finish: "A skeleton's bite is not drawn ahead of time. It hits the orthogonal neighbor, not a diagonal. Finish it.",
-  pick: "Pick the weapon you start with. The doors open when the enemy is dead. Tab opens the floor map. This lesson is one room.",
+  pick: "Pick a weapon to try it. The doors open when the enemy is dead. Tab opens the floor map. This lesson is one room.",
 };
 
 /** Удары урока в порядке WEAPONS. Меч — шаг attack. Сразу после пистолета — R. */
@@ -94,7 +94,7 @@ const PHONE_COPY: Partial<Record<LessonStep, string>> = {
   reload: "The pistol is not full. Tap the weapon to reload. This spends the turn. An empty pistol reloads when you confirm an attack. The rifle and shotgun do not.",
   blink: "Tap Blink, then tap a lit tile. Tap Blink again to cancel. A cancel does not spend a charge.",
   wait: "Tap Wait. The world still moves.",
-  pick: "Pick the weapon you start with. The doors open when the enemy is dead. Tap the minimap to open the floor map, and × to close it. This lesson is one room.",
+  pick: "Pick a weapon to try it. The doors open when the enemy is dead. Tap the minimap to open the floor map, and × to close it. This lesson is one room.",
 };
 
 const PHONE_SWING = "Tap the weapon, then tap a tile. Tap the weapon again to cancel. A miss still spends the turn.";

@@ -95,6 +95,24 @@ const decoded = new Map<string, Promise<AudioBuffer | null>>();
 let generation = 0;
 let current: { source: AudioBufferSourceNode; gain: GainNode } | null = null;
 
+/** Декодирует все семь треков заранее, чтобы это не попадало на первые секунды боя. */
+export function preloadTracks(onProgress?: (ratio: number) => void): Promise<void> {
+  if (typeof AudioContext === "undefined") {
+    onProgress?.(1);
+    return Promise.resolve();
+  }
+  const ctx = soundContext();
+  let done = 0;
+  return Promise.all(
+    TRACKS.map((url) =>
+      loadTrack(ctx, url).finally(() => {
+        done += 1;
+        onProgress?.(done / TRACKS.length);
+      }),
+    ),
+  ).then(() => undefined);
+}
+
 /** Случайный трек из семи. По окончании — другой, не из двух предыдущих. */
 export function installDungeonMusic(): void {
   if (armed || started) return;

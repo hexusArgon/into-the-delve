@@ -22,7 +22,7 @@ import { drawExitPad, drawMapOverlay, drawMinimap, drawPortalPad, hitMapRoom, ty
 import { DAMAGE_INK, damageFan, damageLabel, type DamageHit } from "./damage-float.ts";
 import { Motion, type Pose } from "./motion.ts";
 import type { Door } from "../data/rooms.ts";
-import { weaponById, type WeaponId } from "../data/weapons.ts";
+import { weaponBaseId, weaponById, weaponOf, type WeaponId } from "../data/weapons.ts";
 import {
   DIRS,
   acolyteAuraCells,
@@ -604,7 +604,7 @@ function drawLoot(
   for (const drop of loot) {
     const art =
       drop.kind === "weapon"
-        ? sprites.weapons[drop.catalogId as WeaponId]
+        ? sprites.weapons[weaponBaseId(drop.catalogId)]
         : drop.kind === "ability"
           ? sprites.abilities[drop.catalogId]
           : sprites.items[drop.catalogId];

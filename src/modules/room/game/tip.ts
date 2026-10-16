@@ -1,4 +1,5 @@
 import type { AbilityView } from "../data/hero-abilities.ts";
+import { coarsePointer } from "./tutorial.ts";
 
 let tip: HTMLElement | null = null;
 let tipHover = false;
@@ -35,8 +36,9 @@ export function bindTip(
   name: string | (() => string),
   text: string | (() => string),
   nameColor?: string | (() => string | undefined),
+  press = false,
 ): void {
-  const show = (event: PointerEvent): void => {
+  const show = (anchor: HTMLElement | null, event: PointerEvent | null): void => {
     const node = tipBox();
     node.replaceChildren();
     const title = document.createElement("div");
@@ -46,16 +48,24 @@ export function bindTip(
     title.style.fontWeight = "700";
     const body = document.createElement("div");
     body.textContent = typeof text === "function" ? text() : text;
-    body.style.marginTop = "calc(4 * var(--hud))";
+    body.style.marginTop = "4px";
     body.style.color = "#d4bc82";
     body.style.whiteSpace = "pre-wrap";
     node.append(title, body);
     node.style.pointerEvents = "none";
-    node.style.maxWidth = "calc(320 * var(--hud))";
     node.style.display = "block";
-    moveTip(event);
+    if (press && anchor) placeTouchTip(anchor);
+    else if (event) {
+      node.style.maxWidth = "calc(320 * var(--hud))";
+      node.classList.remove("is-side");
+      moveTip(event);
+    }
   };
-  el.addEventListener("pointerenter", show);
+  if (press) {
+    el.addEventListener("click", () => show(el, null));
+    return;
+  }
+  el.addEventListener("pointerenter", (event) => show(null, event));
   el.addEventListener("pointermove", moveTip);
   el.addEventListener("pointerleave", hideTip);
 }
@@ -93,6 +103,27 @@ function placeTip(clientX: number, clientY: number): void {
   node.style.top = `${y}px`;
 }
 
+/** Сбоку от поля: иконка слева — карточка справа, и наоборот. */
+function placeTouchTip(anchor: HTMLElement): void {
+  const node = tipBox();
+  node.classList.add("is-side");
+  node.style.font = "14px Palatino Linotype, Palatino, serif";
+  node.style.maxWidth = "min(230px, 46vw)";
+  const width = node.offsetWidth || 230;
+  const height = node.offsetHeight || 80;
+  const rect = anchor.getBoundingClientRect();
+  const focus = document.querySelector(".dungeon-focus:not([hidden])");
+  const focusBox = focus instanceof HTMLElement ? focus.getBoundingClientRect() : null;
+  const onLeft = rect.left + rect.width / 2 < window.innerWidth / 2;
+  const x = onLeft ? Math.max(8, window.innerWidth - width - 8) : 8;
+  let y = 8;
+  const overlaps = focusBox !== null && focusBox.width > 0 && x < focusBox.right && x + width > focusBox.left;
+  if (overlaps) y = focusBox.bottom + 8;
+  if (y + height > window.innerHeight - 8) y = Math.max(8, window.innerHeight - height - 8);
+  node.style.left = `${x}px`;
+  node.style.top = `${y}px`;
+}
+
 export function moveTip(event: PointerEvent): void {
   placeTip(event.clientX, event.clientY);
 }
@@ -104,24 +135,34 @@ export function hideTip(): void {
   tip.style.display = "none";
   tip.style.pointerEvents = "none";
   tip.style.maxWidth = "calc(320 * var(--hud))";
+  tip.style.font = "calc(14 * var(--hud)) Palatino Linotype, Palatino, serif";
+  tip.classList.remove("is-side");
 }
 
 /** Карточка стоит на месте, пока курсор на ней или на иконке. */
-export function bindCardTip(el: HTMLElement, render: () => HTMLElement): void {
-  const show = (event: PointerEvent): void => {
+export function bindCardTip(el: HTMLElement, render: () => HTMLElement, press = false): void {
+  const show = (anchor: HTMLElement | null, event: PointerEvent | null): void => {
     window.clearTimeout(hideTimer);
     const node = tipBox();
     node.replaceChildren(render());
-    node.style.pointerEvents = "auto";
-    node.style.maxWidth = "calc(340 * var(--hud))";
+    node.style.pointerEvents = press ? "none" : "auto";
     node.style.display = "block";
-    placeTip(event.clientX, event.clientY);
+    if (press && anchor) placeTouchTip(anchor);
+    else if (event) {
+      node.style.maxWidth = "calc(340 * var(--hud))";
+      node.classList.remove("is-side");
+      placeTip(event.clientX, event.clientY);
+    }
   };
-  el.addEventListener("pointerenter", show);
+  if (press) {
+    el.addEventListener("click", () => show(el, null));
+    return;
+  }
+  el.addEventListener("pointerenter", (event) => show(null, event));
   el.addEventListener("pointerleave", () => scheduleHide());
 }
 
-export function bindAbilityTip(el: HTMLElement, read: () => AbilityView | null): void {
+export function bindAbilityTip(el: HTMLElement, read: () => AbilityView | null, press = false): void {
   bindCardTip(el, () => {
     const card = read();
     if (card) return abilityCard(card);
@@ -136,7 +177,19 @@ export function bindAbilityTip(el: HTMLElement, read: () => AbilityView | null):
     body.style.color = "#d4bc82";
     empty.append(title, body);
     return empty;
-  });
+  }, press);
+}
+
+/** На телефоне кнопка вне поля закрывает прошлое описание. Карточка откроется своим кликом следом. */
+export function dismissTipsOnPress(host: HTMLElement, board: HTMLElement): void {
+  if (!coarsePointer()) return;
+  host.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (tipBox().contains(target)) return;
+    if (target === board) return;
+    hideTip();
+  }, true);
 }
 
 function scheduleHide(): void {

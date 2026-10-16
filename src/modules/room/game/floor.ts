@@ -7,7 +7,7 @@ import { HERO_ABILITIES } from "../data/hero-abilities.ts";
 import { WEAPONS } from "../data/weapons.ts";
 import type { RunAbility } from "../data/hero-abilities.ts";
 import { EMPTY_GEAR, type GearBonus } from "../data/items.ts";
-import { weaponById, type WeaponId } from "../data/weapons.ts";
+import { weaponById, WEAPON_VERSIONS, type WeaponId } from "../data/weapons.ts";
 import { rollDropCount } from "./adventure.ts";
 import {
   DIRS,
@@ -570,7 +570,7 @@ function rollOne(rng: () => number): CarryLoot {
   const roll = rng();
   const kind = roll < 1 / 3 ? "gear" : roll < 2 / 3 ? "weapon" : "ability";
   const pool =
-    kind === "gear" ? GEAR.map((item) => item.id) : kind === "weapon" ? WEAPONS.map((weapon) => weapon.id) : HERO_ABILITIES.map((row) => row.id);
+    kind === "gear" ? GEAR.map((item) => item.id) : kind === "weapon" ? [...WEAPONS.map((weapon) => weapon.id), ...WEAPON_VERSIONS.map((row) => row.id)] : HERO_ABILITIES.map((row) => row.id);
   return { kind, catalogId: pool[Math.floor(rng() * pool.length)]! };
 }
 

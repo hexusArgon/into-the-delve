@@ -321,29 +321,43 @@ function slideRack(ctx: AudioContext, t: number, facing: Dir, heavy: boolean): v
 
 const weaponClips = new Map<WeaponId, AudioBuffer>();
 
-export function preloadSwordBlows(): void {
-  if (typeof AudioContext === "undefined") return;
+export function preloadSwordBlows(onProgress?: (ratio: number) => void): Promise<void> {
+  if (typeof AudioContext === "undefined") {
+    onProgress?.(1);
+    return Promise.resolve();
+  }
+  const jobs: Promise<unknown>[] = [];
   (Object.keys(WEAPON_CLIP) as WeaponId[]).forEach((id) => {
-    void loadUrl(WEAPON_CLIP[id]).then((buffer) => {
-      weaponClips.set(id, buffer);
-    });
+    jobs.push(
+      loadUrl(WEAPON_CLIP[id]).then((buffer) => {
+        weaponClips.set(id, buffer);
+      }),
+    );
   });
   (Object.keys(CLIP) as SwordBlow[]).forEach((kind) => {
-    void loadClip(kind);
+    jobs.push(loadClip(kind));
   });
   BREAKS.forEach((url) => {
-    void loadUrl(url);
+    jobs.push(loadUrl(url));
   });
-  void loadUrl(heroFallUrl);
-  void loadUrl(heroImpactUrl);
+  jobs.push(loadUrl(heroFallUrl), loadUrl(heroImpactUrl));
   HERO_DEATHS.forEach((url) => {
-    void loadUrl(url);
+    jobs.push(loadUrl(url));
   });
   [automatonSwapUrl, automatonDeathUrl, barrelFireUrl, barrelWaterUrl, barrelIceUrl, barrelPoisonUrl, barrelOilUrl].forEach(
     (url) => {
-      void loadUrl(url);
+      jobs.push(loadUrl(url));
     },
   );
+  let done = 0;
+  return Promise.all(
+    jobs.map((job) =>
+      job.catch(() => undefined).finally(() => {
+        done += 1;
+        onProgress?.(done / jobs.length);
+      }),
+    ),
+  ).then(() => undefined);
 }
 
 function loadUrl(url: string): Promise<AudioBuffer> {

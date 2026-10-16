@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { UNIT, itemById } from "./items.ts";
+import { UNIT, grantBonus, itemById } from "./items.ts";
 import { heroAbilityById } from "./hero-abilities.ts";
 import {
   abilityAmount,
   abilitySplash,
   fillEmptyWear,
   grantHeroAbilities,
+  grantBaseWeapons,
   addInstance,
   equippedWeaponHit,
   freshLoadout,
@@ -22,16 +23,14 @@ const belt = itemById("belt");
 assert.ok(belt?.maxHp);
 assert.equal(scaled(belt?.maxHp, 0), belt?.maxHp);
 assert.equal(scaled(belt?.maxHp, 1), (belt?.maxHp ?? 0) * 1.2);
-assert.equal(scaled(belt?.maxHp, 20), (belt?.maxHp ?? 0) * levelFactor(20));
+assert.equal(scaled(belt?.maxHp, 20), grantBonus((belt?.maxHp ?? 0) * levelFactor(20)));
 assert.equal(scaled(0, 5), 0);
 assert.equal(scaled(undefined, 3), 0);
+assert.equal(scaled(10, 4), 20.74);
 
-const common = itemById("fang");
-assert.equal(scaled(common?.maxHp, 4), 0);
-
-const mirror = itemById("whisper-mirror");
+const mirror = itemById("crit-odds");
 const points = scaled(mirror?.critChance, 1);
-assert.equal(points, (mirror?.critChance ?? 0) * 1.2);
+assert.equal(points, grantBonus((mirror?.critChance ?? 0) * 1.2));
 assert.equal(pointChance(points), 1 - armorFactor(points));
 assert.notEqual(pointChance(points), points * 1.2);
 
@@ -79,17 +78,26 @@ const bare = freshLoadout();
 bare.weapon = null;
 assert.equal(equippedWeaponHit(bare), 0);
 
+const sharpenedSword = freshLoadout();
+const swordRow = sharpenedSword.items.find((item) => item.kind === "weapon");
+assert.ok(swordRow);
+swordRow.level = 4;
+assert.equal(equippedWeaponHit(sharpenedSword), 100);
+
 const bolt = addInstance(freshLoadout(), "ability", "bolt", 1);
 assert.equal(abilityAmount(bolt), (heroAbilityById("bolt")?.damage ?? 0) * 1.2);
 assert.equal(abilitySplash(bolt), (heroAbilityById("bolt")?.splash ?? 0) * 1.2);
 const shard = addInstance(freshLoadout(), "ability", "shard", 5);
-assert.equal(abilityAmount(shard), (heroAbilityById("shard")?.damage ?? 0) * 1.2 ** 5);
+assert.equal(abilityAmount(shard), grantBonus((heroAbilityById("shard")?.damage ?? 0) * 1.2 ** 5));
 assert.equal(abilitySplash(shard), 0);
 assert.equal(heroAbilityById("bolt")?.mp, 40);
 assert.equal(heroAbilityById("ram"), undefined);
 const granted = freshLoadout();
 grantHeroAbilities(granted);
 assert.equal(granted.items.filter((item) => item.kind === "ability").length, 6);
+grantBaseWeapons(granted);
+assert.equal(granted.items.filter((item) => item.kind === "weapon").length, 9);
+assert.equal(granted.weapon !== null, true);
 fillEmptyWear(granted);
 assert.equal(granted.wornAbilities.filter((id) => id !== null).length, 4);
 assert.equal(granted.worn.filter((id) => id !== null).length, 2);
@@ -115,7 +123,7 @@ const dressed = freshLoadout();
 const piece = dressed.items.find((item) => item.catalogId === "belt")!;
 piece.level = 1;
 dressed.worn[0] = piece.id;
-assert.equal(wornGearBonus(dressed).maxHp, (itemById("belt")?.maxHp ?? 0) * 1.2);
+assert.equal(wornGearBonus(dressed).maxHp, grantBonus((itemById("belt")?.maxHp ?? 0) * 1.2));
 
 assert.equal(UNIT.dodge > 0, true);
 

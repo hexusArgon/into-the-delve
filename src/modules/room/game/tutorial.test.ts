@@ -54,14 +54,14 @@ assert.equal(lessonText("reload"), "R reloads. The pistol is not full, so this s
 assert.equal(lessonText("blink"), "Right-click to pick a cell. Only legal cells are lit. Left-click one. Right-click again cancels and does not spend a charge.");
 assert.equal(lessonText("wait"), "X skips your action. The world still moves.");
 assert.equal(lessonText("finish"), "A skeleton's bite is not drawn ahead of time. It hits the orthogonal neighbor, not a diagonal. Finish it.");
-assert.equal(lessonText("pick"), "Pick the weapon you start with. The doors open when the enemy is dead. Tab opens the floor map. This lesson is one room.");
+assert.equal(lessonText("pick"), "Pick a weapon to try it. The doors open when the enemy is dead. Tab opens the floor map. This lesson is one room.");
 assert.equal(lessonText("finish", true), lessonText("finish"));
 assert.equal(lessonText("move", true), "Tap an arrow. The hero steps one tile that way. After a step, the monster moves.");
 assert.equal(lessonText("turn", true), "Tap Turn. The hero turns 90 degrees clockwise. Turning is not a turn, and the monster does not move.");
 assert.equal(lessonText("reload", true), "The pistol is not full. Tap the weapon to reload. This spends the turn. An empty pistol reloads when you confirm an attack. The rifle and shotgun do not.");
 assert.equal(lessonText("blink", true), "Tap Blink, then tap a lit tile. Tap Blink again to cancel. A cancel does not spend a charge.");
 assert.equal(lessonText("wait", true), "Tap Wait. The world still moves.");
-assert.equal(lessonText("pick", true), "Pick the weapon you start with. The doors open when the enemy is dead. Tap the minimap to open the floor map, and × to close it. This lesson is one room.");
+assert.equal(lessonText("pick", true), "Pick a weapon to try it. The doors open when the enemy is dead. Tap the minimap to open the floor map, and × to close it. This lesson is one room.");
 assert.equal(hubCopy(false), HUB_COPY);
 assert.equal(hubCopy(true), "Tap the path on the right. That starts a run.");
 for (const weapon of WEAPONS) {
