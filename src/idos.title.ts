@@ -15,7 +15,7 @@
 // one project has one identity, and DEV/PROD is an environment on top of that identity.
 
 /** Canonical (production) Title id. Empty only in the raw template, before the platform seeds it. */
-export const IDOS_TITLE_ID = "";
+export const IDOS_TITLE_ID = "H406PWM7";
 
 /** Build key for this title, if the title enforces one. */
 export const IDOS_BUILD_KEY = "";
@@ -32,14 +32,14 @@ export const IDOS_DEFAULT_ENV: "prod" | "dev" = "prod";
  * Kept as baked metadata for code that wants to know the title's web3 origin BEFORE there is a
  * session (`client.title.getTitlePublicConfiguration()` requires one).
  */
-export const IDOS_WEB3 = false;
+export const IDOS_WEB3 = true;
 
 /**
  * NetworkID the wallet login challenge is issued for (e.g. "bsc", "base", "solana"). Empty on
  * web2 titles. Baked for the same reason as everything else here: the login screen needs it before
  * there is a session, and the title's blockchain config is only readable once logged in.
  */
-export const IDOS_WEB3_NETWORK_ID = "";
+export const IDOS_WEB3_NETWORK_ID = "solana";
 
 /**
  * WalletConnect Cloud / Reown project id (dashboard.reown.com). Enables MOBILE wallet login via

@@ -31,7 +31,12 @@ export default defineConfig(() => {
   );
   return {
     plugins: [react()],
-    resolve: { alias },
+    resolve: {
+      alias: {
+        ...alias,
+        "viem/tempo/zones": fromHere("./src/shims/viem-tempo-zones.ts"),
+      },
+    },
     server: { host: "127.0.0.1", port: 5180, strictPort: true },
   };
 });

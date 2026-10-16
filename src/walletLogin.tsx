@@ -1,37 +1,112 @@
-import { LazyWalletLogin } from "@idosgames/wallet/react/lazy";
+import { useState, type CSSProperties, type ReactNode } from "react";
+import type { IDosGamesClient } from "@idosgames/core";
 import type { RenderLinkWallet } from "@idosgames/app-shell";
 import type { LoginScreenExtras } from "./base/login/LoginScreen";
-import { ENV_WALLETCONNECT_PROJECT_ID } from "./env";
-import {
-  IDOS_WEB3_NETWORK_ID,
-  IDOS_WEB3_WALLETCONNECT_PROJECT_ID,
-} from "./idos.title";
+import { IDOS_WEB3_NETWORK_ID } from "./idos.title";
 
-// Wallet sign-in seam — ON by default: every project offers "Sign in with wallet".
-//
-// The button uses the SDK's default EVM chain set (no `chains` prop). The challenge network comes
-// from the title (IDOS_WEB3_NETWORK_ID, baked by the platform); the "bsc" fallback keeps the button
-// alive on titles that did not pick a network at creation. A title whose Blockchain config is empty
-// will surface the server's error under the button — fix that by configuring the network (backend
-// MCP: get_blockchain / save_blockchain), not by hiding the button. To restrict the chains, import
-// them from this same subpath (mainnet, bsc, polygon, base, arbitrum, optimism, sepolia,
-// polygonAmoy — plain objects, safe to import) and pass `chains={[…]}`.
-//
-// For a title created with the web3 toggle the platform regenerates this file with the title's own
-// network. Keeping the seam in its own file is what makes that swap (and your own edits) safe.
-//
-// The import is "@idosgames/wallet/react/lazy", NOT "@idosgames/wallet/react". The wallet stack
-// (Reown AppKit + wagmi/viem) is megabytes of code most players never need; the lazy entry keeps it
-// out of the first load until the player actually taps sign-in.
-//
-// walletConnectProjectId adds MOBILE wallets via the WalletConnect QR/deep-link modal; without it
-// the button only works with injected wallets (MetaMask & co) and mobile login is unavailable. It
-// comes from the title's blockchain config (IDOS_WEB3_WALLETCONNECT_PROJECT_ID, baked by the
-// platform); VITE_WALLETCONNECT_PROJECT_ID in .env.local is a local-dev fallback.
-//
-// No `chains` is passed on purpose: the button falls back to the SDK's default EVM chain set, which
-// is the SAME list the in-game wallet panel uses. That shared list is what lets the login and the
-// panel share one wallet config, so a wallet connected here stays connected in the game.
+// Into the Delve signs in on Solana. This title has no WalletConnect project id, so the button
+// talks to the injected browser wallet (Phantom and the same window.solana slot) and never opens
+// a mobile WalletConnect link.
+
+const SOLANA_NETWORK_ID = IDOS_WEB3_NETWORK_ID || "solana";
+
+type SolanaPublicKey = { toString(): string };
+
+type SolanaProvider = {
+  publicKey: SolanaPublicKey | null;
+  connect(): Promise<{ publicKey: SolanaPublicKey }>;
+  signMessage(
+    message: Uint8Array,
+    display?: "utf8",
+  ): Promise<{ signature: Uint8Array } | Uint8Array>;
+};
+
+function browserSolana(): SolanaProvider | null {
+  if (typeof window === "undefined") return null;
+  const host = window as Window & {
+    phantom?: { solana?: SolanaProvider };
+    solana?: SolanaProvider;
+  };
+  return host.phantom?.solana ?? host.solana ?? null;
+}
+
+function signatureHex(bytes: Uint8Array): string {
+  let hex = "0x";
+  for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
+  return hex;
+}
+
+async function signChallenge(provider: SolanaProvider, message: string): Promise<string> {
+  const signed = await provider.signMessage(new TextEncoder().encode(message), "utf8");
+  const bytes = signed instanceof Uint8Array ? signed : signed.signature;
+  return signatureHex(bytes);
+}
+
+function walletError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (/reject|denied|cancel/i.test(message)) return "Request declined in the wallet.";
+  if (message === "INVALID_WALLET_SIGNATURE") return "The signature does not match the wallet. Please try again.";
+  if (message === "WALLET_CHALLENGE_EXPIRED") return "The request expired. Please try again.";
+  if (message === "PLAY_ACCESS_WALLET_USED_BY_ANOTHER_ACCOUNT") return "This wallet already plays with another account.";
+  return message || "Wallet sign-in failed. Please try again.";
+}
+
+function SolanaWalletButton({
+  client,
+  networkID,
+  disabled,
+  style,
+  label,
+  onDone,
+}: {
+  client: IDosGamesClient;
+  networkID: string;
+  disabled?: boolean;
+  style?: CSSProperties;
+  label: string;
+  onDone: (provider: SolanaProvider, address: string) => Promise<void>;
+}): ReactNode {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <>
+      <button
+        type="button"
+        disabled={disabled || busy}
+        style={style}
+        onClick={() => {
+          setError(null);
+          const provider = browserSolana();
+          if (!provider) {
+            setError("No Solana wallet found in this browser. Install Phantom, then try again.");
+            return;
+          }
+          setBusy(true);
+          void (async () => {
+            try {
+              const connected = provider.publicKey
+                ? { publicKey: provider.publicKey }
+                : await provider.connect();
+              await onDone(provider, connected.publicKey.toString());
+            } catch (caught) {
+              setError(walletError(caught));
+            } finally {
+              setBusy(false);
+            }
+          })();
+        }}
+      >
+        {busy ? "Check your wallet…" : label}
+      </button>
+      {error ? (
+        <span role="alert" style={{ display: "block", marginTop: 6, color: "#ff9b9b", fontSize: 13, textAlign: "center" }}>
+          {error}
+        </span>
+      ) : null}
+    </>
+  );
+}
 
 export const renderWalletLogin: LoginScreenExtras["renderWalletLogin"] = ({
   client,
@@ -39,24 +114,23 @@ export const renderWalletLogin: LoginScreenExtras["renderWalletLogin"] = ({
   disabled,
   style,
 }) => (
-  <LazyWalletLogin
+  <SolanaWalletButton
     client={client}
-    networkID={IDOS_WEB3_NETWORK_ID || "bsc"}
-    onAuthenticated={onAuthenticated}
+    networkID={SOLANA_NETWORK_ID}
     disabled={disabled}
     style={style}
-    walletConnectProjectId={
-      IDOS_WEB3_WALLETCONNECT_PROJECT_ID ||
-      ENV_WALLETCONNECT_PROJECT_ID ||
-      undefined
-    }
+    label="Sign in with wallet"
+    onDone={async (provider, address) => {
+      const challenge = await client.auth.requestWalletChallenge(address, SOLANA_NETWORK_ID);
+      if (!challenge.ok) throw new Error(challenge.error);
+      const signature = await signChallenge(provider, challenge.data.Message);
+      const session = await client.auth.loginWithWallet(address, SOLANA_NETWORK_ID, signature);
+      if (!session.ok) throw new Error(session.error);
+      onAuthenticated();
+    }}
   />
 );
 
-// "Link wallet" on the play-access screen (./base/login/PlayAccessScreen) — the same button in link mode. When
-// the title's login mode requires a token balance, a player who signed in another way attaches a
-// wallet to the account by signature, and the server checks the balance against exactly that
-// wallet. `networkID` is the network a requirement needs; the title's own network otherwise.
 export const renderWalletLink: RenderLinkWallet = ({
   client,
   networkID,
@@ -64,17 +138,22 @@ export const renderWalletLink: RenderLinkWallet = ({
   disabled,
   style,
 }) => (
-  <LazyWalletLogin
-    mode="link"
+  <SolanaWalletButton
     client={client}
-    networkID={networkID || IDOS_WEB3_NETWORK_ID || "bsc"}
-    onLinked={onLinked}
+    networkID={networkID || SOLANA_NETWORK_ID}
     disabled={disabled}
     style={style}
-    walletConnectProjectId={
-      IDOS_WEB3_WALLETCONNECT_PROJECT_ID ||
-      ENV_WALLETCONNECT_PROJECT_ID ||
-      undefined
-    }
+    label="Link wallet"
+    onDone={async (provider, address) => {
+      const chain = networkID || SOLANA_NETWORK_ID;
+      const issued = await client.auth.linkWallet(address, chain);
+      if (!issued.ok) throw new Error(issued.error);
+      const message = issued.data.Challenge;
+      if (!message) throw new Error("No challenge was issued.");
+      const signature = await signChallenge(provider, message);
+      const linked = await client.auth.linkWallet(address, chain, signature);
+      if (!linked.ok) throw new Error(linked.error);
+      onLinked(linked.data.PlayAccess ?? null);
+    }}
   />
 );
