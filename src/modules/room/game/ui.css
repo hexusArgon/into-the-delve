@@ -488,6 +488,13 @@ button.dungeon-gear-slot {
   align-items: flex-end;
   gap: calc(16 * var(--hud));
   min-width: 0;
+  pointer-events: none;
+}
+
+.dungeon-hud button,
+.dungeon-hud .dungeon-slot,
+.dungeon-hud .dungeon-portrait,
+.dungeon-hud .dungeon-prompt {
   pointer-events: auto;
 }
 
@@ -525,7 +532,7 @@ button.dungeon-gear-slot {
 
 .dungeon-touch-actions {
   gap: 8px;
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 .dungeon-touch-action {
@@ -1382,6 +1389,13 @@ button.dungeon-prompt {
 @media (max-height: 520px) {
   :root {
     --hud: calc(min(100vw / 1000, 100dvh / 480, 100vh / 480) * 0.9);
+  }
+
+  .dungeon-inventory {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
   }
 
   .dungeon-inventory-board {
