@@ -526,8 +526,12 @@ button.dungeon-gear-slot {
 
 .dungeon-prompts {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
-  gap: calc(44 * var(--hud));
+  column-gap: calc(18 * var(--hud));
+  row-gap: calc(6 * var(--hud));
+  max-width: calc(360 * var(--hud));
 }
 
 .dungeon-touch-actions {
@@ -559,9 +563,9 @@ button.dungeon-gear-slot {
 .dungeon-prompt {
   display: flex;
   align-items: center;
-  gap: calc(16 * var(--hud));
+  gap: calc(8 * var(--hud));
   color: #e6dcc8;
-  font-size: calc(32 * var(--hud));
+  font-size: calc(22 * var(--hud));
   text-shadow: 0 calc(2 * var(--hud)) calc(3 * var(--hud)) #000;
 }
 
@@ -569,15 +573,15 @@ button.dungeon-gear-slot {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: calc(56 * var(--hud));
-  height: calc(52 * var(--hud));
-  padding: 0 calc(14 * var(--hud));
+  min-width: calc(44 * var(--hud));
+  height: calc(36 * var(--hud));
+  padding: 0 calc(10 * var(--hud));
   border: calc(2 * var(--hud)) solid #6e5830;
   border-radius: calc(8 * var(--hud));
   background: #14110e;
   box-shadow: inset 0 0 0 calc(2 * var(--hud)) #2a2116;
   color: #f0e2c4;
-  font: 700 calc(26 * var(--hud)) Palatino Linotype, Palatino, serif;
+  font: 700 calc(18 * var(--hud)) Palatino Linotype, Palatino, serif;
 }
 
 button.dungeon-prompt {
@@ -685,6 +689,11 @@ button.dungeon-prompt {
   .dungeon-hud-center {
     flex: 1 1 auto;
     order: 0;
+    min-width: 0;
+  }
+
+  .dungeon-prompts {
+    max-width: 100%;
   }
 }
 
@@ -1497,7 +1506,6 @@ button.dungeon-prompt {
   .dungeon-bar-num,
   .dungeon-hud-meta,
   .dungeon-ability-key,
-  .dungeon-prompt,
   .dungeon-focus-name {
     font-size: 2.2vh;
   }
@@ -1513,22 +1521,6 @@ button.dungeon-prompt {
 
   .dungeon-gear-slot .dungeon-ability-key {
     font-size: 1.7vh;
-  }
-
-  .dungeon-prompts {
-    gap: 1vw;
-  }
-
-  .dungeon-prompt {
-    gap: 0.5vh;
-  }
-
-  .dungeon-prompt kbd {
-    min-width: 4.6vh;
-    height: 4vh;
-    padding: 0 0.7vh;
-    border-radius: 0.5vh;
-    font-size: 1.9vh;
   }
 
   .dungeon-focus {

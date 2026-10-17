@@ -86,6 +86,15 @@ function prompt(key: string, label: string): HTMLElement {
   return row;
 }
 
+function promptButton(key: string, label: string, onClick: () => void): HTMLButtonElement {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "dungeon-prompt";
+  row.append(...prompt(key, label).childNodes);
+  row.addEventListener("click", onClick);
+  return row;
+}
+
 const CLOCKWISE: readonly Dir[] = ["up", "right", "down", "left"];
 
 function paintBlinkIcon(canvas: HTMLCanvasElement): void {
@@ -268,11 +277,7 @@ export class RoomController {
     center.className = "dungeon-hud-center";
     const prompts = document.createElement("div");
     prompts.className = this.coarse ? "dungeon-prompts dungeon-touch-actions" : "dungeon-prompts";
-    const reload = document.createElement("button");
-    reload.type = "button";
-    reload.className = "dungeon-prompt";
-    reload.append(...prompt("R", "Reload").childNodes);
-    reload.addEventListener("click", () => this.doReload());
+    const reload = this.coarse ? this.phoneAction("Reload", () => this.doReload()) : promptButton("R", "Reload", () => this.doReload());
     this.reloadPrompt = reload;
     prompts.append(
       this.coarse ? this.phoneAction("Turn", () => this.turnClockwise()) : prompt("Shift", "Turn"),
