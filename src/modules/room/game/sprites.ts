@@ -19,6 +19,7 @@ import woodFloorUrl from "../../../../assets/wood-floor.jpg";
 import goldUrl from "../../../../assets/gold.png";
 import exitUrl from "../../../../assets/portal-exit.jpg";
 import { WEAPONS, type WeaponId } from "../data/weapons.ts";
+import { keySprite } from "./sprite-key.ts";
 
 /** Спрайт каждого типа оружия. Name файла — id из таблицы. */
 const weaponFiles = import.meta.glob("../../../../assets/weapons/*.jpg", {
@@ -101,8 +102,19 @@ export interface Sprites {
 export const FLOOR_STONES = 6;
 export const WALL_ROWS = 6;
 
-const KEY_SOLID = 60;
-const KEY_EDGE = 120;
+/** Убирает фон по цвету угла картинки, края смягчает и снимает с них розовый отлив. */
+function keyed(source: HTMLImageElement): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = source.naturalWidth;
+  canvas.height = source.naturalHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return canvas;
+  ctx.drawImage(source, 0, 0);
+  const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  keySprite(frame.data);
+  ctx.putImageData(frame, 0, 0);
+  return canvas;
+}
 
 /** Картинка уже с прозрачностью, фон вырезать не нужно. */
 function plain(source: HTMLImageElement): HTMLCanvasElement {
@@ -143,40 +155,6 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 let spriteProgress: (() => void) | null = null;
-
-/** Убирает фон по цвету угла картинки, края смягчает и снимает с них розовый отлив. */
-function keyed(source: HTMLImageElement): HTMLCanvasElement {
-  const canvas = document.createElement("canvas");
-  canvas.width = source.naturalWidth;
-  canvas.height = source.naturalHeight;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return canvas;
-  ctx.drawImage(source, 0, 0);
-  const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const data = frame.data;
-  const kr = data[0] ?? 255;
-  const kg = data[1] ?? 0;
-  const kb = data[2] ?? 255;
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i] ?? 0;
-    const g = data[i + 1] ?? 0;
-    const b = data[i + 2] ?? 0;
-    const dist = Math.hypot(r - kr, g - kg, b - kb);
-    if (dist < KEY_SOLID) {
-      data[i + 3] = 0;
-      continue;
-    }
-    if (dist >= KEY_EDGE) continue;
-    data[i + 3] = Math.round(((dist - KEY_SOLID) / (KEY_EDGE - KEY_SOLID)) * 255);
-    const spill = Math.min(r, b) - g;
-    if (spill > 0) {
-      data[i] = r - spill;
-      data[i + 2] = b - spill;
-    }
-  }
-  ctx.putImageData(frame, 0, 0);
-  return canvas;
-}
 
 function trimmed(source: HTMLCanvasElement): HTMLCanvasElement {
   const ctx = source.getContext("2d");
