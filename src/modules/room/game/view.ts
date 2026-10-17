@@ -234,7 +234,7 @@ function attackPose(weapon: WeaponId, t: number): AttackPose {
   return { reach: 0.5 - kick * 0.16, along: 0, rot: -kick * 0.28, flash: kick };
 }
 
-/** Патрон летит по линии удара. Дробовик — три дробины на два шага. */
+/** Патрон летит по линии удара. Дробовик — семь дробин конусом на пирамиду из двух шагов. */
 function drawFlyingRound(
   ctx: CanvasRenderingContext2D,
   box: Box,
@@ -250,41 +250,43 @@ function drawFlyingRound(
   const fade = fly > 0.84 ? 1 - (fly - 0.84) / 0.16 : 1;
   const step = DIRS[facing];
   const side = facing === "up" || facing === "down" ? { x: 1, y: 0 } : { x: 0, y: 1 };
+  const shotgun = weapon === "shotgun";
   const range = weaponById(weapon).range;
-  const lanes = [0];
+  const lanes = shotgun ? [-1, -2 / 3, -1 / 3, 0, 1 / 3, 2 / 3, 1] : [0];
   const hop = stepJump(pose, box.size);
   const ox = box.ox + (pose.x + 0.5) * box.size;
   const oy = box.oy + (pose.y + 0.5) * box.size - hop.lift;
   const hx = Math.round(pose.x);
   const hy = Math.round(pose.y);
-  for (const lane of lanes) {
-    let open = range;
-    for (let i = 1; i <= range; i += 1) {
-      const x = hx + step.x * i + side.x * lane;
-      const y = hy + step.y * i + side.y * lane;
-      if (isBlocked(room, x, y)) {
-        open = i - 1;
-        break;
-      }
+  let open = range;
+  for (let i = 1; i <= range; i += 1) {
+    if (isBlocked(room, hx + step.x * i, hy + step.y * i)) {
+      open = i - 1;
+      break;
     }
-    const travel = Math.max(0.55, open);
+  }
+  const travel = Math.max(0.55, open);
+  for (const lane of lanes) {
     const along = 0.28 + fly * travel;
-    const spread = lane * Math.min(1, along / Math.max(1, travel));
+    const spread = lane * (shotgun ? 1.2 : 1) * Math.min(1, along / Math.max(1, travel));
     const px = ox + (step.x * along + side.x * spread) * box.size;
     const py = oy + (step.y * along + side.y * spread) * box.size;
-    const tail = box.size * (weapon === "shotgun" ? 0.16 : 0.28);
+    const tail = box.size * (shotgun ? 0.16 : 0.28);
+    const dirX = step.x * along + side.x * spread;
+    const dirY = step.y * along + side.y * spread;
+    const span = Math.hypot(dirX, dirY) || 1;
     ctx.save();
     ctx.globalAlpha = fade;
     ctx.lineCap = "round";
-    ctx.strokeStyle = weapon === "shotgun" ? "#f4efe4" : "#e7c98a";
-    ctx.lineWidth = Math.max(2, box.size * (weapon === "shotgun" ? 0.035 : 0.055));
+    ctx.strokeStyle = shotgun ? "#f4efe4" : "#e7c98a";
+    ctx.lineWidth = Math.max(2, box.size * (shotgun ? 0.035 : 0.055));
     ctx.beginPath();
-    ctx.moveTo(px - step.x * tail, py - step.y * tail);
+    ctx.moveTo(px - (dirX / span) * tail, py - (dirY / span) * tail);
     ctx.lineTo(px, py);
     ctx.stroke();
     ctx.fillStyle = "#fff8ea";
     ctx.beginPath();
-    ctx.arc(px, py, Math.max(2.2, box.size * (weapon === "shotgun" ? 0.04 : 0.055)), 0, Math.PI * 2);
+    ctx.arc(px, py, Math.max(2.2, box.size * (shotgun ? 0.04 : 0.055)), 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
