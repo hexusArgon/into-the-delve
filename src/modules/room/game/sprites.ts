@@ -133,6 +133,8 @@ function plain(source: HTMLImageElement): HTMLCanvasElement {
  * портит холст, и комната остаётся чёрной. Тот же файл есть рядом со страницей.
  */
 function assetOnPage(url: string): string {
+  // Мелкую картинку Vite встраивает прямо в бандл как data:-адрес: её не с чего переадресовывать.
+  if (/^(data|blob):/i.test(url)) return url;
   try {
     const parsed = new URL(url, window.location.href);
     if (parsed.origin === window.location.origin) return parsed.href;
@@ -161,7 +163,7 @@ let spriteProgress: (() => void) | null = null;
 
 /** WebP и PNG собраны скриптом: фон вырезан, поля обрезаны. */
 function prepared(url: string): boolean {
-  return /\.(webp|png)(?:[?#].*)?$/i.test(url);
+  return /^data:image\/(webp|png)[;,]/i.test(url) || /\.(webp|png)(?:[?#].*)?$/i.test(url);
 }
 
 /** Готовый спрайт: WebP берётся как есть, JPG на пурпурном фоне вырезается здесь. */

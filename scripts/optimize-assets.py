@@ -46,7 +46,8 @@ class Rule:
     max_side: int
 
 
-# Герой, меч и запасной монстр рисуются целым кадром: их поля задают посадку фигуры в клетке.
+# Герой, меч в руке и запасной монстр рисуются целым кадром: их поля задают посадку фигуры в клетке.
+# Пути от art/.
 FULL_FRAME = {"hero-rogue.jpg", "sword.jpg", "monster.jpg"}
 # Плоские картинки без прозрачности: текстуры и экраны.
 OPAQUE = {"dungeon-floor.jpg", "dungeon-wall.jpg", "wood-floor.jpg", "menu-depart.jpg", "loading-castle.jpg"}
@@ -56,7 +57,8 @@ ICON_DIRS = {"items", "abilities", "status"}
 
 def rule_for(path: Path) -> Rule:
     rel = path.relative_to(SRC)
-    name = rel.name
+    # Путь, не имя: sword.jpg в корне — меч в руке целым кадром, weapons/sword.jpg — обрезанная иконка.
+    name = rel.as_posix()
     if name in OPAQUE:
         return Rule(key=False, trim=False, max_side=1280)
     if name in FULL_FRAME:
