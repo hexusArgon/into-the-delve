@@ -24,15 +24,18 @@ let sending = false;
 let queued = false;
 let opened: Promise<void> = Promise.resolve();
 
-function titleID(): string | null {
-  const host = (globalThis.location?.hostname ?? "").toLowerCase().replace(/\.$/, "");
-  const match = /^([a-z0-9]{8})(-dev)?\.idos\.games$/.exec(host);
-  if (match?.[1]) {
-    const id = match[1].toUpperCase();
-    return match[2] ? `${id}-DEV` : id;
-  }
-  const fromEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_IDOS_TITLE_ID;
-  return fromEnv ? fromEnv : null;
+/**
+ * Локальный запуск без хоста (npm run dev): вход с устройства, если в .env.local задан тайтл.
+ * На адресе игры хост сам входит (гость или кошелёк) и передаёт свою сессию через bindAccount:
+ * прогресс и вещи должны лежать на том же аккаунте, которым игрок вошёл.
+ */
+async function localClient(): Promise<IDosGamesClient | null> {
+  const id = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_IDOS_TITLE_ID;
+  if (!id) return null;
+  const created = createIDosGamesClient({ titleID: id, throttleMs: 0 });
+  let login = await created.auth.autoLogin();
+  if (!isOk(login)) login = await created.auth.loginWithDeviceID();
+  return isOk(login) ? created : null;
 }
 
 function readFile(raw: string, weapon: WeaponId): { best: number | null; loadout: Loadout | null } | null {
@@ -69,12 +72,8 @@ async function push(): Promise<void> {
 }
 
 async function connect(loadout: Loadout, weapon: WeaponId): Promise<void> {
-  const id = titleID();
-  if (!id) return;
-  const created = createIDosGamesClient({ titleID: id, throttleMs: 0 });
-  let session = await created.auth.autoLogin();
-  if (!isOk(session)) session = await created.auth.loginWithDeviceID();
-  if (!isOk(session)) return;
+  const created = account ?? (await localClient());
+  if (!created) return;
   client = created;
   userID = created.auth.context?.userID ?? "";
   const mine = await created.userCustomData.getMyUserCustomData();
@@ -126,7 +125,7 @@ export async function refreshTokenBalance(): Promise<number | null> {
   return tokenBalance();
 }
 
-/** Вход с устройства и сверка локального мешка с сервером. Без тайтла остаётся браузер. */
+/** Сверка локального мешка с сервером под аккаунтом игрока. Без сессии остаётся браузер. */
 export function openCloud(loadout: Loadout, weapon: WeaponId): Promise<void> {
   const run = connect(loadout, weapon).catch(() => undefined);
   opened = run;

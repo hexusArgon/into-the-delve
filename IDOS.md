@@ -10,7 +10,7 @@ history of individual features does NOT belong here (see "Feature history" at th
 <!-- 2–4 lines, filled in once the direction is clear: genre, core loop, target platform, tone.
      Update it when the concept changes — not with every feature. -->
 
-Тактические комнаты подземелья на сетке. Игрок бьёт мечом, монстр отвечает после действия. Щит 4, Blink 3. Способностей пока нет.
+Тактические комнаты подземелья на сетке. Игрок бьёт надетым оружием, монстр отвечает после действия. Щит 4, Blink 3. Способности героя — четыре слота, клавиши 1–4.
 
 Канон боя — `docs/feature-history/combat-balance.md` и лист «Монстры подземелья». Не возвращать старые 40 HP и удар 10. Сейчас: HP героя 400, удар меча 100 (парные клинки 50 за попадание, копьё, посох, перчатки и винтовка 80), MaxHp рядового 400, укус монстра 10. В боевой комнате от 2 до 6 монстров, типы могут повторяться. Щит 4, стан 2 и Blink 3 не менять.
 
@@ -124,7 +124,13 @@ inventing ids.
 - Locally (exported project or an external agent): `npm install`, then `npm run dev`,
   `npm run build`, `npm run typecheck`.
 - Client code ships to players: never put secrets, keys or tokens in any file here.
-- Assets are not stored in the project — generated images/audio/3D are CDN URLs; reference those.
+- This game keeps its art in the repo. Sources (1024² JPG on a magenta key, OGG/MP3 music) live in
+  `art/`; `npm run assets` (scripts/optimize-assets.py) cuts the key, trims, shrinks and writes
+  `assets/*.webp` and `assets/music/*.mp3`. The game imports only `assets/`. A raw JPG dropped into
+  `assets/` still works (keyed in the browser), but is slower — run the script instead.
+- Room rules live in `src/modules/room/game/sim/` (one file per layer, each under ~400 lines);
+  `game/sim.ts` is the only entry point. `npm test` runs the rule tests, `npm run check` runs
+  typecheck, tests and build.
 
 ## Feature history — how this project remembers
 
