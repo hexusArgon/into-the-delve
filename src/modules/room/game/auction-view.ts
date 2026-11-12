@@ -1,5 +1,12 @@
+/**
+ * Прежний аукцион: доска жила в памяти вкладки, токен списывался только на экране.
+ * Купленная вещь сохранялась, а списание нет; выставленная вещь пропадала при перезагрузке.
+ * Не подключён: торговый дом закрыт до рынка на сервере iDos (client.marketplace).
+ * Вёрстка и фильтры остаются основой для серверной версии.
+ */
 import { weaponBaseId, weaponName, weaponOf, weaponVersion, WEAPONS, type WeaponId } from "../data/weapons.ts";
 import { tokenBalance } from "./cloud.ts";
+import type { AuctionKit } from "./kit.ts";
 import { describeStats, itemById } from "../data/items.ts";
 import { addInstance, abilityAmount, abilitySplash, instanceById, saveLoadout, scaled, unworn, type Loadout } from "../data/instances.ts";
 import { abilityView, heroAbilityById } from "../data/hero-abilities.ts";
@@ -23,16 +30,6 @@ import {
 } from "./auction.ts";
 
 const ME = "you";
-
-export interface AuctionKit {
-  weapon: WeaponId;
-  gold: number;
-  /** Баланс токена Into the Delve. Им оплачиваются ставка и выкуп. */
-  tokens: number;
-  /** Баланс уже прочитан со счёта. Повторный вход в аукцион не затирает трату этой сессии. */
-  tokensKnown: boolean;
-  owned: string[];
-}
 
 const TOKEN_ICON = "https://cloud.idosgames.com/drive/img/H406PWM7/hard-token.png";
 

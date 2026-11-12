@@ -22,14 +22,14 @@ import {
   type ItemInstance,
   type Loadout,
 } from "../data/instances.ts";
-import { WEAPONS, weaponBaseId, weaponName, weaponOf, weaponVersion, type WeaponDef, type WeaponId } from "../data/weapons.ts";
-import { createHouse, stockHouse } from "./auction.ts";
-import { paintAuction, type AuctionKit } from "./auction-view.ts";
+import { weaponBaseId, weaponName, weaponOf, weaponVersion, type WeaponDef, type WeaponId } from "../data/weapons.ts";
+import type { AuctionKit } from "./kit.ts";
+import { paintMarketClosed } from "./market-view.ts";
 import { paintGuild } from "./guild-view.ts";
 import { paintAdventure } from "./adventure-view.ts";
 import { bestAdventure, recordAdventure } from "./adventure.ts";
 import type { IDosGamesClient } from "@idosgames/core";
-import { bindAccount, loadBoard, openCloud, refreshTokenBalance, tokenBalance } from "./cloud.ts";
+import { bindAccount, loadBoard, openCloud, tokenBalance } from "./cloud.ts";
 import { grantPersonalGear, keepPersonalGear } from "./personal-gear.ts";
 import { storageLayout, storageScroll } from "./storage.ts";
 import { RoomController } from "./controller.ts";
@@ -116,8 +116,6 @@ export function mountGame(host: HTMLElement, account?: IDosGamesClient): { setRu
   });
   const shelf = freshShelf();
   const hone = { target: null as string | null, copy: null as string | null, made: null as string | null, result: "" };
-  const house = createHouse();
-  stockHouse(house, Date.now());
   if (import.meta.env.DEV) {
     (globalThis as typeof globalThis & { dungeonKit?: AuctionKit }).dungeonKit = kit;
   }
@@ -176,17 +174,7 @@ export function mountGame(host: HTMLElement, account?: IDosGamesClient): { setRu
           });
         },
         onAuction: () => {
-          void ensureSprites().then(async (sprites) => {
-            if (!alive) return;
-            if (!kit.tokensKnown) {
-              const held = await refreshTokenBalance();
-              if (held !== null) {
-                kit.tokens = held;
-                kit.tokensKnown = true;
-              }
-            }
-            if (alive) paintAuction(host, kit, loadout, house, showMenu, sprites);
-          });
+          paintMarketClosed(host, showMenu);
         },
         onGuild: () => {
           paintGuild(host, [], showMenu, "Loading the board.");
