@@ -41,7 +41,7 @@ import { loadSprites, type Sprites } from "./sprites.ts";
 import { loadingVeil } from "./loading-view.ts";
 import { freshShelf, shelfBar, shelfMatch, shelfOrder, type ShelfBar, type ShelfKind } from "./shelf-bar.ts";
 import { bindAbilityTip, bindCardTip, bindTip, hideTip } from "./tip.ts";
-import menuUrl from "../../../../assets/menu-depart.jpg";
+import menuUrl from "../../../../assets/menu-depart.webp";
 import "./ui.css";
 
 let spritesReady: Promise<Sprites> | null = null;
@@ -489,10 +489,23 @@ function armDrag(el: HTMLElement, id: string, kind: ItemInstance["kind"]): void 
       document.querySelectorAll(".is-over").forEach((node) => node.classList.remove("is-over"));
       if (hit && dragAccepts(hit, kind)) hit.classList.add("is-over");
     };
-    const up = (ev: PointerEvent): void => {
+    const release = (): void => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
       document.querySelectorAll(".is-over").forEach((node) => node.classList.remove("is-over"));
+    };
+    // Браузер отнял касание (жест прокрутки, системный свайп): перетаскивание отменяется без сброса.
+    const cancel = (): void => {
+      release();
+      dragGhost?.remove();
+      dragGhost = null;
+      window.setTimeout(() => {
+        dragMoved = false;
+      }, 0);
+    };
+    const up = (ev: PointerEvent): void => {
+      release();
       const hit = moving ? dragTarget(ev.clientX, ev.clientY) : null;
       const role = hit?.dataset.hone;
       dragGhost?.remove();
@@ -505,6 +518,7 @@ function armDrag(el: HTMLElement, id: string, kind: ItemInstance["kind"]): void 
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
   });
 }
 
