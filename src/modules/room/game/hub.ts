@@ -92,8 +92,20 @@ export function mountGame(host: HTMLElement, account?: IDosGamesClient): { setRu
   let wantRun = false;
   let alive = true;
   const startWeapon = tutorialWeapon();
-  const kit: AuctionKit = { weapon: startWeapon, gold: 0, tokens: 0, tokensKnown: false, owned: [startWeapon] };
   const loadout = storedLoadout(startWeapon);
+  // Золото живёт в мешке (loadout.gold) и сохраняется вместе с ним; kit только показывает его.
+  const kit: AuctionKit = {
+    weapon: startWeapon,
+    get gold() {
+      return loadout.gold;
+    },
+    set gold(value: number) {
+      loadout.gold = Math.max(0, Math.floor(value));
+    },
+    tokens: 0,
+    tokensKnown: false,
+    owned: [startWeapon],
+  };
   grantBaseWeapons(loadout);
   grantHeroAbilities(loadout);
   grantPersonalGear(loadout);

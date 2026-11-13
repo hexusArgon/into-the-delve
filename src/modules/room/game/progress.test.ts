@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { freshLoadout } from "../data/instances.ts";
+import { copyLoadout, freshLoadout, loadoutFromJson } from "../data/instances.ts";
 import { higherBest, richerLoadout } from "./progress.ts";
 
 const local = freshLoadout("sword");
@@ -24,3 +24,23 @@ assert.equal(higherBest(null, null), null);
 assert.equal(higherBest(null, 2), 2);
 assert.equal(higherBest(4, 2), 4);
 assert.equal(higherBest(0, null), 0);
+
+// Золото сохраняется вместе с мешком и переживает перезапуск.
+const purse = freshLoadout("sword");
+purse.gold = 345;
+const reread = loadoutFromJson(JSON.stringify(purse), "sword");
+assert.ok(reread);
+assert.equal(reread.gold, 345);
+const old = JSON.parse(JSON.stringify(purse)) as Record<string, unknown>;
+delete old.gold;
+assert.equal(loadoutFromJson(JSON.stringify(old), "sword")?.gold, 0);
+assert.equal(loadoutFromJson(JSON.stringify({ ...purse, gold: -5 }), "sword")?.gold, 0);
+assert.equal(loadoutFromJson(JSON.stringify({ ...purse, gold: 12.9 }), "sword")?.gold, 12);
+const target = freshLoadout("sword");
+copyLoadout(purse, target);
+assert.equal(target.gold, 345);
+
+// Новый браузер с пустым мешком не затирает золото аккаунта при равных вещах.
+const blank = freshLoadout("sword");
+assert.equal(richerLoadout(blank, purse), purse);
+assert.equal(richerLoadout(purse, blank), purse);
