@@ -1,4 +1,5 @@
 import type { GuildRow } from "./cloud.ts";
+import { enterScreen } from "./transition.ts";
 
 /** Доска гильдии: все игроки тайтла, по лучшему пройденному уровню. */
 export function paintGuild(host: HTMLElement, rows: readonly GuildRow[], onBack: () => void, status = ""): void {
@@ -8,6 +9,7 @@ export function paintGuild(host: HTMLElement, rows: readonly GuildRow[], onBack:
   host.style.flexDirection = "column";
   host.style.height = "100%";
   host.style.overflow = "auto";
+  enterScreen(host, "guild");
 
   const page = document.createElement("div");
   page.className = "dungeon-guild";

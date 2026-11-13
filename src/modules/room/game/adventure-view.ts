@@ -1,4 +1,5 @@
 import { adventureSummary } from "./adventure.ts";
+import { enterScreen } from "./transition.ts";
 
 /** Выбор уровня перед забегом. Открыты пройденные и следующий. Список от большего к меньшему. */
 export function paintAdventure(
@@ -13,6 +14,7 @@ export function paintAdventure(
   host.style.flexDirection = "column";
   host.style.height = "100%";
   host.style.overflow = "auto";
+  enterScreen(host, "adventure");
 
   const page = document.createElement("div");
   page.className = "dungeon-adventure-page";

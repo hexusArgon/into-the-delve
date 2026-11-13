@@ -10,13 +10,16 @@ import {
   drawChair,
   drawDoorBars,
   drawFurniture,
-  drawLighting,
   drawRowObstacles,
   paintBackground,
   type Box,
   type Dressing,
 } from "./dungeon.ts";
 import { drawBlinkFx } from "./blink-draw.ts";
+import { drawLighting } from "./lighting.ts";
+import { DISSOLVE_MS, Impacts, Shake, breath, breathPhase, drawAsh, drawDissolving, flashColor, silhouette } from "./juice.ts";
+import { drawElementParticles } from "./particles.ts";
+import { drawLootGlow, lootPose, lootRarity } from "./loot-fx.ts";
 import { ABILITY_MS, burstAge, drawAbilityBurst, drawHazardHint, drawHeroZones, drawWindupHint, type AbilityBurst } from "./ability-draw.ts";
 import { drawExitPad, drawMapOverlay, drawMinimap, drawPortalPad, hitMapRoom, type MapHit, type MapView } from "./map.ts";
 import { DAMAGE_INK, damageFan, damageLabel, type DamageHit } from "./damage-float.ts";
@@ -48,8 +51,6 @@ import type { Sprites } from "./sprites.ts";
 const FADE_MS = 320;
 /** Как быстро камера догоняет героя. Меньше — дольше и мягче. */
 const CAMERA_FOLLOW = 5;
-/** Смерть монстра: осел и погас на своей клетке. */
-const DEATH_MS = 320;
 /** Падение героя и затягивание экрана кровью. Замедлено на 40% по просьбе дизайнера. */
 const HERO_FALL_MS = 952;
 const BLOOD_DELAY_MS = 280;
@@ -592,11 +593,14 @@ function drawChest(
   ctx.restore();
 }
 
+/** Вещи на полу. Новая вещь подпрыгивает и вспыхивает цветом редкости, лежащая мягко светится. */
 function drawLoot(
   ctx: CanvasRenderingContext2D,
   box: Box,
   sprites: Sprites,
   loot: RoomState["loot"],
+  ageOf: (key: string) => number,
+  time: number,
 ): void {
   for (const drop of loot) {
     const art =
@@ -607,11 +611,29 @@ function drawLoot(
           : sprites.items[drop.catalogId];
     if (!art) continue;
     const { size, ox, oy } = box;
+    const key = lootKey(drop);
+    const pose = lootPose(ageOf(key));
     const cx = ox + (drop.x + 0.5) * size;
     const cy = oy + (drop.y + 0.55) * size;
-    const fit = (size * 0.72) / Math.max(art.width, art.height);
-    ctx.drawImage(art, cx - (art.width * fit) / 2, cy - (art.height * fit) / 2, art.width * fit, art.height * fit);
+    const seed = drop.x * 31 + drop.y * 17;
+    drawLootGlow(ctx, cx, cy, size, lootRarity(drop.kind, drop.catalogId), pose.burst, time, seed);
+    if (pose.lift > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.35 * (1 - pose.lift);
+      ctx.fillStyle = "#000";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + size * 0.24, size * 0.22 * (1 - pose.lift * 0.5), size * 0.07, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    const fit = (size * 0.72 * pose.scale) / Math.max(art.width, art.height);
+    const y = cy - pose.lift * size;
+    ctx.drawImage(art, cx - (art.width * fit) / 2, y - (art.height * fit) / 2, art.width * fit, art.height * fit);
   }
+}
+
+function lootKey(drop: RoomState["loot"][number]): string {
+  return `${drop.x},${drop.y},${drop.kind},${drop.catalogId}`;
 }
 
 function drawGold(
@@ -939,11 +961,17 @@ export class RoomRenderer {
   private camera: Cell | null = null;
   private lastTime = 0;
   private fadeStart = 0;
-  private shakeStart = 0;
-  private deaths: { monster: Fighter; x: number; y: number; start: number }[] = [];
+  private readonly shaker = new Shake();
+  private readonly impacts = new Impacts();
+  /** Время текущего кадра: им пользуются фигуры, которым его не передают явно. */
+  private now = 0;
+  private deaths: { monster: Fighter; x: number; y: number; start: number; seed: number }[] = [];
   private sawAlive = new Set<Fighter>();
   private heroDeathAt: number | null = null;
   private coins: CoinToss[] = [];
+  /** Когда вещь появилась на полу. Вещи, лежавшие при входе в комнату, не подпрыгивают. */
+  private lootSeen = new Map<string, number>();
+  private lootPrimed = false;
   private ability: AbilityBurst[] = [];
   private numbers: FlyingNumber[] = [];
   private view: { box: Box; room: RoomLayout } | null = null;
@@ -954,13 +982,16 @@ export class RoomRenderer {
   resetCamera(): void {
     this.motion.snap();
     this.camera = null;
-    this.shakeStart = 0;
+    this.shaker.reset();
+    this.impacts.clear();
     this.deaths = [];
     this.sawAlive.clear();
     this.heroDeathAt = null;
     this.coins = [];
     this.ability = [];
     this.numbers = [];
+    this.lootSeen.clear();
+    this.lootPrimed = false;
   }
 
   /** Плашка поражения появляется, когда тело уже лежит. */
@@ -982,6 +1013,7 @@ export class RoomRenderer {
       else groups.set(key, [hit]);
     }
     state.hits = [];
+    for (const list of groups.values()) this.feelHits(state, list, time);
     for (const list of groups.values()) {
       list.forEach((hit, index) => {
         const text = damageLabel(hit.amount, hit.crit);
@@ -990,6 +1022,43 @@ export class RoomRenderer {
         this.numbers.push({ x: at.x, y: at.y, text, color: DAMAGE_INK[hit.type], angle: damageFan(index, list.length), start: time });
       });
     }
+  }
+
+  /**
+   * Отдача попаданий по одной клетке: вспышка цветом урона, отброс от бьющего, дрожь камеры.
+   * Яд только вспыхивает: его тики не должны дёргать фигуру каждый ход.
+   */
+  private feelHits(state: RoomState, list: readonly DamageHit[], time: number): void {
+    const first = list[0];
+    if (!first) return;
+    const crit = list.some((hit) => hit.crit);
+    const strongest = list.reduce((a, b) => (b.amount > a.amount ? b : a), first);
+    const type = strongest.type;
+    const knock = type === "poison" ? 0 : type === "fire" ? 0.45 : crit ? 1.4 : 1;
+    const color = flashColor(DAMAGE_INK[type], type === "physical");
+    const hero = state.hero;
+    if (hero.x === first.x && hero.y === first.y) {
+      // Герою прилетело: толчок от ближайшего живого монстра.
+      let from: Cell | null = null;
+      let best = Infinity;
+      for (const unit of roomMonsters(state)) {
+        if (unit.hp <= 0) continue;
+        const d = Math.abs(unit.x - hero.x) + Math.abs(unit.y - hero.y);
+        if (d < best) {
+          best = d;
+          from = unit;
+        }
+      }
+      const dx = from ? hero.x - from.x : 0;
+      const dy = from ? hero.y - from.y : 1;
+      this.impacts.mark(hero, dx, dy, color, knock, time);
+      if (type !== "poison") this.shaker.hit(crit ? 0.8 : 0.55, time);
+      return;
+    }
+    const target = roomMonsters(state).find((unit) => unit.x === first.x && unit.y === first.y);
+    if (!target) return;
+    this.impacts.mark(target, target.x - hero.x, target.y - hero.y, color, knock, time);
+    if (type === "physical" || crit) this.shaker.hit(crit ? 0.5 : 0.25, time);
   }
 
   private hitAnchor(state: RoomState, hero: Pose, monsters: readonly Pose[], hit: DamageHit): { x: number; y: number } {
@@ -1017,7 +1086,7 @@ export class RoomRenderer {
 
   /** Короткий толчок камеры. Срыв брони. */
   shake(): void {
-    this.shakeStart = performance.now();
+    this.shaker.hit(1, performance.now());
   }
 
   mapRoomAt(px: number, py: number): number | null {
@@ -1075,6 +1144,7 @@ export class RoomRenderer {
   ): void {
     const room = state.room;
     const time = performance.now();
+    this.now = time;
     if (state.strike) {
       this.motion.queueStrike(state.strike.from, state.strike.to);
       state.strike = null;
@@ -1126,7 +1196,8 @@ export class RoomRenderer {
     }
     for (const chest of state.chests) drawChest(ctx, box, sprites, chest);
     drawGold(ctx, box, sprites.gold, state.piles, (pile) => this.coinInFlight(pile, time));
-    drawLoot(ctx, box, sprites, state.loot);
+    this.noteLoot(state, time);
+    drawLoot(ctx, box, sprites, state.loot, (key) => time - (this.lootSeen.get(key) ?? -Infinity), time);
     for (const coin of this.coins) drawCoinToss(ctx, box, sprites.gold, coin, time);
 
     const heroRow = Math.round(poses.hero.y);
@@ -1146,7 +1217,7 @@ export class RoomRenderer {
         }
       });
       for (const dead of dying) {
-        if (Math.round(dead.pose.y) === row) this.drawMonster(ctx, box, dead.monster, dead.pose, sprites, true, dead.life);
+        if (Math.round(dead.pose.y) === row) this.drawMonster(ctx, box, dead.monster, dead.pose, sprites, true, dead.life, dead.seed);
       }
       if (heroRow === row) {
         this.drawHero(ctx, box, state.hero, poses.hero, sprites, state.weapon, swing, time, true, pop, isPit(room, Math.round(poses.hero.x), Math.round(poses.hero.y)));
@@ -1168,7 +1239,8 @@ export class RoomRenderer {
       if (monster.hp > 0 && monster.windup) drawWindupHint(ctx, box, monster, monster.windup, time);
       if (monster.hp > 0) drawAbilityMarks(ctx, box, monster.windup);
     }
-    drawLighting(ctx, width, height, box, background.dressing.torches, poses.hero);
+    drawLighting(ctx, width, height, box, background.dressing.torches, poses.hero, state, time);
+    drawElementParticles(ctx, box, state, time);
     bodies.forEach((monster, index) => {
       const pose = poses.monsters[index];
       if (monster.hp <= 0 || !pose || monster.mode === "gone" || monster.mode === "under" || monster.mode === "air") return;
@@ -1218,7 +1290,7 @@ export class RoomRenderer {
     heroPose: Pose,
     monsterPoses: readonly Pose[],
     pop: number | null,
-    dying: readonly { monster: Fighter; pose: Pose; life: number }[],
+    dying: readonly { monster: Fighter; pose: Pose; life: number; seed: number }[],
   ): void {
     const room = state.room;
     const mask = this.layer("mask", width, height);
@@ -1237,7 +1309,7 @@ export class RoomRenderer {
         if (acolyteBuffing(monster)) drawAcolyteBuff(blend.ctx, box, pose, time);
       }
     });
-    for (const dead of dying) this.drawMonster(blend.ctx, box, dead.monster, dead.pose, sprites, false, dead.life);
+    for (const dead of dying) this.drawMonster(blend.ctx, box, dead.monster, dead.pose, sprites, false, dead.life, dead.seed);
     this.drawHero(
       blend.ctx,
       box,
@@ -1303,9 +1375,20 @@ export class RoomRenderer {
       ctx.restore();
     }
     if (pop === 0) return;
-    const bob = pose.jump ? 0 : Math.sin(time / 320) * box.size * 0.04;
-    const drawY = py - hop.lift + bob;
+    const resting = !pose.jump && pose.travel === null && hero.hp > 0;
+    const bob = pose.jump ? 0 : Math.sin(time / 320) * box.size * 0.02;
+    const impact = this.impacts.sample(hero, time);
+    const drawX = px + impact.dx * box.size;
+    const drawY = py - hop.lift + bob + impact.dy * box.size;
     ctx.save();
+    if (resting) {
+      const inhale = breath(time, 0);
+      const anchorX = drawX + box.size / 2;
+      const anchorY = drawY + box.size * 0.9;
+      ctx.translate(anchorX, anchorY);
+      ctx.scale(inhale.sx, inhale.sy);
+      ctx.translate(-anchorX, -anchorY);
+    }
     if (pop !== null) {
       const anchorX = px + box.size / 2;
       const anchorY = py + box.size * 0.82;
@@ -1339,8 +1422,14 @@ export class RoomRenderer {
       ctx.translate(-anchorX, -anchorY);
       ctx.globalAlpha *= 1 - fall * 0.2;
     }
-    drawSprite(ctx, sprites.hero, px, drawY, box.size * 1.1, hero.facing);
-    drawWeapon(ctx, sprites.weapons, sprites.sword, px, drawY, box.size, hero.facing, swing, weapon);
+    drawSprite(ctx, sprites.hero, drawX, drawY, box.size * 1.1, hero.facing);
+    if (impact.flash > 0) {
+      const base = ctx.globalAlpha;
+      ctx.globalAlpha = base * impact.flash * 0.8;
+      drawSprite(ctx, silhouette(sprites.hero, impact.color), drawX, drawY, box.size * 1.1, hero.facing);
+      ctx.globalAlpha = base;
+    }
+    drawWeapon(ctx, sprites.weapons, sprites.sword, drawX, drawY, box.size, hero.facing, swing, weapon);
     ctx.restore();
   }
 
@@ -1352,8 +1441,10 @@ export class RoomRenderer {
     sprites: Sprites,
     shadow: boolean,
     life = 1,
+    seed = 0,
   ): void {
     if ((monster.mode === "gone" || monster.mode === "air") && life === 1) return;
+    const time = this.now || performance.now();
     const px = box.ox + pose.x * box.size;
     const groundY = box.oy + pose.y * box.size;
     if (monster.mode === "under" && life === 1) {
@@ -1366,7 +1457,9 @@ export class RoomRenderer {
       return;
     }
     const hop = stepJump(pose, box.size);
-    const py = groundY + (1 - life) * box.size * 0.22 - hop.lift;
+    const impact = life === 1 ? this.impacts.sample(monster, time) : { dx: 0, dy: 0, flash: 0, color: "#fff" };
+    const mx = px + impact.dx * box.size;
+    const py = groundY - hop.lift + impact.dy * box.size;
     if (shadow) {
       ctx.save();
       ctx.globalAlpha = life * (0.5 + 0.5 * hop.shadow);
@@ -1378,17 +1471,6 @@ export class RoomRenderer {
       drawGroundShadow(ctx, px, groundY, box.size);
       ctx.restore();
     }
-    ctx.save();
-    ctx.globalAlpha = life;
-    if (monster.stun > 0 && life === 1) ctx.globalAlpha *= 0.55;
-    if (monster.mode === "sleep" && life === 1) ctx.globalAlpha *= 0.75;
-    if (pose.jump) {
-      const anchorX = px + box.size / 2;
-      const anchorY = py + box.size * 0.86;
-      ctx.translate(anchorX, anchorY);
-      ctx.scale(hop.sx, hop.sy);
-      ctx.translate(-anchorX, -anchorY);
-    }
     const spore = monster.role === "spore";
     const closedChest = monster.role === "chest" && monster.mode === "passive";
     const art = closedChest
@@ -1396,25 +1478,76 @@ export class RoomRenderer {
       : (spore ? sprites.monsters["11"] : monster.kind ? sprites.monsters[monster.kind] : undefined) ?? sprites.monster;
     const scale = spore ? SPORE_SCALE : closedChest ? 0.84 : 1;
     const inset = (box.size * (1 - scale)) / 2;
-    drawSprite(ctx, art, px + inset, py + inset * 1.6, box.size * scale, closedChest ? "right" : monster.facing);
+    const facing = closedChest ? "right" : monster.facing;
+    const figure = (target: CanvasRenderingContext2D): void => {
+      target.save();
+      if (pose.jump) {
+        const anchorX = mx + box.size / 2;
+        const anchorY = py + box.size * 0.86;
+        target.translate(anchorX, anchorY);
+        target.scale(hop.sx, hop.sy);
+        target.translate(-anchorX, -anchorY);
+      } else if (life === 1 && pose.travel === null && !closedChest) {
+        // Дыхание в покое. Спящий дышит медленнее, оглушённый — часто и мелко.
+        const rate = monster.mode === "sleep" ? 0.55 : monster.stun > 0 ? 1.8 : 1;
+        const inhale = breath(time, breathPhase(monster), rate);
+        const anchorX = mx + box.size / 2;
+        const anchorY = py + box.size * 0.86;
+        target.translate(anchorX, anchorY);
+        target.scale(inhale.sx, inhale.sy);
+        target.translate(-anchorX, -anchorY);
+      }
+      drawSprite(target, art, mx + inset, py + inset * 1.6, box.size * scale, facing);
+      if (impact.flash > 0) {
+        const base = target.globalAlpha;
+        target.globalAlpha = base * impact.flash * 0.85;
+        drawSprite(target, silhouette(art, impact.color), mx + inset, py + inset * 1.6, box.size * scale, facing);
+        target.globalAlpha = base;
+      }
+      target.restore();
+    };
+    ctx.save();
+    if (monster.stun > 0 && life === 1) ctx.globalAlpha *= 0.55;
+    if (monster.mode === "sleep" && life === 1) ctx.globalAlpha *= 0.75;
+    if (life < 1) {
+      // Смерть: фигура рассыпается клетками, над ней поднимается пепел.
+      const lift = box.size * 0.3;
+      const bounds = { x: px - box.size * 0.1, y: py - lift, w: box.size * 1.2, h: box.size * 1.2 + lift };
+      drawDissolving(ctx, bounds, 1 - life, seed, figure);
+      if (shadow) drawAsh(ctx, { x: px, y: py, w: box.size, h: box.size }, 1 - life, seed);
+    } else {
+      figure(ctx);
+    }
     ctx.restore();
   }
 
   /** Пока монстр был жив, запоминаем его. В кадр смерти он оседает и гаснет. */
-  private noteDeaths(state: RoomState, time: number): { monster: Fighter; pose: Pose; life: number }[] {
+  private noteDeaths(state: RoomState, time: number): { monster: Fighter; pose: Pose; life: number; seed: number }[] {
     for (const monster of roomMonsters(state)) {
       if (monster.hp > 0) this.sawAlive.add(monster);
       else if (this.sawAlive.has(monster) && !this.deaths.some((death) => death.monster === monster)) {
         this.sawAlive.delete(monster);
-        this.deaths.push({ monster, x: monster.x, y: monster.y, start: time });
+        this.deaths.push({ monster, x: monster.x, y: monster.y, start: time, seed: (monster.x * 73 + monster.y * 151 + Math.floor(time)) | 0 });
       }
     }
-    this.deaths = this.deaths.filter((death) => time - death.start < DEATH_MS);
+    this.deaths = this.deaths.filter((death) => time - death.start < DISSOLVE_MS);
     return this.deaths.map((death) => ({
       monster: death.monster,
       pose: { x: death.x, y: death.y, travel: null, jump: false },
-      life: 1 - (time - death.start) / DEATH_MS,
+      life: 1 - (time - death.start) / DISSOLVE_MS,
+      seed: death.seed,
     }));
+  }
+
+  private noteLoot(state: RoomState, time: number): void {
+    const present = new Set<string>();
+    for (const drop of state.loot) {
+      const key = lootKey(drop);
+      present.add(key);
+      if (!this.lootSeen.has(key)) this.lootSeen.set(key, this.lootPrimed ? time : -Infinity);
+    }
+    for (const key of [...this.lootSeen.keys()]) if (!present.has(key)) this.lootSeen.delete(key);
+    this.lootPrimed = true;
   }
 
   private trackHeroDeath(state: RoomState, time: number): void {
@@ -1457,19 +1590,7 @@ export class RoomRenderer {
 
   /** Затухающая дрожь в пикселях. Не сдвигает клетку под курсором. */
   private kick(time: number): { x: number; y: number } {
-    if (this.shakeStart === 0) return { x: 0, y: 0 };
-    const elapsed = time - this.shakeStart;
-    const ms = 260;
-    if (elapsed >= ms) {
-      this.shakeStart = 0;
-      return { x: 0, y: 0 };
-    }
-    const fade = 1 - elapsed / ms;
-    const amp = fade * fade * 8;
-    return {
-      x: Math.sin(elapsed / 22) * amp,
-      y: Math.cos(elapsed / 17) * amp * 0.65,
-    };
+    return this.shaker.offset(time);
   }
 
   /** Камера догоняет нарисованного героя, а не прыгает вместе с началом шага. */

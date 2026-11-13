@@ -22,6 +22,7 @@ import { coarsePointer, isSwingStep, lessonAdvance, lessonAllows, lessonText, le
 import { paintWeaponIcon } from "./hub.ts";
 import { loadingVeil } from "./loading-view.ts";
 import "./ui.css";
+import { enterScreen } from "./transition.ts";
 
 /** Повтор шага, пока зажаты WASD или стрелки. */
 const HOLD_STEP_MS = 200;
@@ -212,6 +213,7 @@ export class RoomController {
     this.abilities = lesson ? [] : abilities;
     this.run = lesson ? tutorialRun(this.lessonStep) : createRun(this.seed, weapon, gear, this.weaponHit, this.abilities, this.adventure);
     host.replaceChildren();
+    enterScreen(host, "room", false);
     host.className = "dungeon";
     host.style.display = "flex";
     host.style.flexDirection = "column";
