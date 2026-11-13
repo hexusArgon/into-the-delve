@@ -101,9 +101,9 @@ and writes WebP and MP3 into `assets/`.
 
 ## Roadmap
 
-1. Configure the live title for the market (`scripts/market-title-config.json`) and set the token
-   trade fee.
-2. Icons for the gear pieces that have none yet.
+1. Set the token trade fee (`PlayerTradeFeePercent` on `Main`) in the iDos dashboard.
+2. Replace the drawn placeholder icons with painted art when image credits are available
+   (`scripts/draw-item-icons.py` skips any icon that already has a source in `art/items`).
 3. Server-side checks for drops and leaderboard scores.
 
 ## Links

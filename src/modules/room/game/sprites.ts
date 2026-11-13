@@ -175,7 +175,8 @@ async function cutout(url: string, trim = true): Promise<HTMLCanvasElement> {
 }
 
 /** Id спрайта — имя файла без расширения. */
-function fileId(path: string, pattern = /[/\\]([a-z0-9-]+)\.(?:webp|jpg)$/): string | undefined {
+/** Id из имени файла. Регистр важен: у редких вещей id вида rare-maxHp-poisonRes. */
+function fileId(path: string, pattern = /[/\\]([A-Za-z0-9-]+)\.(?:webp|jpg)$/): string | undefined {
   return pattern.exec(path)?.[1];
 }
 
