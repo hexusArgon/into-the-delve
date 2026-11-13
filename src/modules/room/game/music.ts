@@ -1,11 +1,11 @@
 import { soundContext } from "./sfx.ts";
-import fogUrl from "../../../../assets/music/whispers-in-the-fog.ogg";
+import fogUrl from "../../../../assets/music/whispers-in-the-fog.mp3";
 import deepUrl from "../../../../assets/music/dungeon-deep.mp3";
 import pianoUrl from "../../../../assets/music/vampires-piano.mp3";
-import placeUrl from "../../../../assets/music/dark-place.ogg";
-import cavernsUrl from "../../../../assets/music/ancient-caverns.ogg";
-import ambienceUrl from "../../../../assets/music/dungeon-ambience.ogg";
-import cavernUrl from "../../../../assets/music/dark-cavern.ogg";
+import placeUrl from "../../../../assets/music/dark-place.mp3";
+import cavernsUrl from "../../../../assets/music/ancient-caverns.mp3";
+import ambienceUrl from "../../../../assets/music/dungeon-ambience.mp3";
+import cavernUrl from "../../../../assets/music/dark-cavern.mp3";
 
 /**
  * Потолок громкости записанных треков. Ползунок в настройках умножает его.
@@ -95,22 +95,25 @@ const decoded = new Map<string, Promise<AudioBuffer | null>>();
 let generation = 0;
 let current: { source: AudioBufferSourceNode; gain: GainNode } | null = null;
 
-/** Декодирует все семь треков заранее, чтобы это не попадало на первые секунды боя. */
+/**
+ * Следующий трек, выбранный заранее. Он декодируется, пока играет текущий, поэтому смена
+ * треков не ждёт сети. В памяти держатся только текущий и следующий: семь треков целиком —
+ * это около 230 МБ несжатого звука, на телефоне вкладка от такого падает.
+ */
+let upcoming: string | null = null;
+
+/** Декодирует первый трек до начала боя, чтобы это не попадало на первые секунды. */
 export function preloadTracks(onProgress?: (ratio: number) => void): Promise<void> {
-  if (typeof AudioContext === "undefined") {
+  if (typeof AudioContext === "undefined" || started) {
     onProgress?.(1);
     return Promise.resolve();
   }
-  const ctx = soundContext();
-  let done = 0;
-  return Promise.all(
-    TRACKS.map((url) =>
-      loadTrack(ctx, url).finally(() => {
-        done += 1;
-        onProgress?.(done / TRACKS.length);
-      }),
-    ),
-  ).then(() => undefined);
+  upcoming ??= chooseTrack();
+  if (!upcoming) {
+    onProgress?.(1);
+    return Promise.resolve();
+  }
+  return loadTrack(soundContext(), upcoming).then(() => onProgress?.(1));
 }
 
 /** Случайный трек из семи. По окончании — другой, не из двух предыдущих. */
@@ -137,7 +140,6 @@ async function begin(ctx: AudioContext): Promise<void> {
     master.gain.exponentialRampToValueAtTime(Math.max(0.0001, MUSIC_PEAK * musicVol), now + 2);
   }
   master.connect(ctx.destination);
-  for (const url of TRACKS) void loadTrack(ctx, url);
   await playNext(ctx, master);
 }
 
@@ -147,6 +149,9 @@ async function playNext(ctx: AudioContext, master: GainNode): Promise<void> {
   if (!picked || token !== generation || musicGain !== master) return;
   recent.unshift(picked.url);
   if (recent.length > 2) recent.pop();
+  upcoming = chooseTrack();
+  forgetExcept(picked.url, upcoming);
+  if (upcoming) void loadTrack(ctx, upcoming);
 
   const now = ctx.currentTime;
   const fade = Math.min(CROSSFADE, Math.max(0.4, picked.buffer.duration * 0.12));
@@ -196,22 +201,34 @@ function fadeOut(playing: { source: AudioBufferSourceNode; gain: GainNode } | nu
   }
 }
 
-/** Случайный трек, кроме двух последних. Если выбор пуст, остаётся хотя бы не предыдущий. */
-async function takeTrack(ctx: AudioContext): Promise<{ url: string; buffer: AudioBuffer } | null> {
+/** Случайный трек, кроме двух последних и уже опробованных. Пусто — хотя бы не предыдущий. */
+function chooseTrack(skip: ReadonlySet<string> = new Set()): string | null {
   const last = recent[0];
   const before = recent[1];
-  const fresh = TRACKS.filter((url) => url !== last && url !== before);
-  const notLast = TRACKS.filter((url) => url !== last);
-  const pool = fresh.length > 0 ? fresh : notLast.length > 0 ? notLast : [...TRACKS];
-  const left = [...pool];
-  while (left.length > 0) {
-    const pick = Math.floor(Math.random() * left.length);
-    const url = left.splice(pick, 1)[0];
-    if (!url) continue;
+  const open = TRACKS.filter((url) => !skip.has(url));
+  const fresh = open.filter((url) => url !== last && url !== before);
+  const notLast = open.filter((url) => url !== last);
+  const pool = fresh.length > 0 ? fresh : notLast.length > 0 ? notLast : open;
+  return pool[Math.floor(Math.random() * pool.length)] ?? null;
+}
+
+/** Заранее выбранный трек; если он не скачался, другой из тех же правил. */
+async function takeTrack(ctx: AudioContext): Promise<{ url: string; buffer: AudioBuffer } | null> {
+  const tried = new Set<string>();
+  let url = upcoming ?? chooseTrack();
+  upcoming = null;
+  while (url) {
+    tried.add(url);
     const buffer = await loadTrack(ctx, url);
     if (buffer) return { url, buffer };
+    url = chooseTrack(tried);
   }
   return null;
+}
+
+/** Отпускает декодированные треки, кроме названных. Играющий буфер держит сам источник звука. */
+function forgetExcept(...keep: (string | null)[]): void {
+  for (const url of decoded.keys()) if (!keep.includes(url)) decoded.delete(url);
 }
 
 function loadTrack(ctx: AudioContext, url: string): Promise<AudioBuffer | null> {

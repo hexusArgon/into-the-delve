@@ -22,6 +22,7 @@ import { coarsePointer, isSwingStep, lessonAdvance, lessonAllows, lessonText, le
 import { paintWeaponIcon } from "./hub.ts";
 import { loadingVeil } from "./loading-view.ts";
 import "./ui.css";
+import { enterScreen } from "./transition.ts";
 
 /** Повтор шага, пока зажаты WASD или стрелки. */
 const HOLD_STEP_MS = 200;
@@ -132,6 +133,8 @@ export class RoomController {
   private abilitySlot: number | null = null;
   private run: Run;
   private running = false;
+  /** Номер запланированного кадра. Не 0 — цикл уже идёт, второй не запускается. */
+  private frame = 0;
   private ready = false;
   private paintLoad: ((ratio: number) => void) | null = null;
   private swinging = false;
@@ -210,6 +213,7 @@ export class RoomController {
     this.abilities = lesson ? [] : abilities;
     this.run = lesson ? tutorialRun(this.lessonStep) : createRun(this.seed, weapon, gear, this.weaponHit, this.abilities, this.adventure);
     host.replaceChildren();
+    enterScreen(host, "room", false);
     host.className = "dungeon";
     host.style.display = "flex";
     host.style.flexDirection = "column";
@@ -498,11 +502,18 @@ export class RoomController {
 
   setRunning(running: boolean): void {
     this.running = running;
-    if (running) this.loop();
+    if (!running) {
+      cancelAnimationFrame(this.frame);
+      this.frame = 0;
+      return;
+    }
+    if (this.frame === 0) this.loop();
   }
 
   destroy(): void {
     this.running = false;
+    cancelAnimationFrame(this.frame);
+    this.frame = 0;
     this.releaseMoves();
     hideTip();
     window.removeEventListener("keydown", this.onKey);
@@ -1939,6 +1950,7 @@ export class RoomController {
   }
 
   private loop = (): void => {
+    this.frame = 0;
     if (!this.running) return;
     if (this.sprites) {
       const started = performance.now();
@@ -1951,7 +1963,7 @@ export class RoomController {
       if (show && this.host.lastElementChild !== this.lostPanel) this.host.append(this.lostPanel);
       this.lostPanel.style.display = show ? "flex" : "none";
     }
-    requestAnimationFrame(this.loop);
+    this.frame = requestAnimationFrame(this.loop);
   };
 
   private showLost(): boolean {

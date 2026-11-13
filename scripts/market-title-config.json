@@ -1,0 +1,64 @@
+{
+  "//": "Настройки тайтла для рынка игроков. Каталог предметов собирает scripts/market-catalog.ts, скрипт — scripts/market-cloud-code.js. Порядок: Currency → Item → Marketplace → CloudCode. Все разделы сохраняются целиком: сначала прочитать текущий, добавить своё, записать.",
+  "Currency.VirtualCurrencies.HONE": {
+    "CurrencyID": "HONE",
+    "DisplayName": "Sharpening (market levels)",
+    "Economy": { "ValueInUSD": 0, "InitialDeposit": 0, "MinBalance": 0, "MaxBalance": 100000 },
+    "Permissions": { "IsTradable": false, "IsPurchasable": false, "IsRefundable": false },
+    "Status": "Hidden"
+  },
+  "Marketplace": {
+    "Enabled": true,
+    "PricePolicy": {
+      "AllowVirtualCurrency": false,
+      "AllowItems": false,
+      "AllowEventTokens": false,
+      "AllowCryptoCurrency": true,
+      "Allowed": [{ "Kind": "CryptoCurrency", "CurrencyID": "Main", "MinAmount": 1, "MaxAmount": 0 }],
+      "MaxPositions": 1
+    },
+    "Commission": { "Percent": 0.05, "MinPerPosition": 0, "Sink": "Burn", "ApplyToDirectTrades": false },
+    "Tradability": { "AllowedCatalogIDs": ["gear"], "AllowUnstackableWithState": true },
+    "Listings": { "Enabled": true, "AllowedDurationsHours": [12, 24, 48], "MaxActiveListings": 10, "RefundListingFeeOnCancel": false },
+    "Auctions": {
+      "Enabled": true,
+      "MinDurationHours": 12,
+      "MaxDurationHours": 48,
+      "AntiSnipeWindowSeconds": 0,
+      "AntiSnipeExtensionSeconds": 120,
+      "MaxAntiSnipeExtensions": 10,
+      "MinBidStepPercent": 0,
+      "MinBidStepAbsolute": 1
+    },
+    "BuyOrders": { "Enabled": false },
+    "DirectTrades": { "Enabled": false }
+  },
+  "CloudCode (кроме ActiveRevision)": {
+    "Enabled": true,
+    "Handlers": [
+      { "Name": "depositGear", "Description": "Put bag pieces and gold on the server so they can be sold to other players" },
+      { "Name": "withdrawGold", "Description": "Take server gold back into the bag" }
+    ],
+    "Schedules": [],
+    "RateLimit": {
+      "PerHandlerUserLimit": {
+        "depositGear": { "MaxRequests": 30, "WindowSeconds": 3600, "BlockDurationSeconds": 600 },
+        "withdrawGold": { "MaxRequests": 30, "WindowSeconds": 3600, "BlockDurationSeconds": 600 }
+      }
+    },
+    "ResourcePolicy": {
+      "Enabled": true,
+      "AllowedGrantTypes": ["Item", "VirtualCurrency"],
+      "AllowedConsumeTypes": ["Item"],
+      "AllowEventTokens": false,
+      "Caps": {
+        "Item:gear:gold": { "PerPlayerDaily": 20000, "TitleDaily": 2000000 },
+        "VirtualCurrency:HONE": { "PerPlayerDaily": 200, "TitleDaily": 40000 }
+      }
+    },
+    "RevealLogsToClient": false,
+    "RevealStackTraceToClient": false,
+    "PersistExecutionLog": true,
+    "ExecutionLogTtlDays": 7
+  }
+}

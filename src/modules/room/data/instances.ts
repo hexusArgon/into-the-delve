@@ -25,6 +25,8 @@ export interface Loadout {
   weapon: string | null;
   worn: (string | null)[];
   wornAbilities: (string | null)[];
+  /** Золото в мешке. Сохраняется вместе с вещами: в браузере и на аккаунте. */
+  gold: number;
 }
 
 export function levelFactor(level: number): number {
@@ -123,6 +125,7 @@ export function freshLoadout(weapon: WeaponId = "sword"): Loadout {
     weapon: null,
     worn: Array.from({ length: EQUIPMENT_SLOTS }, () => null),
     wornAbilities: Array.from({ length: 4 }, () => null),
+    gold: 0,
   };
   loadout.weapon = addInstance(loadout, "weapon", weapon).id;
   addInstance(loadout, "gear", "belt");
@@ -161,6 +164,7 @@ export function copyLoadout(from: Loadout, to: Loadout): void {
   to.weapon = from.weapon;
   to.worn = [...from.worn];
   to.wornAbilities = [...from.wornAbilities];
+  to.gold = from.gold;
 }
 
 export function loadoutFromJson(raw: string, weapon: WeaponId = "sword"): Loadout | null {
@@ -179,6 +183,11 @@ export function storedLoadout(weapon: WeaponId = "sword"): Loadout {
   } catch {
     return freshLoadout(weapon);
   }
+}
+
+/** Целое неотрицательное число монет. Старые сохранения без золота дают 0. */
+function goldOf(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 function parseLoadout(data: unknown, weapon: WeaponId): Loadout {
@@ -217,7 +226,7 @@ function parseLoadout(data: unknown, weapon: WeaponId): Loadout {
     const n = Number(item.id.slice(1));
     if (Number.isFinite(n) && n >= nextId) nextId = n + 1;
   }
-  return { nextId, items, weapon: held, worn, wornAbilities };
+  return { nextId, items, weapon: held, worn, wornAbilities, gold: goldOf(row.gold) };
 }
 
 export function wornGearBonus(loadout: Loadout): GearBonus {

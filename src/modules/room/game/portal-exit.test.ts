@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { keptShare, keySprite } from "./sprite-key.ts";
@@ -23,25 +23,23 @@ const stone = new Uint8ClampedArray([
 ]);
 assert.ok(keptShare(stone) < 0.01);
 
-const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../assets/portal-exit.jpg");
-const probe = `
-Add-Type -AssemblyName System.Drawing
-$bmp = New-Object System.Drawing.Bitmap '${file.replaceAll("'", "''")}'
-$c = $bmp.GetPixel(0, 0)
-$kr = $c.R; $kg = $c.G; $kb = $c.B
-$keep = 0; $n = 0
-for ($y = 0; $y -lt $bmp.Height; $y += 8) {
-  for ($x = 0; $x -lt $bmp.Width; $x += 8) {
-    $p = $bmp.GetPixel($x, $y)
-    $n++
-    $d = [Math]::Sqrt(($p.R - $kr) * ($p.R - $kr) + ($p.G - $kg) * ($p.G - $kg) + ($p.B - $kb) * ($p.B - $kb))
-    if ($d -ge 60) { $keep++ }
-  }
+// Готовые спрайты собирает scripts/optimize-assets.py: фон уже вырезан, в WebP должен быть альфа-канал.
+// Скрипт сам отказывается писать спрайт, у которого фон съел фигуру.
+const assets = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../assets");
+
+/** Есть ли у WebP прозрачность: VP8L хранит её всегда, VP8X — флагом альфы. */
+function webpHasAlpha(file: string): boolean {
+  const bytes = readFileSync(file);
+  assert.equal(bytes.toString("ascii", 0, 4), "RIFF", `${file}: не RIFF`);
+  assert.equal(bytes.toString("ascii", 8, 12), "WEBP", `${file}: не WebP`);
+  const chunk = bytes.toString("ascii", 12, 16);
+  if (chunk === "VP8L") return true;
+  if (chunk === "VP8X") return ((bytes[20] ?? 0) & 0x10) !== 0;
+  return false;
 }
-$bmp.Dispose()
-Write-Output "$kr,$kg,$kb,$keep,$n"
-`;
-const line = execFileSync("powershell", ["-NoProfile", "-Command", probe], { encoding: "utf8" }).trim().split(/\r?\n/).at(-1) ?? "";
-const [red, green, blue, keep, total] = line.split(",").map(Number);
-assert.ok(red > 160 && blue > 140 && green < 80, `угол портала не малиновый: ${line}`);
-assert.ok(keep / total > 0.25, `арка вырезается вместе с фоном: ${line}`);
+
+for (const sprite of ["portal-exit.webp", "hero-rogue.webp", "monsters/1.webp", "items/belt.webp"]) {
+  assert.ok(webpHasAlpha(path.join(assets, sprite)), `${sprite} без прозрачности`);
+}
+// Текстуры пола и стен непрозрачны: прозрачность в них — признак ошибки в правилах скрипта.
+assert.equal(webpHasAlpha(path.join(assets, "dungeon-floor.webp")), false);

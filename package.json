@@ -1,14 +1,20 @@
 {
-  "name": "@idosgames/base-template",
+  "name": "into-the-delve",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "The base every AI Coder project starts from: sign-in and the lobby (src/base/) on the host shell. The systems (shop, heroes, leaderboards…) and the games are modules plugged in via src/modules.ts.",
+  "description": "Into the Delve: a turn-based dungeon on the iDos Games SDK with a Solana token. The game is the room module (src/modules/room/); sign-in and the lobby are the base (src/base/).",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test && npm run build",
+    "assets": "python3 scripts/optimize-assets.py"
   },
   "//": "Versions are pinned exactly: this is a seed for AI Coder projects, which build offline against a dependency allowlist baked at these versions (see scripts/pack-builder.mjs). Modules bring their own engine deps (three/phaser) when added.",
   "dependencies": {
@@ -18,12 +24,12 @@
     "@idosgames/react": "0.4.4",
     "@idosgames/wallet": "0.6.2",
     "@reown/appkit": "1.8.23",
-    "@reown/appkit-adapter-solana": "^1.8.23",
+    "@reown/appkit-adapter-solana": "1.8.23",
     "@reown/appkit-adapter-wagmi": "1.8.23",
-    "@solana/wallet-adapter-base": "^0.9.27",
-    "@solana/web3.js": "^1.98.4",
+    "@solana/wallet-adapter-base": "0.9.27",
+    "@solana/web3.js": "1.98.4",
     "@tanstack/react-query": "5.101.2",
-    "buffer": "^6.0.3",
+    "buffer": "6.0.3",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "wagmi": "3.7.2"

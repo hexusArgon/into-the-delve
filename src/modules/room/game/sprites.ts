@@ -1,59 +1,59 @@
-import heroUrl from "../../../../assets/hero-rogue.jpg";
-import swordUrl from "../../../../assets/sword.jpg";
-import monsterUrl from "../../../../assets/monster.jpg";
-import floorUrl from "../../../../assets/dungeon-floor.jpg";
-import wallUrl from "../../../../assets/dungeon-wall.jpg";
-import pillarUrl from "../../../../assets/pillar-front.jpg";
-import sarcophagusUrl from "../../../../assets/sarcophagus-front.jpg";
-import torchUrl from "../../../../assets/torch.jpg";
-import bonesUrl from "../../../../assets/bones.jpg";
-import candleUrl from "../../../../assets/candle.jpg";
-import cobwebUrl from "../../../../assets/cobweb.jpg";
-import bloodUrl from "../../../../assets/blood.jpg";
-import barrelUrl from "../../../../assets/barrel.jpg";
-import chainUrl from "../../../../assets/chain.jpg";
-import shelfUrl from "../../../../assets/shelf.jpg";
-import tableUrl from "../../../../assets/table.jpg";
-import chairUrl from "../../../../assets/chair.jpg";
-import woodFloorUrl from "../../../../assets/wood-floor.jpg";
-import goldUrl from "../../../../assets/gold.png";
-import exitUrl from "../../../../assets/portal-exit.jpg";
+import heroUrl from "../../../../assets/hero-rogue.webp";
+import swordUrl from "../../../../assets/sword.webp";
+import monsterUrl from "../../../../assets/monster.webp";
+import floorUrl from "../../../../assets/dungeon-floor.webp";
+import wallUrl from "../../../../assets/dungeon-wall.webp";
+import pillarUrl from "../../../../assets/pillar-front.webp";
+import sarcophagusUrl from "../../../../assets/sarcophagus-front.webp";
+import torchUrl from "../../../../assets/torch.webp";
+import bonesUrl from "../../../../assets/bones.webp";
+import candleUrl from "../../../../assets/candle.webp";
+import cobwebUrl from "../../../../assets/cobweb.webp";
+import bloodUrl from "../../../../assets/blood.webp";
+import barrelUrl from "../../../../assets/barrel.webp";
+import chainUrl from "../../../../assets/chain.webp";
+import shelfUrl from "../../../../assets/shelf.webp";
+import tableUrl from "../../../../assets/table.webp";
+import chairUrl from "../../../../assets/chair.webp";
+import woodFloorUrl from "../../../../assets/wood-floor.webp";
+import goldUrl from "../../../../assets/gold.webp";
+import exitUrl from "../../../../assets/portal-exit.webp";
 import { WEAPONS, type WeaponId } from "../data/weapons.ts";
 import { keySprite } from "./sprite-key.ts";
 
 /** Спрайт каждого типа оружия. Name файла — id из таблицы. */
-const weaponFiles = import.meta.glob("../../../../assets/weapons/*.jpg", {
+const weaponFiles = import.meta.glob("../../../../assets/weapons/*.{webp,jpg}", {
   eager: true,
   import: "default",
 }) as Record<string, string>;
 
-const propFiles = import.meta.glob("../../../../assets/props/*.jpg", {
+const propFiles = import.meta.glob("../../../../assets/props/*.{webp,jpg}", {
   eager: true,
   import: "default",
 }) as Record<string, string>;
 
-const itemFiles = import.meta.glob("../../../../assets/items/*.jpg", {
+const itemFiles = import.meta.glob("../../../../assets/items/*.{webp,jpg}", {
   eager: true,
   import: "default",
 }) as Record<string, string>;
 
-const abilityFiles = import.meta.glob("../../../../assets/abilities/*.jpg", {
+const abilityFiles = import.meta.glob("../../../../assets/abilities/*.{webp,jpg}", {
   eager: true,
   import: "default",
 }) as Record<string, string>;
 
-const statusFiles = import.meta.glob("../../../../assets/status/icon-*.jpg", {
+const statusFiles = import.meta.glob("../../../../assets/status/icon-*.{webp,jpg}", {
   eager: true,
   import: "default",
 }) as Record<string, string>;
 
 /** Спрайты из колонки «Спрайт» таблицы монстров. Name файла — номер строки. */
-const monsterFiles = import.meta.glob("../../../../assets/monsters/*.jpg", {
+const monsterFiles = import.meta.glob("../../../../assets/monsters/*.{webp,jpg}", {
   eager: true,
   import: "default",
 }) as Record<string, string>;
 
-const kegFiles = import.meta.glob("../../../../assets/barrels/*.jpg", {
+const kegFiles = import.meta.glob("../../../../assets/barrels/*.{webp,jpg}", {
   eager: true,
   import: "default",
 }) as Record<string, string>;
@@ -102,7 +102,10 @@ export interface Sprites {
 export const FLOOR_STONES = 6;
 export const WALL_ROWS = 6;
 
-/** Убирает фон по цвету угла картинки, края смягчает и снимает с них розовый отлив. */
+/**
+ * Убирает фон по цвету угла картинки, края смягчает и снимает с них розовый отлив.
+ * Нужен только исходнику JPG на пурпурном фоне: WebP из scripts/optimize-assets.py уже вырезан.
+ */
 function keyed(source: HTMLImageElement): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = source.naturalWidth;
@@ -130,6 +133,8 @@ function plain(source: HTMLImageElement): HTMLCanvasElement {
  * портит холст, и комната остаётся чёрной. Тот же файл есть рядом со страницей.
  */
 function assetOnPage(url: string): string {
+  // Мелкую картинку Vite встраивает прямо в бандл как data:-адрес: её не с чего переадресовывать.
+  if (/^(data|blob):/i.test(url)) return url;
   try {
     const parsed = new URL(url, window.location.href);
     if (parsed.origin === window.location.origin) return parsed.href;
@@ -155,6 +160,27 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 let spriteProgress: (() => void) | null = null;
+
+/** WebP и PNG собраны скриптом: фон вырезан, поля обрезаны. */
+function prepared(url: string): boolean {
+  return /^data:image\/(webp|png)[;,]/i.test(url) || /\.(webp|png)(?:[?#].*)?$/i.test(url);
+}
+
+/** Готовый спрайт: WebP берётся как есть, JPG на пурпурном фоне вырезается здесь. */
+async function cutout(url: string, trim = true): Promise<HTMLCanvasElement> {
+  const image = await loadImage(url);
+  if (prepared(url)) return plain(image);
+  const canvas = keyed(image);
+  return trim ? trimmed(canvas) : canvas;
+}
+
+/** Id спрайта — имя файла без расширения. */
+/** Id из имени файла. Регистр важен: у редких вещей id вида rare-maxHp-poisonRes. */
+function fileId(path: string, pattern = /[/\\]([A-Za-z0-9-]+)\.(?:webp|jpg)$/): string | undefined {
+  return pattern.exec(path)?.[1];
+}
+
+let cached: Promise<Sprites> | null = null;
 
 function trimmed(source: HTMLCanvasElement): HTMLCanvasElement {
   const ctx = source.getContext("2d");
@@ -182,7 +208,25 @@ function trimmed(source: HTMLCanvasElement): HTMLCanvasElement {
   return out;
 }
 
-export async function loadSprites(onProgress?: (ratio: number) => void): Promise<Sprites> {
+/**
+ * Все спрайты игры. Грузятся один раз за сессию: каждый новый забег берёт уже готовые.
+ * Повторный вызов сразу сообщает полную полосу.
+ */
+export function loadSprites(onProgress?: (ratio: number) => void): Promise<Sprites> {
+  if (cached) {
+    if (onProgress) void cached.then(() => onProgress(1));
+    return cached;
+  }
+  const pending = readSprites(onProgress);
+  cached = pending;
+  // Сбой сети не должен навсегда закрыть загрузку: следующий забег попробует снова.
+  pending.catch(() => {
+    if (cached === pending) cached = null;
+  });
+  return pending;
+}
+
+async function readSprites(onProgress?: (ratio: number) => void): Promise<Sprites> {
   const total =
     20 +
     Object.keys(monsterFiles).length +
@@ -198,14 +242,11 @@ export async function loadSprites(onProgress?: (ratio: number) => void): Promise
     onProgress?.(Math.min(1, done / total));
   };
   try {
-    const [core, monsters, weapons, props, status, kegs] = await Promise.all([
-    Promise.all(
+    // Всё грузится разом: этапы друг друга не ждут.
+    const textures = Promise.all([floorUrl, wallUrl, woodFloorUrl].map(loadImage));
+    const frames = Promise.all([heroUrl, swordUrl, monsterUrl].map((url) => cutout(url, false)));
+    const decor = Promise.all(
       [
-        heroUrl,
-        swordUrl,
-        monsterUrl,
-        floorUrl,
-        wallUrl,
         pillarUrl,
         sarcophagusUrl,
         torchUrl,
@@ -218,142 +259,85 @@ export async function loadSprites(onProgress?: (ratio: number) => void): Promise
         shelfUrl,
         tableUrl,
         chairUrl,
-        woodFloorUrl,
         goldUrl,
         exitUrl,
-      ].map(loadImage),
-    ),
-    loadMonsterSprites(),
-    loadWeaponSprites(),
-    loadPropSprites(),
-    loadStatusIcons(),
-    loadKegSprites(),
-  ]);
-  const [hero, sword, monster, floor, wall, pillar, sarcophagus, torch, bones, candle, web, blood, barrel, chain, shelf, table, chair, woodFloor, gold, exit] = core;
-  const sprites: Sprites = {
-    hero: keyed(hero!),
-    sword: keyed(sword!),
-    monster: keyed(monster!),
-    floor: floor!,
-    wall: wall!,
-    pillar: trimmed(keyed(pillar!)),
-    sarcophagus: trimmed(keyed(sarcophagus!)),
-    torch: trimmed(keyed(torch!)),
-    bones: trimmed(keyed(bones!)),
-    candle: trimmed(keyed(candle!)),
-    web: trimmed(keyed(web!)),
-    blood: trimmed(keyed(blood!)),
-    barrel: trimmed(keyed(barrel!)),
-    kegs,
-    chain: trimmed(keyed(chain!)),
-    shelf: trimmed(keyed(shelf!)),
-    table: trimmed(keyed(table!)),
-    chair: trimmed(keyed(chair!)),
-    woodFloor: woodFloor!,
-    gold: trimmed(plain(gold!)),
-    exit: trimmed(keyed(exit!)),
-    monsters,
-    weapons,
-    props,
-    items: {},
-    abilities: {},
-    status,
-  };
-  const [items, abilities] = await Promise.all([loadItemIcons(), loadAbilityIcons()]);
-    sprites.items = items;
-    sprites.abilities = abilities;
+      ].map((url) => cutout(url)),
+    );
+    const sets = Promise.all([
+      loadMonsterSprites(),
+      loadWeaponSprites(),
+      collect(propFiles, /[/\\]([a-z]+)\.(?:webp|jpg)$/),
+      collect(statusFiles, /icon-([a-z0-9-]+)\.(?:webp|jpg)$/),
+      collect(kegFiles, /[/\\]([a-z]+)\.(?:webp|jpg)$/),
+      collect(itemFiles),
+      collect(abilityFiles),
+    ]);
+    const [[floor, wall, woodFloor], [hero, sword, monster], decorList, [monsters, weapons, props, status, kegs, items, abilities]] =
+      await Promise.all([textures, frames, decor, sets]);
+    const [pillar, sarcophagus, torch, bones, candle, web, blood, barrel, chain, shelf, table, chair, gold, exit] = decorList;
     onProgress?.(1);
-    return sprites;
+    return {
+      hero: hero!,
+      sword: sword!,
+      monster: monster!,
+      floor: floor!,
+      wall: wall!,
+      pillar: pillar!,
+      sarcophagus: sarcophagus!,
+      torch: torch!,
+      bones: bones!,
+      candle: candle!,
+      web: web!,
+      blood: blood!,
+      barrel: barrel!,
+      kegs,
+      chain: chain!,
+      shelf: shelf!,
+      table: table!,
+      chair: chair!,
+      woodFloor: woodFloor!,
+      gold: gold!,
+      exit: exit!,
+      monsters,
+      weapons,
+      props,
+      items,
+      abilities,
+      status,
+    };
   } finally {
     spriteProgress = null;
   }
 }
 
-async function loadStatusIcons(): Promise<Record<string, HTMLCanvasElement>> {
-  const status: Record<string, HTMLCanvasElement> = {};
+/** Папка спрайтов по id из имени файла. */
+async function collect(files: Record<string, string>, pattern?: RegExp): Promise<Record<string, HTMLCanvasElement>> {
+  const out: Record<string, HTMLCanvasElement> = {};
   await Promise.all(
-    Object.entries(statusFiles).map(async ([path, url]) => {
-      const id = /icon-([a-z0-9-]+)\.jpg$/.exec(path)?.[1];
-      if (!id) return;
-      status[id] = trimmed(keyed(await loadImage(url)));
+    Object.entries(files).map(async ([path, url]) => {
+      const id = fileId(path, pattern);
+      if (!id || out[id]) return;
+      out[id] = await cutout(url);
     }),
   );
-  return status;
-}
-
-async function loadAbilityIcons(): Promise<Record<string, HTMLCanvasElement>> {
-  const abilities: Record<string, HTMLCanvasElement> = {};
-  await Promise.all(
-    Object.entries(abilityFiles).map(async ([path, url]) => {
-      const id = /[/\\]([a-z0-9-]+)\.jpg$/.exec(path)?.[1];
-      if (!id) return;
-      abilities[id] = trimmed(keyed(await loadImage(url)));
-    }),
-  );
-  return abilities;
-}
-
-async function loadItemIcons(): Promise<Record<string, HTMLCanvasElement>> {
-  const items: Record<string, HTMLCanvasElement> = {};
-  await Promise.all(
-    Object.entries(itemFiles).map(async ([path, url]) => {
-      const id = /[/\\]([a-z0-9-]+)\.jpg$/.exec(path)?.[1];
-      if (!id) return;
-      items[id] = trimmed(keyed(await loadImage(url)));
-    }),
-  );
-  return items;
-}
-
-async function loadPropSprites(): Promise<Record<string, HTMLCanvasElement>> {
-  const props: Record<string, HTMLCanvasElement> = {};
-  await Promise.all(
-    Object.entries(propFiles).map(async ([path, url]) => {
-      const id = /[/\\]([a-z]+)\.jpg$/.exec(path)?.[1];
-      if (!id) return;
-      props[id] = trimmed(keyed(await loadImage(url)));
-    }),
-  );
-  return props;
+  return out;
 }
 
 async function loadWeaponSprites(): Promise<Partial<Record<WeaponId, HTMLCanvasElement>>> {
   const weapons: Partial<Record<WeaponId, HTMLCanvasElement>> = {};
-  await Promise.all(
-    Object.entries(weaponFiles).map(async ([path, url]) => {
-      const id = /\/([a-z]+)\.jpg$/.exec(path)?.[1];
-      if (id === "staff") {
-        const image = trimmed(keyed(await loadImage(url)));
-        for (const weapon of WEAPONS) if (weapon.id.startsWith("staff")) weapons[weapon.id] = image;
-        return;
-      }
-      if (!id || !WEAPONS.some((weapon) => weapon.id === id)) return;
-      weapons[id as WeaponId] = trimmed(keyed(await loadImage(url)));
-    }),
-  );
+  const found = await collect(weaponFiles, /[/\\]([a-z]+)\.(?:webp|jpg)$/);
+  for (const [id, sprite] of Object.entries(found)) {
+    // Один спрайт посоха на все стихии.
+    if (id === "staff") {
+      for (const weapon of WEAPONS) if (weapon.id.startsWith("staff")) weapons[weapon.id] = sprite;
+      continue;
+    }
+    if (WEAPONS.some((weapon) => weapon.id === id)) weapons[id as WeaponId] = sprite;
+  }
   return weapons;
 }
 
-async function loadKegSprites(): Promise<Record<string, HTMLCanvasElement>> {
-  const kegs: Record<string, HTMLCanvasElement> = {};
-  await Promise.all(
-    Object.entries(kegFiles).map(async ([path, url]) => {
-      const id = /[/\\]([a-z]+)\.jpg$/.exec(path)?.[1];
-      if (!id) return;
-      kegs[id] = trimmed(keyed(await loadImage(url)));
-    }),
-  );
-  return kegs;
-}
-
-async function loadMonsterSprites(): Promise<Record<string, HTMLCanvasElement>> {
-  const monsters: Record<string, HTMLCanvasElement> = {};
-  await Promise.all(
-    Object.entries(monsterFiles).map(async ([path, url]) => {
-      const id = /\/(\d+)\.jpg$/.exec(path)?.[1];
-      if (!id) return;
-      monsters[id] = trimmed(keyed(await loadImage(url)));
-    }),
-  );
-  return monsters;
+/** Спрайты из колонки «Спрайт» таблицы монстров. Ключ — номер строки. */
+function loadMonsterSprites(): Promise<Record<string, HTMLCanvasElement>> {
+  return collect(monsterFiles, /[/\\](\d+)\.(?:webp|jpg)$/);
 }

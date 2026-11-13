@@ -1,4 +1,4 @@
-import loadingUrl from "../../../../assets/loading-castle.jpg";
+import loadingUrl from "../../../../assets/loading-castle.webp";
 
 /** Экран с замком и синей полосой. Закрывает хаб, урок и комнату, пока иконки не нарисованы. */
 export function loadingVeil(): { root: HTMLElement; setRatio: (ratio: number) => void } {

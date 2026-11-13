@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { UNIT, grantBonus, itemById } from "./items.ts";
 import { heroAbilityById } from "./hero-abilities.ts";
+import { WEAPONS } from "./weapons.ts";
 import {
   abilityAmount,
   abilitySplash,
@@ -96,7 +97,7 @@ const granted = freshLoadout();
 grantHeroAbilities(granted);
 assert.equal(granted.items.filter((item) => item.kind === "ability").length, 6);
 grantBaseWeapons(granted);
-assert.equal(granted.items.filter((item) => item.kind === "weapon").length, 9);
+assert.equal(granted.items.filter((item) => item.kind === "weapon").length, WEAPONS.length);
 assert.equal(granted.weapon !== null, true);
 fillEmptyWear(granted);
 assert.equal(granted.wornAbilities.filter((id) => id !== null).length, 4);
