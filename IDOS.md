@@ -128,6 +128,9 @@ inventing ids.
   `art/`; `npm run assets` (scripts/optimize-assets.py) cuts the key, trims, shrinks and writes
   `assets/*.webp` and `assets/music/*.mp3`. The game imports only `assets/`. A raw JPG dropped into
   `assets/` still works (keyed in the browser), but is slower — run the script instead.
+- The player market is the iDos server marketplace (`game/market.ts`, `game/market-view.ts`); the
+  title side is `scripts/market-catalog.ts`, `scripts/market-cloud-code.js` and
+  `scripts/market-title-config.json`. Details: `docs/feature-history/market.md`.
 - Room rules live in `src/modules/room/game/sim/` (one file per layer, each under ~400 lines);
   `game/sim.ts` is the only entry point. `npm test` runs the rule tests, `npm run check` runs
   typecheck, tests and build.

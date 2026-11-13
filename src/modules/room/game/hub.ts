@@ -24,12 +24,14 @@ import {
 } from "../data/instances.ts";
 import { weaponBaseId, weaponName, weaponOf, weaponVersion, type WeaponDef, type WeaponId } from "../data/weapons.ts";
 import type { AuctionKit } from "./kit.ts";
-import { paintMarketClosed } from "./market-view.ts";
+import { paintMarket, paintMarketClosed } from "./market-view.ts";
+import { isServerPiece, mirrorServerPieces } from "./market.ts";
+import { enterScreen } from "./transition.ts";
 import { paintGuild } from "./guild-view.ts";
 import { paintAdventure } from "./adventure-view.ts";
 import { bestAdventure, recordAdventure } from "./adventure.ts";
 import type { IDosGamesClient } from "@idosgames/core";
-import { bindAccount, loadBoard, openCloud, tokenBalance } from "./cloud.ts";
+import { bindAccount, loadBoard, marketSession, openCloud, tokenBalance } from "./cloud.ts";
 import { grantPersonalGear, keepPersonalGear } from "./personal-gear.ts";
 import { storageLayout, storageScroll } from "./storage.ts";
 import { RoomController } from "./controller.ts";
@@ -100,6 +102,9 @@ export function mountGame(host: HTMLElement, account?: IDosGamesClient): { setRu
   saveLoadout(loadout);
   void openCloud(loadout, startWeapon).then(() => {
     if (!alive) return;
+    // Вещи, купленные на рынке или снятые с продажи, лежат на сервере: они видны в мешке.
+    const market = marketSession();
+    if (market) mirrorServerPieces(market, loadout);
     keepPersonalGear(loadout);
     grantBaseWeapons(loadout);
     grantHeroAbilities(loadout);
@@ -174,7 +179,26 @@ export function mountGame(host: HTMLElement, account?: IDosGamesClient): { setRu
           });
         },
         onAuction: () => {
-          paintMarketClosed(host, showMenu);
+          const client = marketSession();
+          if (!client) {
+            paintMarketClosed(host, showMenu);
+            return;
+          }
+          void ensureSprites().then((sprites) => {
+            if (!alive) return;
+            paintMarket({
+              host,
+              client,
+              kit,
+              loadout,
+              art: { gold: sprites.gold, items: sprites.items, abilities: sprites.abilities },
+              onBack: showMenu,
+              onChange: () => {
+                syncKit(kit, loadout);
+                saveLoadout(loadout);
+              },
+            });
+          });
         },
         onGuild: () => {
           paintGuild(host, [], showMenu, "Loading the board.");
@@ -264,6 +288,7 @@ function paintMenu(
   skipLesson?: () => void,
 ): void {
   paintShell(host);
+  enterScreen(host, "menu");
   host.style.overflow = "hidden";
   const scene = document.createElement("div");
   scene.className = "dungeon-scene";
@@ -427,6 +452,11 @@ function placeHone(loadout: Loadout, hone: Hone, slot: HoneSlot, id: string): vo
   const item = instanceById(loadout, id);
   if (!item) return;
   hone.made = null;
+  if (isServerPiece(id)) {
+    // Вещь с рынка хранится на сервере со своим уровнем: заточка в игре её не меняет.
+    hone.result = "Market pieces keep the level they were bought with.";
+    return;
+  }
   if (slot === "target") {
     if (hone.copy === id) {
       hone.result = "The same piece cannot be picked twice.";
@@ -645,6 +675,7 @@ function paintInventory(
   abilities: Readonly<Record<string, HTMLCanvasElement>>,
 ): void {
   paintShell(host);
+  enterScreen(host, "inventory");
   host.style.overflow = "hidden";
   const page = document.createElement("div");
   page.className = "dungeon-inventory";

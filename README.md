@@ -47,10 +47,10 @@ worth sharpening and keeping, and the player-owned token gives them a market.
   Deposits and withdrawals are enabled through iDos Games.
 - **Sign-in:** Play as a guest or sign in with a Solana wallet. The wallet signs the login challenge;
   no token balance is needed to enter. Progress is saved to the account the player signed in with.
-- **Player market (in progress):** trading of gear and abilities between players for the token, with
-  escrow, bids, outbid refunds and a 5% commission that is burned — all held by the iDos server
-  marketplace. The earlier in-browser auction was switched off because it could not hold escrow;
-  see [docs/feature-history/market.md](docs/feature-history/market.md).
+- **Player market:** gear, abilities and gold trade between players for the token through the iDos
+  server marketplace: escrow, fixed-price lots, auctions with bids, outbid refunds. A piece leaves
+  the bag for the server when it is listed, keeping its sharpening level; bought pieces come back
+  to the bag. See [docs/feature-history/market.md](docs/feature-history/market.md).
 
 ## Stack
 
@@ -101,9 +101,9 @@ and writes WebP and MP3 into `assets/`.
 
 ## Roadmap
 
-1. Player market on the iDos server: item catalog, server-held inventory, listings and auctions for
-   the token.
-2. Move existing items to the server inventory.
+1. Configure the live title for the market (`scripts/market-title-config.json`) and set the token
+   trade fee.
+2. Icons for the gear pieces that have none yet.
 3. Server-side checks for drops and leaderboard scores.
 
 ## Links

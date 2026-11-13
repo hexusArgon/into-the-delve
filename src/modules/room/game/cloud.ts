@@ -107,6 +107,11 @@ function session(): IDosGamesClient | null {
   return account ?? client;
 }
 
+/** Сессия игрока для рынка. null — входа нет (локальный запуск), рынок недоступен. */
+export function marketSession(): IDosGamesClient | null {
+  return session();
+}
+
 /** Баланс токена Into the Delve. null — сессии ещё нет, аукцион не подменяет его нулём. */
 export function tokenBalance(): number | null {
   const current = session();
