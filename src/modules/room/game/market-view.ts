@@ -3,6 +3,8 @@ import { enterScreen } from "./transition.ts";
 import type { AuctionKit } from "./kit.ts";
 import { unworn, type ItemInstance, type Loadout } from "../data/instances.ts";
 import { MARKET_GOLD, MARKET_HOURS } from "../data/market-ids.ts";
+import { feeOf, feeRule, sellerNet, type FeeRule } from "./market-fee.ts";
+import { confirmBox, introPanel, introSeen, markIntroSeen, rarityTone } from "./market-help.ts";
 import {
   balanceOf,
   bid,
@@ -77,7 +79,7 @@ function icon(art: MarketArt, catalogId: string): HTMLCanvasElement {
     const h = sprite.height * fit;
     ctx.drawImage(sprite, (96 - w) / 2, (96 - h) / 2, w, h);
   } else if (ctx) {
-    // Не у каждой вещи есть иконка в assets/items: карточка не остаётся пустой.
+    // Вещь без спрайта (новый id каталога раньше рисунка): карточка не остаётся пустой.
     ctx.strokeStyle = "#6e5830";
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -122,9 +124,14 @@ export function paintMarket(screen: MarketScreen): void {
   let draftBid = "";
   let note = "Loading the market.";
   let busy = false;
+  let fee: FeeRule | null = null;
+  /** Покупка или ставка ждёт подтверждения: id лота. */
+  let confirming: string | null = null;
+  let intro = !introSeen();
 
   const reload = async (): Promise<void> => {
     rule ??= await priceRule(client);
+    fee ??= await feeRule(client, rule);
     const loaded = await loadMarket(client);
     if (loaded.ok) state = loaded.value;
     else note = loaded.error;
@@ -183,8 +190,24 @@ export function paintMarket(screen: MarketScreen): void {
       }, tab === id);
       tabs.append(tabButton);
     }
-    head.append(tabs);
-    page.append(head, el("div", "dungeon-auction-note", note));
+    const help = button("?", () => {
+      intro = !intro;
+      paint();
+    });
+    help.classList.add("dungeon-help");
+    help.setAttribute("aria-label", "How the market works");
+    head.append(tabs, help);
+    page.append(head);
+    if (intro) {
+      page.append(
+        introPanel(() => {
+          intro = false;
+          markIntroSeen();
+          paint();
+        }),
+      );
+    }
+    page.append(el("div", "dungeon-auction-note", note));
     const body = el("div", "dungeon-auction-body");
     if (state && rule) body.append(tab === "market" ? marketBoard(state) : tab === "sell" ? sellBoard(rule) : mineBoard(state));
     page.append(body);
@@ -198,7 +221,8 @@ export function paintMarket(screen: MarketScreen): void {
   };
 
   const lotCard = (catalogId: string, name: string, line: string, isPicked: boolean, onPick: () => void, tone = ""): HTMLElement => {
-    const card = el("button", `dungeon-lot${isPicked ? " is-picked" : ""}${tone ? ` ${tone}` : ""}`);
+    const rarity = rarityTone(catalogId);
+    const card = el("button", `dungeon-lot${isPicked ? " is-picked" : ""}${tone ? ` ${tone}` : ""}${rarity ? ` ${rarity}` : ""}`);
     card.type = "button";
     card.append(icon(art, catalogId), el("div", "dungeon-lot-name", name), el("div", "dungeon-lot-price", line));
     card.addEventListener("click", onPick);
@@ -216,6 +240,7 @@ export function paintMarket(screen: MarketScreen): void {
         lotCard(offer.catalogId, title(offer.catalogId, offer.level, offer.amount), priceLine(offer), picked === offer.id, () => {
           picked = offer.id;
           draftBid = "";
+          confirming = null;
           paint();
         }, offer.leading ? "is-winning" : ""),
       );
@@ -234,8 +259,36 @@ export function paintMarket(screen: MarketScreen): void {
       el("p", "", priceLine(offer)),
       el("p", "", `Ends in ${timeLeft(offer.expiresAt)}`),
     );
+    const unit = rule?.type === "VirtualCurrency" ? rule.currencyId : "tokens";
+    const purse = rule ? balanceOf(client, rule) : null;
+    const ask = (question: string, warn: string | null, run: () => void): HTMLElement =>
+      confirmBox(question, warn, () => {
+        confirming = null;
+        run();
+      }, () => {
+        confirming = null;
+        paint();
+      });
+    const shortOf = (amount: number): string | null =>
+      purse !== null && amount > purse ? `You have ${formatAmount(purse)} ${unit}; the server will refuse.` : null;
     if (offer.kind === "Listing") {
-      detail.append(button(busy ? "…" : `Buy for ${offer.price}`, () => void act("Buying.", () => buy(client, loadout, offer.id), "Bought. The piece is in your bag."), true));
+      const price = offer.price ?? 0;
+      if (confirming === offer.id) {
+        detail.append(
+          ask(
+            `Buy ${title(offer.catalogId, offer.level, offer.amount)} for ${price} ${unit}?`,
+            shortOf(price),
+            () => void act("Buying.", () => buy(client, loadout, offer.id), "Bought. The piece is in your bag."),
+          ),
+        );
+      } else {
+        detail.append(
+          button(busy ? "…" : `Buy for ${offer.price}`, () => {
+            confirming = offer.id;
+            paint();
+          }, true),
+        );
+      }
     } else {
       const min = nextBid(offer);
       const input = el("input");
@@ -248,13 +301,24 @@ export function paintMarket(screen: MarketScreen): void {
         draftBid = input.value;
       });
       if (offer.leading) detail.append(el("p", "", "Your bid leads."));
-      detail.append(
-        input,
-        button("Place bid", () => {
-          const amount = Number(draftBid || min);
-          void act("Placing the bid.", () => bid(client, loadout, offer.id, amount), "Bid placed. An outbid bid comes back to you.");
-        }, true),
-      );
+      const amount = Number(draftBid || min);
+      if (confirming === offer.id) {
+        detail.append(
+          ask(
+            `Bid ${amount} ${unit} on ${title(offer.catalogId, offer.level, offer.amount)}?`,
+            amount < min ? `The lowest bid now is ${min}.` : (shortOf(amount) ?? "The bid is held until you are outbid or the auction ends."),
+            () => void act("Placing the bid.", () => bid(client, loadout, offer.id, amount), "Bid placed. An outbid bid comes back to you."),
+          ),
+        );
+      } else {
+        detail.append(
+          input,
+          button("Place bid", () => {
+            confirming = offer.id;
+            paint();
+          }, true),
+        );
+      }
     }
     return board(list, detail);
   };
@@ -320,9 +384,25 @@ export function paintMarket(screen: MarketScreen): void {
     value.placeholder = mode === "auction" ? "Starting bid" : piece ? "Price" : "Price for the stack";
     value.value = draftPrice;
     value.className = "dungeon-input";
+    const unit = price.type === "VirtualCurrency" ? price.currencyId : "tokens";
+    const net = el("p", "dungeon-net");
+    const showNet = (): void => {
+      const amount = Number(draftPrice);
+      const rules = fee ?? { share: 0, min: 0, whole: false };
+      if (!(amount > 0)) {
+        net.textContent = rules.share > 0 ? `The trade fee is ${formatAmount(rules.share * 100)}% of the sale.` : "No trade fee: you get the full price.";
+        return;
+      }
+      const cut = feeOf(amount, rules);
+      const get = sellerNet(amount, rules);
+      const head = mode === "auction" ? `If it sells at ${amount}, you receive` : "You receive";
+      net.textContent = cut > 0 ? `${head} ${formatAmount(get)} ${unit} (fee ${formatAmount(cut)}).` : `${head} the full ${formatAmount(get)} ${unit}.`;
+    };
     value.addEventListener("input", () => {
       draftPrice = value.value;
+      showNet();
     });
+    showNet();
     const durations = el("div", "dungeon-auction-tabs");
     for (const h of MARKET_HOURS) {
       durations.append(button(`${h} h`, () => {
@@ -332,6 +412,7 @@ export function paintMarket(screen: MarketScreen): void {
     }
     detail.append(
       value,
+      net,
       durations,
       el("p", "", price.type === "CryptoCurrency" ? "Paid in Into the Delve tokens. The trade fee is taken from the sale." : `Paid in ${price.currencyId}.`),
       button("Put on the market", () => {

@@ -1,0 +1,494 @@
+/* Удобство хаба: итог забега, новые вещи, сравнение, заточка, меню, рынок, выбор тапом, редкость. */
+
+/* ---------- Редкость не только цветом: ромбы в углу (1 — необычная, 2 — редкая, 3 — эпическая). */
+
+.dungeon-slot.dungeon-rarity-uncommon,
+.dungeon-slot.dungeon-rarity-rare,
+.dungeon-slot.dungeon-rarity-epic,
+.dungeon-lot.dungeon-rarity-uncommon,
+.dungeon-lot.dungeon-rarity-rare,
+.dungeon-lot.dungeon-rarity-epic,
+.dungeon-summary-drop {
+  position: relative;
+}
+
+.dungeon-slot.dungeon-rarity-uncommon::after,
+.dungeon-slot.dungeon-rarity-rare::after,
+.dungeon-slot.dungeon-rarity-epic::after,
+.dungeon-lot.dungeon-rarity-uncommon::after,
+.dungeon-lot.dungeon-rarity-rare::after,
+.dungeon-lot.dungeon-rarity-epic::after,
+.dungeon-summary-drop.dungeon-rarity-uncommon::after,
+.dungeon-summary-drop.dungeon-rarity-rare::after,
+.dungeon-summary-drop.dungeon-rarity-epic::after {
+  position: absolute;
+  right: calc(3 * var(--hud));
+  bottom: calc(1 * var(--hud));
+  font: 700 calc(9 * var(--hud)) / 1 Palatino Linotype, Palatino, serif;
+  letter-spacing: 0.05em;
+  text-shadow: 0 0 calc(2 * var(--hud)) #000, 0 0 calc(2 * var(--hud)) #000;
+  pointer-events: none;
+}
+
+.dungeon-rarity-uncommon::after {
+  content: "◆";
+  color: #7dce88;
+}
+
+.dungeon-rarity-rare::after {
+  content: "◆◆";
+  color: #7eb6e8;
+}
+
+.dungeon-rarity-epic::after {
+  content: "◆◆◆";
+  color: #c48ae0;
+}
+
+.dungeon-lot.dungeon-rarity-uncommon { border-color: #3f9a52; }
+.dungeon-lot.dungeon-rarity-rare { border-color: #3d7ec4; }
+.dungeon-lot.dungeon-rarity-epic { border-color: #8a4db8; }
+.dungeon-lot.dungeon-rarity-uncommon.is-picked,
+.dungeon-lot.dungeon-rarity-rare.is-picked,
+.dungeon-lot.dungeon-rarity-epic.is-picked {
+  box-shadow: 0 0 0 calc(2 * var(--hud)) #d4bc82;
+}
+
+/* ---------- Новая вещь в хранилище: точка, пока игрок на неё не посмотрел. */
+
+.dungeon-slot.is-fresh {
+  position: relative;
+}
+
+.dungeon-slot.is-fresh::before {
+  content: "";
+  position: absolute;
+  top: calc(3 * var(--hud));
+  right: calc(3 * var(--hud));
+  width: calc(9 * var(--hud));
+  height: calc(9 * var(--hud));
+  border-radius: 50%;
+  background: #f2c552;
+  box-shadow: 0 0 0 calc(1 * var(--hud)) #3a2a10, 0 0 calc(6 * var(--hud)) #f2c552;
+  pointer-events: none;
+}
+
+/* ---------- Выбор тапом. */
+
+.dungeon-slot.is-picked,
+.dungeon-slot-empty.is-picked {
+  border-color: #f0e2c4;
+  box-shadow:
+    inset 0 0 calc(8 * var(--hud)) rgba(0, 0, 0, 0.65),
+    0 0 0 calc(2 * var(--hud)) #f2c552;
+  animation: dungeon-picked 1.1s ease-in-out infinite alternate;
+}
+
+.is-target {
+  outline: calc(2 * var(--hud)) dashed rgba(242, 197, 82, 0.75);
+  outline-offset: calc(2 * var(--hud));
+}
+
+@keyframes dungeon-picked {
+  from { box-shadow: inset 0 0 calc(8 * var(--hud)) rgba(0, 0, 0, 0.65), 0 0 0 calc(2 * var(--hud)) #f2c552; }
+  to { box-shadow: inset 0 0 calc(8 * var(--hud)) rgba(0, 0, 0, 0.65), 0 0 calc(10 * var(--hud)) calc(2 * var(--hud)) #f2c552; }
+}
+
+/* ---------- Итог забега. */
+
+.dungeon-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(18 * var(--hud));
+  width: min(100%, calc(980 * var(--hud)));
+  margin: auto;
+  padding: calc(32 * var(--hud)) calc(24 * var(--hud));
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.dungeon-summary .dungeon-title {
+  margin: 0;
+  font-size: calc(36 * var(--hud));
+}
+
+.dungeon-summary.is-fell .dungeon-title {
+  color: #d97a62;
+}
+
+.dungeon-summary.is-cleared .dungeon-title {
+  color: #f2d58a;
+}
+
+.dungeon-summary-lead {
+  margin: 0;
+  color: #cbbd9f;
+  font-size: calc(18 * var(--hud));
+}
+
+.dungeon-summary-gold {
+  display: flex;
+  align-items: center;
+  gap: calc(12 * var(--hud));
+  padding: calc(8 * var(--hud)) calc(18 * var(--hud));
+  border: calc(1 * var(--hud)) solid #6e5830;
+  background: rgba(14, 12, 10, 0.85);
+}
+
+.dungeon-summary-gold canvas {
+  width: calc(48 * var(--hud));
+  height: calc(48 * var(--hud));
+}
+
+.dungeon-summary-gold b {
+  color: #f2c552;
+  font-size: calc(22 * var(--hud));
+}
+
+.dungeon-summary-gold span {
+  color: #9a8d78;
+}
+
+.dungeon-summary-drops {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(132 * var(--hud)), 1fr));
+  gap: calc(12 * var(--hud));
+  width: 100%;
+}
+
+.dungeon-summary-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(6 * var(--hud));
+  padding: calc(12 * var(--hud)) calc(8 * var(--hud));
+  background: #0e0c0a;
+  border: calc(1 * var(--hud)) solid #6e5830;
+  animation: dungeon-drop-in 420ms cubic-bezier(0.2, 0.9, 0.3, 1.25) both;
+  animation-delay: var(--delay, 0ms);
+}
+
+.dungeon-summary-drop.dungeon-rarity-uncommon { border-color: #3f9a52; }
+.dungeon-summary-drop.dungeon-rarity-rare { border-color: #3d7ec4; }
+.dungeon-summary-drop.dungeon-rarity-epic { border-color: #8a4db8; }
+
+.dungeon-summary-drop canvas {
+  width: calc(72 * var(--hud));
+  height: calc(72 * var(--hud));
+}
+
+.dungeon-summary-name {
+  font-size: calc(15 * var(--hud));
+}
+
+.dungeon-summary-tag {
+  color: #f2c552;
+  font-size: calc(11 * var(--hud));
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.dungeon-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: calc(12 * var(--hud));
+}
+
+.dungeon-summary-actions .dungeon-button {
+  padding: calc(12 * var(--hud)) calc(26 * var(--hud));
+  font-size: calc(18 * var(--hud));
+}
+
+@keyframes dungeon-drop-in {
+  from { opacity: 0; transform: translateY(calc(14 * var(--hud))) scale(0.9); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------- Сравнение с надетым в карточке вещи. */
+
+.dungeon-compare {
+  margin-top: calc(10 * var(--hud));
+  padding-top: calc(8 * var(--hud));
+  border-top: calc(1 * var(--hud)) solid #3d3426;
+  display: flex;
+  flex-direction: column;
+  gap: calc(3 * var(--hud));
+}
+
+.dungeon-compare-head {
+  color: #9a8d78;
+  font-size: calc(12 * var(--hud));
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.dungeon-compare-row {
+  display: grid;
+  grid-template-columns: calc(14 * var(--hud)) 1fr auto;
+  gap: calc(6 * var(--hud));
+  align-items: baseline;
+  font-size: calc(14 * var(--hud));
+}
+
+.dungeon-compare-row.is-up { color: #8fd69a; }
+.dungeon-compare-row.is-down { color: #e48a7a; }
+
+.dungeon-compare-mark {
+  font-size: calc(10 * var(--hud));
+}
+
+.dungeon-hero-rest {
+  margin: calc(6 * var(--hud)) 0 0;
+  color: #7d705c;
+  font-size: calc(12 * var(--hud));
+}
+
+/* ---------- Заточка: предпросмотр и итог. */
+
+.dungeon-hone-preview {
+  margin-top: calc(10 * var(--hud));
+  font-size: calc(14 * var(--hud));
+  color: #cbbd9f;
+}
+
+.dungeon-hone-preview p {
+  margin: calc(3 * var(--hud)) 0;
+}
+
+.dungeon-hone-odds {
+  color: #f2d58a;
+  font-size: calc(18 * var(--hud));
+}
+
+.dungeon-hone-win { color: #8fd69a; }
+.dungeon-hone-lose { color: #e48a7a; }
+
+.dungeon-hone-lines {
+  display: flex;
+  flex-direction: column;
+  gap: calc(2 * var(--hud));
+  margin: calc(2 * var(--hud)) 0 calc(4 * var(--hud)) calc(10 * var(--hud));
+}
+
+.dungeon-hone-lines div {
+  display: flex;
+  justify-content: space-between;
+  gap: calc(12 * var(--hud));
+}
+
+.dungeon-hone-slot {
+  position: relative;
+}
+
+.dungeon-hone-slot.is-sharpened {
+  border-color: #f2c552;
+  animation: dungeon-sharpened 700ms ease-out both;
+}
+
+.dungeon-hone-rise {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translate(-50%, -40%);
+  color: #f2d58a;
+  font: 700 calc(16 * var(--hud)) Palatino Linotype, Palatino, serif;
+  text-shadow: 0 0 calc(6 * var(--hud)) #000;
+  pointer-events: none;
+  animation: dungeon-rise 1100ms ease-out both;
+}
+
+.dungeon-hone-slot.is-lost canvas {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+.dungeon-hone-slot.is-lost::after {
+  content: "✕";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #d9534f;
+  font-size: calc(44 * var(--hud));
+  text-shadow: 0 0 calc(6 * var(--hud)) #000;
+  pointer-events: none;
+}
+
+.dungeon-hone-slot.is-broken {
+  animation: dungeon-broken 520ms ease-out both;
+}
+
+@keyframes dungeon-sharpened {
+  0% { transform: scale(0.85); box-shadow: 0 0 0 0 rgba(242, 197, 82, 0.9); }
+  45% { transform: scale(1.1); box-shadow: 0 0 calc(22 * var(--hud)) calc(6 * var(--hud)) rgba(242, 197, 82, 0.75); }
+  100% { transform: scale(1); box-shadow: 0 0 calc(8 * var(--hud)) calc(1 * var(--hud)) rgba(242, 197, 82, 0.35); }
+}
+
+@keyframes dungeon-rise {
+  from { opacity: 0; transform: translate(-50%, 0); }
+  25% { opacity: 1; }
+  to { opacity: 0; transform: translate(-50%, -160%); }
+}
+
+@keyframes dungeon-broken {
+  0% { transform: translateX(0); box-shadow: 0 0 calc(18 * var(--hud)) calc(4 * var(--hud)) rgba(217, 83, 79, 0.85); }
+  20% { transform: translateX(calc(-6 * var(--hud))); }
+  40% { transform: translateX(calc(5 * var(--hud))); }
+  60% { transform: translateX(calc(-3 * var(--hud))); }
+  80% { transform: translateX(calc(2 * var(--hud))); }
+  100% { transform: translateX(0); box-shadow: none; }
+}
+
+/* ---------- Меню: подписи живые, клавиши, новые вещи. */
+
+.dungeon-hot-label.is-live {
+  pointer-events: auto;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(8 * var(--hud));
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.dungeon-hot-label.is-lit {
+  color: #fff4dc;
+  background: rgba(44, 34, 20, 0.85);
+  border-color: #d4bc82;
+  box-shadow: 0 0 calc(12 * var(--hud)) rgba(242, 197, 82, 0.45);
+}
+
+.dungeon-shape.is-lit {
+  fill: url("#menu-glow");
+  filter: url("#menu-soft");
+  mix-blend-mode: screen;
+}
+
+.dungeon-hot-key {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.5em;
+  height: 1.5em;
+  padding: 0 0.25em;
+  font: 600 0.75em Palatino Linotype, Palatino, serif;
+  color: #d4bc82;
+  border: calc(1 * var(--hud)) solid #6e5830;
+  border-radius: calc(3 * var(--hud));
+  background: rgba(10, 8, 6, 0.7);
+  letter-spacing: 0;
+}
+
+.dungeon-hot-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.6em;
+  height: 1.6em;
+  padding: 0 0.3em;
+  border-radius: 999px;
+  background: #f2c552;
+  color: #241806;
+  font: 700 0.72em Palatino Linotype, Palatino, serif;
+  letter-spacing: 0;
+}
+
+/* ---------- Рынок: подсказка, подтверждение, сумма продавцу. */
+
+.dungeon-help {
+  min-width: calc(40 * var(--hud));
+  font-weight: 700;
+}
+
+.dungeon-market-intro {
+  margin: 0 0 calc(10 * var(--hud));
+}
+
+.dungeon-market-steps {
+  margin: 0 0 calc(12 * var(--hud));
+  padding-left: calc(22 * var(--hud));
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--hud));
+  color: #cbbd9f;
+}
+
+.dungeon-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--hud));
+  padding: calc(12 * var(--hud));
+  border: calc(1 * var(--hud)) solid #b8965a;
+  background: rgba(36, 28, 16, 0.9);
+}
+
+.dungeon-confirm p {
+  margin: 0;
+}
+
+.dungeon-confirm-ask {
+  color: #f3e6c8;
+  font-size: calc(16 * var(--hud));
+}
+
+.dungeon-confirm-warn {
+  color: #cbbd9f;
+  font-size: calc(13 * var(--hud));
+}
+
+.dungeon-confirm-row {
+  display: flex;
+  gap: calc(10 * var(--hud));
+}
+
+.dungeon-net {
+  margin: calc(4 * var(--hud)) 0;
+  color: #d4bc82;
+}
+
+/* ---------- Настройки. */
+
+.dungeon-setting-note {
+  flex: 1;
+  color: #9a8d78;
+  font-size: calc(13 * var(--hud));
+  line-height: 1.25;
+}
+
+.dungeon-setting-slider:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------- Меньше движения: анимации хаба без сдвигов и масштаба. */
+
+.dungeon-calm .dungeon-summary-drop,
+.dungeon-calm .dungeon-hone-slot.is-sharpened,
+.dungeon-calm .dungeon-hone-slot.is-broken,
+.dungeon-calm .dungeon-slot.is-picked,
+.dungeon-calm .dungeon-slot-empty.is-picked,
+.dungeon-calm .dungeon-hone-rise {
+  animation: none;
+}
+
+/* Полоса выбранной вещи на телефоне: видна, даже когда хранилище ниже экрана. */
+.dungeon-pick-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(10 * var(--hud));
+  z-index: 30;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: calc(12 * var(--hud));
+  max-width: calc(100vw - 24px);
+  padding: calc(8 * var(--hud)) calc(10 * var(--hud)) calc(8 * var(--hud)) calc(16 * var(--hud));
+  color: #f3e6c8;
+  background: rgba(30, 23, 13, 0.96);
+  border: calc(1 * var(--hud)) solid #f2c552;
+  box-shadow: 0 calc(4 * var(--hud)) calc(18 * var(--hud)) rgba(0, 0, 0, 0.6);
+  font-size: calc(15 * var(--hud));
+}
+
+.dungeon-pick-bar .dungeon-button {
+  padding: calc(6 * var(--hud)) calc(14 * var(--hud));
+}

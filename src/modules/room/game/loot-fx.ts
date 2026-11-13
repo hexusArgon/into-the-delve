@@ -1,3 +1,4 @@
+import { reduceMotion } from "./comfort.ts";
 import { itemById, type Rarity } from "../data/items.ts";
 import { weaponVersion } from "../data/weapons.ts";
 import { hash01 } from "./juice.ts";
@@ -38,7 +39,8 @@ const RESTING: LootPose = { lift: 0, scale: 1, burst: 0 };
 
 /** Положение вещи через t мс после появления: взлёт, падение и два затухающих отскока. */
 export function lootPose(age: number): LootPose {
-  if (age < 0 || age >= LOOT_DROP_MS) return RESTING;
+  // Меньше движения: добыча сразу лежит на месте, вспышка редкости остаётся.
+  if (age < 0 || age >= LOOT_DROP_MS || reduceMotion()) return RESTING;
   const t = age / LOOT_DROP_MS;
   let lift: number;
   if (t < 0.5) {

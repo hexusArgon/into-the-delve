@@ -1,3 +1,5 @@
+import { reduceMotion } from "./comfort.ts";
+
 /**
  * Плавный вход экрана хаба: новый экран проявляется из темноты с лёгким приближением.
  * Анимация идёт только при смене экрана. Перерисовка того же экрана (клик в инвентаре,
@@ -6,13 +8,6 @@
 
 const ENTER_MS = 300;
 
-function reducedMotion(): boolean {
-  try {
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Отмечает, что в host открыт экран name. Если это другой экран, он проявляется.
@@ -21,7 +16,7 @@ function reducedMotion(): boolean {
 export function enterScreen(host: HTMLElement, name: string, zoom = true): void {
   if (host.dataset.screen === name) return;
   host.dataset.screen = name;
-  if (reducedMotion() || typeof host.animate !== "function") return;
+  if (reduceMotion() || typeof host.animate !== "function") return;
   const frames: Keyframe[] = zoom
     ? [
         { opacity: 0, filter: "brightness(0.35)", transform: "scale(1.02)" },

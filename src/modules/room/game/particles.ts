@@ -1,3 +1,4 @@
+import { reduceMotion } from "./comfort.ts";
 import { hash01 } from "./juice.ts";
 import type { Box } from "./dungeon.ts";
 import type { RoomState } from "./sim.ts";
@@ -8,6 +9,8 @@ import type { RoomState } from "./sim.ts";
  * объекты и одинаков после паузы.
  */
 export function drawElementParticles(ctx: CanvasRenderingContext2D, box: Box, state: RoomState, time: number): void {
+  // Меньше движения: лужи видны и без летящих искр и пара.
+  if (reduceMotion()) return;
   const { size, ox, oy } = box;
   const w = state.room.w;
   ctx.save();

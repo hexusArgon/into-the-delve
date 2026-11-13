@@ -1,5 +1,6 @@
 import { musicEnabled, musicVolume, setMusicEnabled, setMusicVolume } from "./music.ts";
 import { playFootstep, setSfxEnabled, setSfxVolume, sfxEnabled, sfxVolume } from "./sfx.ts";
+import { reduceMotion, setReduceMotion, setShakeSetting, shakeSetting, SHAKE_MAX } from "./comfort.ts";
 
 /** Окно настроек поверх меню. Закрывается фоном и Escape. `onTutorial` запускает урок. */
 export function openSettings(host: HTMLElement, onTutorial?: () => void): void {
@@ -45,6 +46,8 @@ export function openSettings(host: HTMLElement, onTutorial?: () => void): void {
     channelRow("Sounds", sfxEnabled, setSfxEnabled, sfxVolume, setSfxVolume, () => {
       if (sfxEnabled()) playFootstep("right", 0.2);
     }),
+    shakeRow(),
+    calmRow(),
     ...(onTutorial ? [tutorial] : []),
     done,
   );
@@ -99,5 +102,64 @@ function channelRow(
   });
   paint();
   row.append(name, slider, value, button);
+  return row;
+}
+
+/** Сила дрожи экрана при ударе: 0 — без дрожи, 100% — как задумано. */
+function shakeRow(): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "dungeon-setting";
+  const name = document.createElement("span");
+  name.textContent = "Screen shake";
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = "0";
+  slider.max = String(Math.round(SHAKE_MAX * 100));
+  slider.step = "5";
+  slider.className = "dungeon-setting-slider";
+  slider.setAttribute("aria-label", "Screen shake strength");
+  const value = document.createElement("span");
+  value.className = "dungeon-setting-value";
+  const paint = (): void => {
+    const pct = Math.round(shakeSetting() * 100);
+    slider.value = String(pct);
+    value.textContent = pct === 0 ? "Off" : `${pct}%`;
+    slider.disabled = reduceMotion();
+    row.title = reduceMotion() ? "Reduce motion is on: the screen does not shake." : "";
+  };
+  slider.addEventListener("input", () => {
+    setShakeSetting(Number(slider.value) / 100);
+    paint();
+  });
+  row.addEventListener("dungeon-calm", paint);
+  paint();
+  row.append(name, slider, value);
+  return row;
+}
+
+/** Меньше движения: без дрожи, отброса, дыхания, мерцания, частиц и проявления экранов. */
+function calmRow(): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "dungeon-setting";
+  const name = document.createElement("span");
+  name.textContent = "Reduce motion";
+  const note = document.createElement("span");
+  note.className = "dungeon-setting-note";
+  note.textContent = "No shake, knockback, breathing, flicker or drifting particles.";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "dungeon-button";
+  const paint = (): void => {
+    const on = reduceMotion();
+    button.textContent = on ? "On" : "Off";
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  };
+  button.addEventListener("click", () => {
+    setReduceMotion(!reduceMotion());
+    paint();
+    row.parentElement?.querySelectorAll(".dungeon-setting").forEach((other) => other.dispatchEvent(new Event("dungeon-calm")));
+  });
+  paint();
+  row.append(name, note, button);
   return row;
 }

@@ -3,6 +3,8 @@
  * растворение монстра при смерти. Только рисунок: правила боя и ходы это не трогает.
  */
 
+import { knockScale, reduceMotion, shakeScale } from "./comfort.ts";
+
 /** Сколько длится отдача попадания, мс. */
 export const IMPACT_MS = 230;
 /** Насколько далеко фигуру отбрасывает от бьющего, в долях клетки. */
@@ -55,7 +57,7 @@ export class Impacts {
     }
     // Резкий выброс за первую пятую, затем мягкий возврат на клетку.
     const push = t < 0.2 ? t / 0.2 : (1 - (t - 0.2) / 0.8) ** 2;
-    const reach = push * KNOCK_CELLS * hit.knock;
+    const reach = push * KNOCK_CELLS * hit.knock * knockScale();
     return { dx: hit.dx * reach, dy: hit.dy * reach, flash: (1 - t) ** 2, color: hit.color };
   }
 
@@ -85,7 +87,7 @@ export class Shake {
       return { x: 0, y: 0 };
     }
     const elapsed = time - this.start;
-    const amp = left * left * 8 * this.power;
+    const amp = left * left * 8 * this.power * shakeScale();
     return { x: Math.sin(elapsed / 22) * amp, y: Math.cos(elapsed / 17) * amp * 0.65 };
   }
 
@@ -148,6 +150,7 @@ export function breathPhase(target: object): number {
 
 /** Вдох в покое: тело чуть вытягивается вверх и сужается, ступни на месте. */
 export function breath(time: number, phase: number, rate = 1): { sx: number; sy: number } {
+  if (reduceMotion()) return { sx: 1, sy: 1 };
   const s = Math.sin((time / 560) * rate + phase);
   return { sx: 1 - s * 0.012, sy: 1 + s * 0.026 };
 }

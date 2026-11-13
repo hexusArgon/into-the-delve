@@ -126,7 +126,7 @@ export function fakeServer(): FakeServer {
       },
     },
     marketplace: {
-      getDefinitions: async () => ok({ Definitions: { PricePolicy: { Allowed: [{ Kind: "VirtualCurrency", CurrencyID: "CO" }] } } }),
+      getDefinitions: async () => ok({ Definitions: { PricePolicy: { Allowed: [{ Kind: "VirtualCurrency", CurrencyID: "CO" }] }, Commission: { Percent: 0.05, MinPerPosition: 0, Sink: "Burn" } } }),
       getGroupedOffers: async () => {
         const ids = new Set([...offers.values()].filter((o) => o.Status === "Active").map((o) => o.GoodsItemID));
         return ok({ Groups: [...ids].map((itemId) => ({ GoodsType: "Item", GoodsCatalogID: "gear", GoodsItemID: itemId })) });

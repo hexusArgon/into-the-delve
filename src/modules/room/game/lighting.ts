@@ -1,5 +1,6 @@
 import type { Box } from "./dungeon.ts";
 import type { Cell, RoomState } from "./sim.ts";
+import { reduceMotion } from "./comfort.ts";
 
 /**
  * Свет комнаты. Поверх кадра ложится полутьма, в которой источники света вырезают пятна:
@@ -30,6 +31,8 @@ function layer(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRe
 
 /** Мерцание пламени: сумма трёх несвязанных колебаний, у каждого факела своя фаза. */
 export function flicker(time: number, seed: number): number {
+  // Меньше движения: факел горит ровно.
+  if (reduceMotion()) return 0.9;
   return (
     0.86 +
     0.07 * Math.sin(time * 0.0113 + seed * 1.7) +

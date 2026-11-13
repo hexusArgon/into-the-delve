@@ -41,10 +41,18 @@ import { HERO_CRIT_CHANCE, HERO_HP } from "./rules.ts";
 import { coarsePointer, hubCopy, tutorialMark, tutorialPending, tutorialWeapon, type LessonStep } from "./tutorial.ts";
 import { loadSprites, type Sprites } from "./sprites.ts";
 import { loadingVeil } from "./loading-view.ts";
+import { CHIP_LABEL } from "./stat-labels.ts";
+import { compareSection } from "./compare.ts";
+import { sharpenPreview } from "./hone-preview.ts";
+import { armTapPlace, clearPick, showPick } from "./tap-place.ts";
+import { armMenu } from "./menu-keys.ts";
+import { paintRunSummary, type RunEnd, type RunSummary } from "./run-summary.ts";
+import { freshCount, isFresh, markFresh, seeFresh } from "./fresh.ts";
 import { freshShelf, shelfBar, shelfMatch, shelfOrder, type ShelfBar, type ShelfKind } from "./shelf-bar.ts";
 import { bindAbilityTip, bindCardTip, bindTip, hideTip } from "./tip.ts";
 import menuUrl from "../../../../assets/menu-depart.webp";
 import "./ui.css";
+import "./hub-ux.css";
 
 let spritesReady: Promise<Sprites> | null = null;
 let readySprites: Sprites | null = null;
@@ -132,7 +140,7 @@ export function mountGame(host: HTMLElement, account?: IDosGamesClient): { setRu
     }
   });
   const shelf = freshShelf();
-  const hone = { target: null as string | null, copy: null as string | null, made: null as string | null, result: "" };
+  const hone: Hone = { target: null, copy: null, made: null, result: "", lost: null, flash: null };
   if (import.meta.env.DEV) {
     (globalThis as typeof globalThis & { dungeonKit?: AuctionKit }).dungeonKit = kit;
   }
@@ -166,18 +174,42 @@ export function mountGame(host: HTMLElement, account?: IDosGamesClient): { setRu
     if (wantRun) room.setRunning(true);
   };
 
+  const openInventory = (): void => {
+    void ensureSprites().then((sprites) => {
+      if (alive) paintInventory(host, kit, loadout, shelf, hone, showMenu, sprites.gold, sprites.weapons, sprites.items, sprites.abilities);
+    });
+  };
+
   const showMenu = (): void => {
     if (!alive) return;
+    let summary: RunSummary | null = null;
     if (room && !room.isLesson) {
-      kit.gold += room.carriedGold;
-      for (const drop of room.spoils) addInstance(loadout, drop.kind, drop.catalogId);
+      const gold = room.carriedGold;
+      kit.gold += gold;
+      const drops = room.spoils.map((drop) => addInstance(loadout, drop.kind, drop.catalogId));
+      markFresh(drops.map((drop) => drop.id));
       syncKit(kit, loadout);
       if (room.floorCleared) recordAdventure(room.pickedLevel);
       saveLoadout(loadout);
+      const end: RunEnd = room.floorCleared ? "cleared" : room.getState().hero.hp <= 0 ? "fell" : "left";
+      summary = { end, level: room.pickedLevel, gold, bagGold: kit.gold, drops };
     }
     room?.destroy();
     room = null;
     hideTip();
+    if (summary) {
+      const shown = summary;
+      void ensureSprites().then((sprites) => {
+        if (!alive) return;
+        paintRunSummary(host, shown, sprites, paintHub, openInventory);
+      });
+      return;
+    }
+    paintHub();
+  };
+
+  const paintHub = (): void => {
+    if (!alive) return;
     paintMenu(
       host,
       {
@@ -185,11 +217,7 @@ export function mountGame(host: HTMLElement, account?: IDosGamesClient): { setRu
           if (lesson === "hub") openLesson("move");
           else paintAdventure(host, bestAdventure(), (picked) => showRoom(picked), showMenu);
         },
-        onInventory: () => {
-          void ensureSprites().then((sprites) => {
-            if (alive) paintInventory(host, kit, loadout, shelf, hone, showMenu, sprites.gold, sprites.weapons, sprites.items, sprites.abilities);
-          });
-        },
+        onInventory: openInventory,
         onAuction: () => {
           const client = marketSession();
           if (!client) {
@@ -231,6 +259,7 @@ export function mountGame(host: HTMLElement, account?: IDosGamesClient): { setRu
         },
       },
       lesson === "hub" ? endLesson : undefined,
+      freshCount(loadout),
     );
   };
 
@@ -298,6 +327,7 @@ function paintMenu(
   host: HTMLElement,
   actions: { onPlay: () => void; onInventory: () => void; onAuction: () => void; onGuild: () => void },
   skipLesson?: () => void,
+  fresh = 0,
 ): void {
   paintShell(host);
   enterScreen(host, "menu");
@@ -314,21 +344,38 @@ function paintMenu(
   map.setAttribute("preserveAspectRatio", "none");
   map.classList.add("dungeon-hotmap");
   const quiet = (): void => {};
+  const auction = skipLesson ? quiet : actions.onAuction;
+  const guild = skipLesson ? quiet : actions.onGuild;
+  const inventory = skipLesson ? quiet : actions.onInventory;
   const play = hotShape("Delve", actions.onPlay, "70,0 71,8 76,30 76,50 76,65 78,78 87,95 93,99 100,99 100,40 100,0");
-  map.append(menuGlow(),
-    ...(skipLesson ? [lessonGlow(play)] : []), 
-    hotShape("Auction", skipLesson ? quiet : actions.onAuction, "8,1 6,10 5,20 4,32 6,48 6,64 27,66 28,74 31,78 36,78 46,77 50,70 50,48 48,25 45,18 42,12 38,4 22,0 8,1"),
-    hotShape("Guild", skipLesson ? quiet : actions.onGuild, "47,4 45,16 45,32 48,42 48,66 49,74 51,76 68,77 76,66 79,50 79,16 73,5 60,0 47,4"),
-    play,
-    hotShape("Inventory", skipLesson ? quiet : actions.onInventory, "15,53 10,60 2,64 1,78 0,88 2,93 6,96 27,96 30,80 32,63 28,55 15,53"),
-  );
-  frame.append(
-    picture,
-    map,
-    hotLabel("Auction", "38%", "62%"),
-    hotLabel("Guild", "61%", "42%"),
-    hotLabel("Delve", "86%", "68%"),
-    hotLabel("Inventory", "8%", "84%"),
+  const auctionShape = hotShape("Auction", auction, "8,1 6,10 5,20 4,32 6,48 6,64 27,66 28,74 31,78 36,78 46,77 50,70 50,48 48,25 45,18 42,12 38,4 22,0 8,1");
+  const guildShape = hotShape("Guild", guild, "47,4 45,16 45,32 48,42 48,66 49,74 51,76 68,77 76,66 79,50 79,16 73,5 60,0 47,4");
+  const bagLabel = fresh > 0 ? `Inventory · ${fresh} new` : "Inventory";
+  const bagShape = hotShape(bagLabel, inventory, "15,53 10,60 2,64 1,78 0,88 2,93 6,96 27,96 30,80 32,63 28,55 15,53");
+  map.append(menuGlow(), ...(skipLesson ? [lessonGlow(play)] : []), auctionShape, guildShape, play, bagShape);
+  const labels = {
+    auction: hotLabel("Auction", "38%", "62%"),
+    guild: hotLabel("Guild", "61%", "42%"),
+    delve: hotLabel("Delve", "86%", "68%"),
+    inventory: hotLabel("Inventory", "8%", "84%"),
+  };
+  if (fresh > 0) {
+    const badge = document.createElement("span");
+    badge.className = "dungeon-hot-badge";
+    badge.textContent = String(fresh);
+    badge.setAttribute("aria-hidden", "true");
+    labels.inventory.append(badge);
+  }
+  frame.append(picture, map, labels.auction, labels.guild, labels.delve, labels.inventory);
+  armMenu(
+    frame,
+    [
+      { shape: play, label: labels.delve, key: "1", run: actions.onPlay },
+      { shape: bagShape, label: labels.inventory, key: "2", run: inventory },
+      { shape: auctionShape, label: labels.auction, key: "3", run: auction },
+      { shape: guildShape, label: labels.guild, key: "4", run: guild },
+    ],
+    !coarsePointer(),
   );
   scene.append(frame);
   const gear = document.createElement("button");
@@ -435,6 +482,10 @@ interface Hone {
   /** Экземпляр, который остался после удачной заточки. */
   made: string | null;
   result: string;
+  /** Вещь, сгоревшая при провале: её тень остаётся в клетке результата до следующего выбора. */
+  lost: ItemInstance | null;
+  /** Анимация последней заточки, проигрывается один раз. */
+  flash: "up" | "broke" | null;
 }
 
 type HoneSlot = "target" | "copy";
@@ -464,6 +515,7 @@ function placeHone(loadout: Loadout, hone: Hone, slot: HoneSlot, id: string): vo
   const item = instanceById(loadout, id);
   if (!item) return;
   hone.made = null;
+  hone.lost = null;
   if (isServerPiece(id)) {
     // Вещь с рынка хранится на сервере со своим уровнем: заточка в игре её не меняет.
     hone.result = "Market pieces keep the level they were bought with.";
@@ -579,10 +631,23 @@ function honePanel(
   box.append(heading("Sharpen"));
   const row = document.createElement("div");
   row.className = "dungeon-hone";
+  const made = instanceById(loadout, hone.made);
+  const resultCell = honeCell("made", "Result", made ?? hone.lost, weapons, items, abilities);
+  const resultSlot = resultCell.querySelector<HTMLElement>(".dungeon-hone-slot");
+  if (resultSlot && !made && hone.lost) resultSlot.classList.add("is-lost");
+  if (resultSlot && hone.flash === "up" && made) resultSlot.classList.add("is-sharpened");
+  if (resultSlot && hone.flash === "broke" && hone.lost) resultSlot.classList.add("is-broken");
+  if (resultSlot && hone.flash === "up" && made) {
+    const rise = document.createElement("span");
+    rise.className = "dungeon-hone-rise";
+    rise.textContent = `Lv ${made.level}`;
+    resultSlot.append(rise);
+  }
+  hone.flash = null;
   row.append(
     honeCell("target", "Item", instanceById(loadout, hone.target), weapons, items, abilities),
     honeCell("copy", "Copy", instanceById(loadout, hone.copy), weapons, items, abilities),
-    honeCell("made", "Result", instanceById(loadout, hone.made), weapons, items, abilities),
+    resultCell,
   );
   const button = menuButton("Sharpen", () => {
     if (!hone.target || !hone.copy) {
@@ -591,6 +656,8 @@ function honePanel(
       return;
     }
     const kept = hone.target;
+    const before = instanceById(loadout, hone.target);
+    const snapshot = before ? { ...before } : null;
     const outcome = sharpen(loadout, hone.target, hone.copy, Math.random);
     if (!outcome.ok) {
       hone.result = outcome.reason;
@@ -601,16 +668,20 @@ function honePanel(
     hone.copy = null;
     if (outcome.success) {
       hone.made = kept;
+      hone.lost = null;
+      hone.flash = "up";
       hone.result = `Success. Level ${outcome.level}.`;
     } else {
       hone.made = null;
+      hone.lost = snapshot;
+      hone.flash = "broke";
       hone.result = "Failed. Target and copy are gone.";
     }
     syncKit(kit, loadout);
     redraw();
   }, false);
   button.classList.add("dungeon-hone-act");
-  box.append(row, button);
+  box.append(row, sharpenPreview(instanceById(loadout, hone.target), instanceById(loadout, hone.copy)), button);
   return box;
 }
 
@@ -687,6 +758,7 @@ function paintInventory(
   abilities: Readonly<Record<string, HTMLCanvasElement>>,
 ): void {
   paintShell(host);
+  if (host.dataset.screen !== "inventory") clearPick();
   enterScreen(host, "inventory");
   host.style.overflow = "hidden";
   const page = document.createElement("div");
@@ -736,6 +808,22 @@ function paintInventory(
   carryNote = "";
   page.append(screenTitle("Inventory"), columns, note);
   host.append(back, page);
+  const tapHooks = {
+    enabled: coarsePointer,
+    dragging: () => dragMoved,
+    accepts: dragAccepts,
+    place: (id: string, hit: HTMLElement) => placeDrop?.(id, hit),
+    hone: (slot: HoneSlot, id: string) => honeDrop?.(slot, id),
+    worn: (id: string) => loadout.weapon === id || loadout.worn.includes(id) || loadout.wornAbilities.includes(id),
+    name: (id: string) => {
+      const inst = instanceById(loadout, id);
+      return inst ? cellName(inst) : "Piece";
+    },
+    note: flashNote,
+    redraw,
+  };
+  armTapPlace(page, tapHooks);
+  showPick(page, tapHooks);
 }
 
 function screenTitle(text: string): HTMLElement {
@@ -797,6 +885,7 @@ function equipmentRow(
     stampLevel(icon, weaponInst.level);
     bindWeaponTip(weaponSlot, weaponInst.catalogId, weaponInst.level);
     armDrag(weaponSlot, weaponInst.id, "weapon");
+    markPiece(weaponSlot, weaponInst.id, "weapon");
   }
   row.append(weaponSlot);
   for (let i = 0; i < EQUIPMENT_SLOTS; i += 1) {
@@ -840,7 +929,10 @@ function equipmentRow(
     });
     if (wornItem && wornInst) bindGearTip(slot, wornItem, wornInst.level);
     else bindTip(slot, "Equipment", "Empty slot.");
-    if (wornInst) armDrag(slot, wornInst.id, "gear");
+    if (wornInst) {
+      armDrag(slot, wornInst.id, "gear");
+      markPiece(slot, wornInst.id, "gear");
+    }
     row.append(slot);
   }
   box.append(row);
@@ -925,14 +1017,14 @@ function bankRow(
     } else if (item?.kind === "weapon") {
       paintWeaponIcon(slot.canvas, weapons[weaponBaseId(item.catalogId)]);
       stampLevel(slot.canvas, item.level);
-      bindWeaponTip(slot.button, item.catalogId, item.level);
+      bindWeaponTip(slot.button, item.catalogId, item.level, () => compareWith(loadout, item.id));
     } else if (item?.kind === "gear") {
       const gear = itemById(item.catalogId);
       paintItemIcon(slot.canvas, items[item.catalogId]);
       stampLevel(slot.canvas, item.level);
       if (gear) {
         slot.button.className += rarityClass(gear.rarity);
-        bindGearTip(slot.button, gear, item.level);
+        bindGearTip(slot.button, gear, item.level, () => compareWith(loadout, item.id));
       } else bindTip(slot.button, "Item", "");
     } else if (item?.kind === "ability") {
       paintItemIcon(slot.canvas, abilities[item.catalogId]);
@@ -941,12 +1033,34 @@ function bankRow(
       bindAbilityTip(slot.button, () => abilityView(item.catalogId, worn ? abilityAmount(worn) : 0, item.level, worn ? abilitySplash(worn) : 0));
     }
     slot.button.dataset.drop = "storage";
-    if (item && item.kind !== "gold") armDrag(slot.button, item.id, item.kind);
+    if (item && item.kind !== "gold") {
+      armDrag(slot.button, item.id, item.kind);
+      markPiece(slot.button, item.id, item.kind);
+      if (isFresh(item.id)) {
+        slot.button.classList.add("is-fresh");
+        const seen = (): void => {
+          if (seeFresh(item.id)) slot.button.classList.remove("is-fresh");
+        };
+        slot.button.addEventListener("pointerenter", seen);
+        slot.button.addEventListener("focus", seen);
+      }
+    }
     row.append(slot.button);
   }
   frame.append(row);
   box.append(lead, frame);
   return box;
+}
+
+function compareWith(loadout: Loadout, id: string): HTMLElement | null {
+  const inst = instanceById(loadout, id);
+  return inst ? compareSection(loadout, inst) : null;
+}
+
+/** Метка вещи для выбора тапом: какой экземпляр лежит в этой клетке. */
+function markPiece(el: HTMLElement, id: string, kind: ItemInstance["kind"]): void {
+  el.dataset.piece = id;
+  el.dataset.kind = kind;
 }
 
 function cellName(item: { kind: ShelfKind; catalogId?: string }): string {
@@ -962,8 +1076,14 @@ function itemPaint(canvas: HTMLCanvasElement, paint: (ctx: CanvasRenderingContex
   if (ctx) paint(ctx);
 }
 
-function bindGearTip(el: HTMLElement, gear: GearItem, level: number): void {
-  bindCardTip(el, () => gearCard(gear, level));
+/** extra — дополнение к карточке, например сравнение с надетым. */
+function bindGearTip(el: HTMLElement, gear: GearItem, level: number, extra?: () => HTMLElement | null): void {
+  bindCardTip(el, () => {
+    const card = gearCard(gear, level);
+    const more = extra?.();
+    if (more) card.append(more);
+    return card;
+  });
 }
 
 function gearCard(gear: GearItem, level: number): HTMLElement {
@@ -1002,27 +1122,6 @@ function gearCard(gear: GearItem, level: number): HTMLElement {
   return root;
 }
 
-const CHIP_LABEL: Record<StatKey, [string, string]> = {
-  maxHp: ["Max HP", "#f4efe4"],
-  maxMp: ["Max MP", "#8eb7e8"],
-  weaponPower: ["Weapon Power", "#d4bc82"],
-  abilityPower: ["Ability Power", "#d4bc82"],
-  phys: ["Physical resist", "#f0e2c4"],
-  fireRes: ["Fire resist", "#e2582a"],
-  earthRes: ["Earth resist", "#9a7434"],
-  poisonRes: ["Poison resist", "#5fae3a"],
-  waterRes: ["Water resist", "#3a7fd4"],
-  iceRes: ["Ice resist", "#bfe6f5"],
-  dodge: ["Dodge", "#c9b3ef"],
-  critChance: ["Crit chance", "#e7c98a"],
-  critShare: ["Crit damage", "#e2582a"],
-  physDmg: ["Physical damage", "#f0e2c4"],
-  fireDmg: ["Fire damage", "#e2582a"],
-  earthDmg: ["Earth damage", "#9a7434"],
-  poisonDmg: ["Poison damage", "#5fae3a"],
-  waterDmg: ["Water damage", "#3a7fd4"],
-  iceDmg: ["Ice damage", "#bfe6f5"],
-};
 
 function gearChips(gear: GearItem, level: number): HTMLElement[] {
   const chips: HTMLElement[] = [];
@@ -1119,9 +1218,14 @@ function stampCount(canvas: HTMLCanvasElement, count: number): void {
   ctx.fillText(String(count), 42, 42);
 }
 
-function bindWeaponTip(el: HTMLElement, catalogId: string, level: number): void {
+function bindWeaponTip(el: HTMLElement, catalogId: string, level: number, extra?: () => HTMLElement | null): void {
   el.style.cursor = "pointer";
-  bindCardTip(el, () => weaponCard(weaponOf(catalogId), catalogId, level));
+  bindCardTip(el, () => {
+    const card = weaponCard(weaponOf(catalogId), catalogId, level);
+    const more = extra?.();
+    if (more) card.append(more);
+    return card;
+  });
 }
 
 function weaponCard(weapon: WeaponDef, catalogId: string, level: number): HTMLElement {
@@ -1278,6 +1382,7 @@ function slotRow(
       slot.append(canvas);
       bindAbilityTip(slot, () => abilityView(wornInst.catalogId, abilityAmount(wornInst), wornInst.level, abilitySplash(wornInst)));
       armDrag(slot, wornInst.id, "ability");
+      markPiece(slot, wornInst.id, "ability");
     } else {
       slot.textContent = "Empty";
       slot.style.fontSize = "calc(13 * var(--hud))";
@@ -1313,38 +1418,52 @@ function heroCard(bonus: GearBonus): HTMLElement {
   const sheet = document.createElement("div");
   sheet.className = "dungeon-hero-sheet";
   const attrs = heroAttributes();
+  let hidden = 0;
+  // Нулевые строки прячутся: карточка показывает то, что у героя есть.
+  const nz = (rows: (readonly [string, string, string?])[]): (readonly [string, string, string?])[] =>
+    rows.filter((row) => {
+      const zero = row[1] === "0" || row[1] === "0%";
+      if (zero) hidden += 1;
+      return !zero;
+    });
   const groups = [
     heroGroup("Body", [
       ["Max HP", String(HERO_HP + bonus.maxHp)],
       ["Max MP", String(Number(attrText(attrs, "MaxMp")) + bonus.maxMp)],
     ]),
-    heroGroup("Power", [
+    heroGroup("Power", nz([
       ["Weapon Power", plain(bonus.weaponPower)],
       ["Ability Power", plain(bonus.abilityPower)],
-    ]),
-    heroGroup("Resistance", [
+    ])),
+    heroGroup("Resistance", nz([
       ["Physical", plain(bonus.phys)],
       ["Fire", plain(bonus.fireRes), "#e2582a"],
       ["Earth", plain(bonus.earthRes), "#9a7434"],
       ["Poison", plain(bonus.poisonRes), "#5fae3a"],
       ["Water", plain(bonus.waterRes), "#3a7fd4"],
       ["Ice", plain(bonus.iceRes), "#bfe6f5"],
-    ]),
-    heroGroup("Chance", [
+    ])),
+    heroGroup("Chance", nz([
       ["Dodge", plain(bonus.dodge)],
       ["Crit chance", percent(Math.min(1, HERO_CRIT_CHANCE + pointChance(bonus.critChance)))],
       ["Crit damage", plain(bonus.critShare)],
-    ]),
-    heroGroup("Bonus Damage", [
+    ])),
+    heroGroup("Bonus Damage", nz([
       ["Physical", `${plain(bonus.physDmg)}%`, "#bcac94"],
       ["Fire", `${plain(bonus.fireDmg)}%`, "#e2582a"],
       ["Earth", `${plain(bonus.earthDmg)}%`, "#9a7434"],
       ["Poison", `${plain(bonus.poisonDmg)}%`, "#5fae3a"],
       ["Water", `${plain(bonus.waterDmg)}%`, "#3a7fd4"],
       ["Ice", `${plain(bonus.iceDmg)}%`, "#bfe6f5"],
-    ]),
+    ])),
   ].filter((group) => group !== null);
   sheet.append(...groups);
+  if (hidden > 0) {
+    const rest = document.createElement("p");
+    rest.className = "dungeon-hero-rest";
+    rest.textContent = `${hidden} more stats are 0. Gear adds them.`;
+    sheet.append(rest);
+  }
   row.append(portrait, sheet);
   box.append(row);
   const drawFace = (sprites: Sprites): void => {
